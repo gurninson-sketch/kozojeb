@@ -53,7 +53,7 @@ end
 K.legacyImportTried = true
 K.initialized = false
 
-K.version = "2.8.1"
+K.version = "2.8.2"
 K.config = K.config or {
   chaseDelay = 0.20,
   patrolDelay = 0.70,
@@ -956,24 +956,36 @@ local function findTarget()
   return nil, nil, nil, creatureCount
 end
 
+local function healthPercent(vitals)
+  if type(vitals) ~= "table" then return nil end
+  local hp = tonumber(vitals.hp)
+  local maxhp = tonumber(vitals.maxhp or vitals.max_hp)
+  if not hp or not maxhp or hp ~= hp or maxhp ~= maxhp
+      or maxhp <= 0 or maxhp == math.huge or hp < 0 or hp > maxhp then return nil end
+  return math.floor(hp * 100 / maxhp + 0.5)
+end
+
 local function updateVitals()
-  local hp, maxhp, moves, maxmoves
+  local roomHp
   local roomEntities = entities()
   for _, entity in ipairs(roomEntities) do
     if isSelf(entity) then
-      hp, maxhp = tonumber(entity.hp), tonumber(entity.maxhp)
+      roomHp = healthPercent(entity)
       break
     end
   end
   local vitals = gmcp and gmcp.Char and gmcp.Char.Vitals or {}
+  local charHp = healthPercent(vitals)
+  -- Kazde zrodlo musi dostarczyc wlasna kompletna pare hp/maxhp. Skale
+  -- Char.Vitals i Room.Entities moga sie roznic. W trakcie ruchu encje sa
+  -- niedostepne; niepelny pakiet nie zmienia ostatniego poprawnego HP.
+  local hp = roomHp or charHp
   if K.vitalsSource == "char" then
-    hp, maxhp = tonumber(vitals.hp) or hp, tonumber(vitals.maxhp) or maxhp
+    hp = charHp or roomHp
   end
-  hp = hp or tonumber(vitals.hp)
-  maxhp = maxhp or tonumber(vitals.maxhp)
-  moves = tonumber(vitals.moves)
-  maxmoves = tonumber(vitals.maxmoves)
-  if hp and maxhp and maxhp > 0 then K.lastHp = math.floor(hp * 100 / maxhp + 0.5) end
+  local moves = tonumber(vitals.moves)
+  local maxmoves = tonumber(vitals.maxmoves)
+  if hp then K.lastHp = hp end
   if moves and maxmoves and maxmoves > 0 then K.lastMoves = math.floor(moves * 100 / maxmoves + 0.5) end
 
   local groupIds, groupNames = {}, {}
@@ -2906,7 +2918,7 @@ end
 function K.help()
   cecho([[
 <cyan>+--------------------------------------------------------------+
-|                       KOZOJEB 2.8.1                           |
+|                       KOZOJEB 2.8.2                           |
 +--------------------------------------------------------------+<reset>
 <white>  Sterowanie<reset>
   <green>/kozojeb start<reset>                 uruchom wybrana role; prowadzacy

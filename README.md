@@ -1,4 +1,4 @@
-# Chimera Kozojeb 2.8.1
+# Chimera Kozojeb 2.8.2
 
 [Pobierz najnowszą paczkę](https://github.com/gurninson-sketch/kozojeb/releases/latest/download/Chimera_Kozojeb.mpackage) · [Wydania](https://github.com/gurninson-sketch/kozojeb/releases)
 
@@ -59,6 +59,8 @@ Limit stworów dotyczy rozpoczynania nowego ataku. Agresywny NPC może rozpoczą
 
 ## Zasłony i HP
 
+Własne HP jest liczone z kompletnej pary `hp/maxhp` z jednego źródła GMCP. Niepełny odczyt nie łączy wartości z `Char.Vitals` i `Room.Entities`; jeśli oba źródła są niepełne, bot zachowuje ostatni poprawny wynik. Pełne, nowsze `Char.Vitals` nadal ma pierwszeństwo przed starszym odczytem encji.
+
 Na profilu osłaniającym prowadzącego:
 
 ```text
@@ -94,6 +96,17 @@ Niepoprawna forma odrzucona przez grę jest blokowana do poprawienia.
 `/kozojeb stop` zatrzymuje Kozojeba na danym profilu. Zatrzymanie wszystkich profili wymaga tej komendy na każdym z nich. Trwającą walkę i zewnętrzny chodzik obsługuje gra oraz główne skrypty Chimery.
 
 ## Aktualizacje z GitHuba
+
+Jeśli masz już Kozojeba 2.8.1, wykonaj na **każdym profilu**:
+
+```text
+/kozojeb stop
+/kozojeb repo gurninson-sketch/kozojeb
+/kozojeb autoaktualizacja on
+/kozojeb aktualizuj
+```
+
+Poczekaj na zakończenie walki i ruchu oraz komunikat `Zainstalowano 2.8.2`. Sprawdź `/kozojeb status`; powinien pokazać wersję **2.8.2**. Następnie uruchom `/kozojeb start` — najpierw na wspierających, potem na prowadzącym. Nie trzeba usuwać ani ręcznie instalować paczki; ustawienia profili pozostają zachowane.
 
 Przy paczce zbudowanej w tym repozytorium adres wydań jest wbudowany. W paczce przygotowanej bez adresu skonfiguruj na każdym profilu:
 

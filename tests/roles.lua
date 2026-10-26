@@ -701,6 +701,86 @@ test("new Char.Vitals overrides cached own HP when deciding retreat", function()
   assert(kozojeb.mode == "escape" and aliases[#aliases] == "/idz 1322")
 end)
 
+test("partial Char.Vitals never borrows maximum HP from room entities", function()
+  reset(nil)
+  gmcp.Chimera.Group.State.leader = "S"
+  gmcp.Chimera.Combat.State = {primary="", relations={}}
+  kozojeb.start()
+  room = 1323
+  gmcp.Char.Vitals = {hp=10, moves=100, maxmoves=100}
+  event("gmcp.Char.Vitals")
+  assert(kozojeb.lastHp == 100 and kozojeb.mode == "patrol")
+  assert(#aliases == 0, "incomplete HP caused a false retreat")
+end)
+
+test("partial room HP never borrows maximum HP from Char.Vitals", function()
+  reset(nil)
+  gmcp.Char.Vitals.hp, gmcp.Char.Vitals.maxhp = 1000, 1000
+  local own = gmcp.Chimera.Room.Entities.entities[1]
+  own.hp, own.maxhp = 100, nil
+  event()
+  kozojeb.command("status")
+  assert(kozojeb.lastHp == 100, "mixed HP scales produced a false 10 percent")
+end)
+
+test("movement with partial HP does not repeat the retreat loop from the log", function()
+  reset(nil)
+  gmcp.Chimera.Group.State.leader = "S"
+  gmcp.Chimera.Combat.State = {primary="", relations={}}
+  table.remove(gmcp.Chimera.Room.Entities.entities, 4)
+  kozojeb.setRooms({1322,1323})
+  kozojeb.start()
+  for step = 1, 8 do
+    advance(0.71)
+    assert(kozojeb.roomChangePending, "patrol did not issue a direction")
+    gmcp.Char.Vitals = {hp=10, moves=100, maxmoves=100}
+    event("gmcp.Char.Vitals")
+    assert(kozojeb.lastHp == 100 and kozojeb.mode == "patrol" and #aliases == 0)
+    room = room == 1322 and 1323 or 1322
+    kozojeb.onRoomChanged("gmcp.Room.Info")
+    event()
+    assert(kozojeb.lastHp == 100 and kozojeb.mode == "patrol" and #aliases == 0)
+  end
+end)
+
+test("complete Char.Vitals uses its own HP scale and still triggers real retreat", function()
+  reset(nil)
+  gmcp.Chimera.Group.State.leader = "S"
+  gmcp.Chimera.Combat.State = {primary="", relations={}}
+  kozojeb.start()
+  room = 1323
+  gmcp.Char.Vitals = {hp="10", maxhp="10", moves=100, maxmoves=100}
+  event("gmcp.Char.Vitals")
+  assert(kozojeb.lastHp == 100 and kozojeb.mode == "patrol")
+  gmcp.Char.Vitals.hp = "3"
+  event("gmcp.Char.Vitals")
+  assert(kozojeb.lastHp == 30 and kozojeb.mode == "escape")
+  assert(aliases[#aliases] == "/idz 1322")
+end)
+
+test("incomplete HP cannot declare full recovery and restart patrol", function()
+  reset(nil)
+  gmcp.Chimera.Group.State.leader = "S"
+  gmcp.Chimera.Combat.State = {primary="", relations={}}
+  kozojeb.start()
+  room = 1323
+  gmcp.Char.Vitals.hp = 20
+  event("gmcp.Char.Vitals")
+  assert(kozojeb.mode == "escape")
+  local own = gmcp.Chimera.Room.Entities.entities[1]
+  own.hp, own.maxhp = 100, nil
+  gmcp.Char.Vitals = {hp=100, moves=100, maxmoves=100}
+  room = 1322
+  kozojeb.onRoomChanged("gmcp.Room.Info")
+  event()
+  advance(3.1)
+  assert(kozojeb.lastHp == 20 and kozojeb.mode == "heal_rest")
+  own.maxhp = 100
+  event()
+  advance(3.1)
+  assert(kozojeb.lastHp == 100 and kozojeb.mode ~= "heal_rest")
+end)
+
 test("issued patrol movement blocks stale room targets until fresh room confirmation", function()
   reset(nil)
   kozojeb.command("cele snotling")

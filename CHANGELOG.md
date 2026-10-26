@@ -1,5 +1,12 @@
 # Zmiany
 
+## 2.8.2
+
+- Naprawa mieszania odczytów własnego HP z `Char.Vitals` i `Room.Entities`: procent jest liczony wyłącznie z kompletnej pary `hp/maxhp` z jednego źródła.
+- Przy niepełnych danych z obu źródeł, także podczas przechodzenia między pokojami, zachowywany jest ostatni poprawny wynik. Niepełny pakiet nie wywołuje fałszywego odwrotu ani wznowienia po leczeniu.
+- Zachowane pierwszeństwo pełnych, nowych danych `Char.Vitals` oraz odwrót przy rzeczywistym spadku HP.
+- Dodane testy regresji pętli odwrotu i instrukcja aktualizacji z wersji 2.8.1.
+
 ## 2.8.1
 
 - Korekta informacji o autorze oryginalnego KozoBota: **Pipek**. Poprawiono opis projektu, informację o pochodzeniu i metadane paczki.
