@@ -1,5 +1,13 @@
 # Zmiany
 
+## 2.8.4
+
+- Naprawa blokady `reconnect_wait`, gdy po ponownym zalogowaniu nie przychodzą zdarzenia dla niezmienionych kanałów GMCP.
+- Do wznowienia wystarcza świeży pokój i lista encji z własną postacią oraz kompletnym HP. Krótka pauza 0,5 s pozwala przetworzyć pozostałe pakiety logowania.
+- Starsze dane walki i składu drużyny nadal są ignorowane do ich odświeżenia; brak opcjonalnego zdarzenia nie zatrzymuje aktywnego zadania na czas nieokreślony.
+- Panel podaje konkretny brakujący odczyt lub członka drużyny. Ręczny stop anuluje również timer wznowienia.
+- Testy regresji dla braku dodatkowych kanałów, niepełnego HP i 90-minutowego okresu bez kolejnych aktualizacji.
+
 ## 2.8.3
 
 - Automatyczne wznowienie aktywnego zadania po utracie połączenia i ponownym zalogowaniu — bez ręcznej komendy `/kozojeb start`.

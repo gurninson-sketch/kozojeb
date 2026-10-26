@@ -719,6 +719,116 @@ test("automatic resume preserves the original base, area and patrol progress", f
   assert(count("zabij snotlinga") == 1 and #aliases == 0)
 end)
 
+test("fresh room snapshot resumes a leader without requiring unchanged GMCP channels", function()
+  reset(nil)
+  gmcp.Chimera.Group.State.leader = "S"
+  gmcp.Chimera.Combat.State = {primary="",relations={}}
+  gmcp.Chimera.Room.Entities.entities[1].group_role = "leader"
+  gmcp.Chimera.Room.Entities.entities[2].group_role = "member"
+  kozojeb.command("cele snotling")
+  kozojeb.start()
+  room = 1323
+  kozojeb.onSessionEvent("sysDisconnectionEvent")
+  sends, aliases = {}, {}
+  kozojeb.onSessionEvent("sysConnectionEvent")
+  gmcp.Chimera.Group.State.leader = "M" -- stale cache must stay ignored
+  kozojeb.onRoomChanged("gmcp.Room.Info")
+  event()
+  advance(0.51)
+  assert(kozojeb.enabled and not kozojeb.reconnectTask)
+  assert(not kozojeb.sessionFresh.group and not kozojeb.sessionFresh.combat)
+  assert(not kozojeb.sessionFresh.vitals and kozojeb.config.startRoom == 1322)
+  assert(count("zabij snotlinga") == 1)
+end)
+
+test("support resumes without a legacy Vitals event and ignores old combat until new evidence", function()
+  reset("wsparcie")
+  kozojeb.start()
+  kozojeb.onSessionEvent("sysDisconnectionEvent")
+  sends, aliases = {}, {}
+  kozojeb.onSessionEvent("sysConnectionEvent")
+  kozojeb.onRoomChanged("gmcp.Room.Info")
+  event()
+  advance(0.51)
+  assert(kozojeb.enabled and kozojeb.mode == "support_wait")
+  assert(#sends == 0, "stale Combat.State caused support")
+  kozojeb.onTeamCombat("Yarrim", "malego glupkowatego snotlinga")
+  advance(0.13)
+  assert(count("wesprzyj") == 1)
+  noMovement()
+end)
+
+test("reconnect status names missing required room data and incomplete own HP", function()
+  reset("wsparcie")
+  kozojeb.start()
+  kozojeb.onSessionEvent("sysDisconnectionEvent")
+  kozojeb.onSessionEvent("sysConnectionEvent")
+  kozojeb.tryResumeAfterReconnect()
+  assert(kozojeb.reconnectWaitReason:find("Room.Info",1,true))
+  kozojeb.onRoomChanged("gmcp.Room.Info")
+  kozojeb.tryResumeAfterReconnect()
+  assert(kozojeb.reconnectWaitReason:find("Room.Entities",1,true))
+  gmcp.Chimera.Room.Entities.entities[1].maxhp = nil
+  event()
+  assert(kozojeb.reconnectWaitReason:find("HP",1,true) and not kozojeb.enabled)
+  gmcp.Chimera.Room.Entities.entities[1].maxhp = 100
+  event()
+  advance(0.51)
+  assert(kozojeb.enabled and not kozojeb.reconnectWaitReason)
+end)
+
+test("manual stop cancels the short snapshot settling timer", function()
+  reset("wsparcie")
+  kozojeb.start()
+  kozojeb.onSessionEvent("sysDisconnectionEvent")
+  kozojeb.onSessionEvent("sysConnectionEvent")
+  sends, aliases = {}, {}
+  kozojeb.onRoomChanged("gmcp.Room.Info")
+  event()
+  assert(not kozojeb.enabled)
+  kozojeb.command("stop")
+  advance(2)
+  assert(not kozojeb.enabled and not kozojeb.reconnectTask and #sends == 0)
+end)
+
+test("missing unchanged channels cannot leave support paused for ninety minutes", function()
+  reset("wsparcie")
+  kozojeb.start()
+  kozojeb.onSessionEvent("sysDisconnectionEvent")
+  kozojeb.onSessionEvent("sysConnectionEvent")
+  sends, aliases = {}, {}
+  kozojeb.onRoomChanged("gmcp.Room.Info")
+  event()
+  advance(5400)
+  assert(kozojeb.enabled and not kozojeb.reconnectTask and #sends == 0)
+  noMovement()
+end)
+
+test("reconnecting after the team heals resumes the interrupted recovery without extra GMCP events", function()
+  reset(nil)
+  gmcp.Chimera.Group.State.leader = "S"
+  gmcp.Chimera.Room.Entities.entities[1].group_role = "leader"
+  gmcp.Chimera.Room.Entities.entities[2].group_role = "member"
+  gmcp.Chimera.Combat.State = {primary="",relations={}}
+  kozojeb.start()
+  room = 1323
+  gmcp.Chimera.Room.Entities.entities[3].hp = 47
+  event()
+  room = 1322
+  kozojeb.onRoomChanged("gmcp.Room.Info")
+  event()
+  assert(kozojeb.mode == "heal_rest" and kozojeb.injuredTeamMember == "Morrid")
+  kozojeb.onSessionEvent("sysDisconnectionEvent")
+  sends, aliases = {}, {}
+  kozojeb.onSessionEvent("sysConnectionEvent")
+  gmcp.Chimera.Room.Entities.entities[3].hp = 100
+  kozojeb.onRoomChanged("gmcp.Room.Info")
+  event()
+  advance(3.6)
+  assert(kozojeb.enabled and kozojeb.mode == "patrol" and not kozojeb.reconnectTask)
+  assert(kozojeb.config.startRoom == 1322 and #aliases == 0)
+end)
+
 test("a manual stop during reconnect cancels automatic resume", function()
   reset("wsparcie")
   kozojeb.start()
@@ -792,6 +902,7 @@ test("a second disconnection invalidates partially received reconnect data", fun
   event()
   assert(not kozojeb.enabled)
   event("gmcp.Chimera.Group.State")
+  advance(0.51)
   assert(kozojeb.enabled and count("wesprzyj") == 1)
 end)
 
@@ -916,6 +1027,7 @@ test("automatic resume waits for valid own HP rather than reusing health from be
   assert(not kozojeb.enabled and kozojeb.reconnectTask and #sends == 0)
   own.maxhp = 100
   event()
+  advance(0.51)
   assert(kozojeb.enabled and count("wesprzyj") == 1)
   noMovement()
 end)

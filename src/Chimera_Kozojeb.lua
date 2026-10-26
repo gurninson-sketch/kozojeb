@@ -53,7 +53,7 @@ end
 K.legacyImportTried = true
 K.initialized = false
 
-K.version = "2.8.3"
+K.version = "2.8.4"
 K.config = K.config or {
   chaseDelay = 0.20,
   patrolDelay = 0.70,
@@ -573,7 +573,7 @@ local function cancelAllTimers()
     "idleTimer", "idleReturnTimer",
     "focusTimer", "pendingFleeTimer", "targetLostTimer",
     "killConfirmTimer", "escapeWatchTimer", "shieldTimer", "herbTimer",
-    "supportTimer", "supportHintTimer", "shieldReplyTimer",
+    "supportTimer", "supportHintTimer", "shieldReplyTimer", "reconnectTimer",
   }) do
     cancelTimer(name)
   end
@@ -2505,9 +2505,15 @@ end
 
 function K.tryResumeAfterReconnect()
   local task = K.reconnectTask
-  if not task or K.sessionBlocked or not K.entitiesReady or K.roomChangePending then return end
-  for _, source in ipairs({"room", "entities", "combat", "group", "vitals"}) do
-    if not K.sessionFresh[source] then return end
+  if not task then return end
+  local missing = {}
+  if not K.sessionFresh.room then missing[#missing + 1] = "Room.Info" end
+  if not K.sessionFresh.entities or not K.entitiesReady or K.roomChangePending then
+    missing[#missing + 1] = "Room.Entities"
+  end
+  if #missing > 0 then
+    K.reconnectWaitReason = "Czekam: " .. table.concat(missing, ", ")
+    return
   end
   if task.role ~= K.config.role then
     K.stop("Rola zostala zmieniona; poprzednie zadanie anulowane.")
@@ -2519,11 +2525,32 @@ function K.tryResumeAfterReconnect()
   end
   local room = currentRoom()
   local vitals = gmcp and gmcp.Char and gmcp.Char.Vitals or {}
-  local moves, maxmoves = tonumber(vitals.moves), tonumber(vitals.maxmoves)
-  if not room or not own or not (healthPercent(own) or healthPercent(vitals))
-      or not moves or not maxmoves or maxmoves <= 0 or moves < 0 or moves > maxmoves then return end
+  if not own or K.sessionBlocked then
+    K.reconnectWaitReason = "Czekam na postac w Room.Entities"
+    return
+  end
+  if not room then K.reconnectWaitReason = "Czekam na numer pokoju mapy" return end
+  if not (healthPercent(own) or (K.sessionFresh.vitals and healthPercent(vitals))) then
+    K.reconnectWaitReason = "Czekam na kompletne HP postaci"
+    return
+  end
   if task.name and task.name ~= normal(own.name) then
     K.stop("Zalogowano inna postac; poprzednie zadanie anulowane.")
+    return
+  end
+  -- Room.Info i lista encji z wlasnym HP potwierdzaja powrot do gry.
+  -- Group/Combat/Vitals nie zawsze sa ponownie wysylane, gdy stan sie nie
+  -- zmienil. Ich stare kopie pozostaja odfiltrowane przez sessionFresh.
+  -- Krotka pauza pozwala przetworzyc pozostale pakiety tego samego logowania.
+  if not task.snapshotReady then
+    K.reconnectWaitReason = "Odebrano pokoj i HP; uzgadniam stan"
+    if not K.reconnectTimer then
+      later("reconnectTimer", 0.5, function()
+        if K.reconnectTask ~= task then return end
+        task.snapshotReady = true
+        K.tryResumeAfterReconnect()
+      end)
+    end
     return
   end
   updateVitals()
@@ -2603,6 +2630,7 @@ function K.onSessionEvent(eventName)
     end
     K.reconnectTask = task
   end
+  if K.reconnectTask then K.reconnectTask.snapshotReady = nil end
   K.enabled = false
   K.mode = K.reconnectTask and "reconnect_wait" or "stop"
   K.generation = K.generation + 1
@@ -3030,7 +3058,7 @@ end
 function K.help()
   cecho([[
 <cyan>+--------------------------------------------------------------+
-|                       KOZOJEB 2.8.3                           |
+|                       KOZOJEB 2.8.4                           |
 +--------------------------------------------------------------+<reset>
 <white>  Sterowanie<reset>
   <green>/kozojeb start<reset>                 uruchom wybrana role; prowadzacy
