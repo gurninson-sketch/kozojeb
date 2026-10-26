@@ -8,7 +8,7 @@ Bot do Mudleta: patrol, walka i role drużynowe w Chimerze. Prowadzącym może b
 
 ## Instalacja
 
-1. Na każdym profilu wpisz `/kozojeb stop` i poczekaj na zakończenie walki oraz ruchu.
+1. Na każdym profilu zatrzymaj poprzedniego bota: `/kozo stop` w KozoBocie lub `/kozojeb stop` w Kozojebie. Poczekaj na zakończenie walki oraz ruchu.
 2. W Menedżerze pakietów Mudleta usuń starszą paczkę **Chimera_Kozojeb** lub poprzedniego **Chimera_Kozobot**. Zachowaj główne skrypty Chimery.
 3. Zainstaluj `Chimera_Kozojeb.mpackage` pobrany z **Releases** tego repozytorium. Pozostaw jedną wersję Kozojeba na profilu.
 4. Wpisz `/kozojeb status` i sprawdź numer wersji.

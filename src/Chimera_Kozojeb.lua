@@ -33,7 +33,14 @@ kozojeb = kozojeb or {}
 local K = kozojeb
 -- Import z oryginalnego KozoBota nie zmienia jego autorstwa ani przestrzeni nazw.
 if not K.legacyImportTried and type(kozobot) == "table" then
+  if kozobot.updater and type(kozobot.updater.cleanup) == "function" then pcall(kozobot.updater.cleanup) end
+  kozobot.updater = nil
   if type(kozobot.stop) == "function" then pcall(kozobot.stop, "Przejscie na Kozojeb.") end
+  for collection, killer in pairs({triggers=killTrigger, aliases=killAlias, events=killAnonymousEventHandler}) do
+    for _, id in ipairs(kozobot.handlers and kozobot.handlers[collection] or {}) do pcall(killer, id) end
+  end
+  if kozobot.formationTimer then pcall(killTimer, kozobot.formationTimer) end
+  kozobot.enabled = false
   local function copy(value)
     if type(value) ~= "table" then return value end
     local result = {}
