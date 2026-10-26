@@ -1,5 +1,9 @@
 # Zmiany
 
+## 2.8.1
+
+- Korekta informacji o autorze oryginalnego KozoBota: **Pipek**. Poprawiono opis projektu, informację o pochodzeniu i metadane paczki.
+
 ## 2.8.0
 
 - Projekt rozwijany pod nazwą Kozojeb, z zachowaniem informacji o oryginalnym KozoBocie i jego autorze. Nowa komenda główna: `/kozojeb`.

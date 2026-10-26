@@ -1,8 +1,8 @@
-# Chimera Kozojeb 2.8.0
+# Chimera Kozojeb 2.8.1
 
 [Pobierz najnowszą paczkę](https://github.com/gurninson-sketch/kozojeb/releases/latest/download/Chimera_Kozojeb.mpackage) · [Wydania](https://github.com/gurninson-sketch/kozojeb/releases)
 
-**Kozojeb** jest rozwinięciem oryginalnego **KozoBota**, napisanego przez innego gracza. W metadanych przekazanej paczki jako autor oryginału widnieje **Marek Grabowski**. Zachowujemy tę informację; nazwa Kozojeb oznacza rozwijaną tutaj wersję.
+**Kozojeb** jest rozwinięciem oryginalnego **KozoBota**, którego autorem jest **Pipek**. Zachowujemy autorstwo oryginału; nazwa Kozojeb oznacza rozwijaną tutaj wersję.
 
 Bot do Mudleta: patrol, walka i role drużynowe w Chimerze. Prowadzącym może być dowolny profil. Pozostałe profile wspierają walkę zgodnie ze swoją rolą; decyzję o odwrocie podejmuje prowadzący, korzystając z danych drużyny w GMCP.
 

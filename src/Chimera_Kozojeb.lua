@@ -53,7 +53,7 @@ end
 K.legacyImportTried = true
 K.initialized = false
 
-K.version = "2.8.0"
+K.version = "2.8.1"
 K.config = K.config or {
   chaseDelay = 0.20,
   patrolDelay = 0.70,
@@ -2906,7 +2906,7 @@ end
 function K.help()
   cecho([[
 <cyan>+--------------------------------------------------------------+
-|                       KOZOJEB 2.8.0                           |
+|                       KOZOJEB 2.8.1                           |
 +--------------------------------------------------------------+<reset>
 <white>  Sterowanie<reset>
   <green>/kozojeb start<reset>                 uruchom wybrana role; prowadzacy

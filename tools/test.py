@@ -28,7 +28,7 @@ with tempfile.TemporaryDirectory() as directory:
         assert scripts[0].findtext("script") == (ROOT / "src/Chimera_Kozojeb.lua").read_text()
         assert 'local releaseRepository = "example/kozojeb"' in scripts[2].findtext("script")
         assert all(script.get("isActive") == "yes" for script in scripts)
-        assert b'author = "Marek Grabowski (oryginalny KozoBot)"' in archive.read("config.lua")
+        assert b'author = "Pipek (oryginalny KozoBot)"' in archive.read("config.lua")
         assert all(not name.endswith((".log", ".txt", ".dat")) for name in archive.namelist())
     build("example/kozojeb", target)
     assert first == package.read_bytes(), "Package build is not reproducible"

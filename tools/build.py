@@ -45,7 +45,7 @@ def build(repository: str = "", output: Path | None = None) -> Path:
     xml = b'<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE MudletPackage>\n'
     xml += ET.tostring(root, encoding="utf-8")
     config = f'''mpackage = "Chimera_Kozojeb"
-author = "Marek Grabowski (oryginalny KozoBot)"
+author = "Pipek (oryginalny KozoBot)"
 title = "Chimera Kozojeb"
 description = [[Patrol, role druzynowe, zaslony i aktualizacje GitHub. /kozojeb help]]
 version = "{version}"
