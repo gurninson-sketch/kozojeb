@@ -53,7 +53,7 @@ end
 K.legacyImportTried = true
 K.initialized = false
 
-K.version = "2.8.2"
+K.version = "2.8.3"
 K.config = K.config or {
   chaseDelay = 0.20,
   patrolDelay = 0.70,
@@ -364,6 +364,9 @@ K.leaderRescue = nil
 K.sessionBlocked = K.sessionBlocked == true
 K.sessionFresh = K.sessionBlocked and {room=false, entities=false, combat=false, group=false}
   or {room=true, entities=true, combat=true, group=true}
+K.sessionFresh.vitals = not K.sessionBlocked
+K.reconnectTask = nil
+K.reconnectWaitReason = nil
 K.vitalsRevision = 0
 K.vitalsSource = nil
 K.statusPanelStart = nil
@@ -2276,11 +2279,15 @@ function K.onGmcp(eventName)
     for _, entity in ipairs(entities()) do
       if isSelf(entity) then
         K.sessionBlocked = false
-        note("Odebralem swieze dane postaci. Mozesz uzyc /kozojeb start.", "green")
+        if not K.reconnectTask then
+          note("Odebralem swieze dane postaci. Bot pozostaje zatrzymany.", "green")
+        end
         break
       end
     end
   end
+  if eventName == "gmcp.Char.Vitals" then K.sessionFresh.vitals = true end
+  if K.reconnectTask then K.tryResumeAfterReconnect() return end
   if not K.enabled then return end
   if isFollower() then
     if eventName == "gmcp.Chimera.Group.State" then
@@ -2467,6 +2474,7 @@ function K.onKill(name, confirmedByServer)
 end
 
 function K.stop(reason)
+  K.reconnectTask, K.reconnectWaitReason = nil, nil
   K.enabled = false
   K.mode = "stop"
   K.generation = K.generation + 1
@@ -2480,7 +2488,7 @@ function K.stop(reason)
 end
 
 function K.isUpdateSafe()
-  if K.enabled or K.sessionBlocked or not K.entitiesReady or K.roomChangePending
+  if K.enabled or K.reconnectTask or K.sessionBlocked or not K.entitiesReady or K.roomChangePending
       or not K.sessionFresh.combat then return false end
   local state = combatState()
   if state.primary and tostring(state.primary) ~= "" then return false end
@@ -2495,10 +2503,108 @@ function K.isUpdateSafe()
   return true
 end
 
+function K.tryResumeAfterReconnect()
+  local task = K.reconnectTask
+  if not task or K.sessionBlocked or not K.entitiesReady or K.roomChangePending then return end
+  for _, source in ipairs({"room", "entities", "combat", "group", "vitals"}) do
+    if not K.sessionFresh[source] then return end
+  end
+  if task.role ~= K.config.role then
+    K.stop("Rola zostala zmieniona; poprzednie zadanie anulowane.")
+    return
+  end
+  local own
+  for _, entity in ipairs(entities()) do
+    if isSelf(entity) then own = entity break end
+  end
+  local room = currentRoom()
+  local vitals = gmcp and gmcp.Char and gmcp.Char.Vitals or {}
+  local moves, maxmoves = tonumber(vitals.moves), tonumber(vitals.maxmoves)
+  if not room or not own or not (healthPercent(own) or healthPercent(vitals))
+      or not moves or not maxmoves or maxmoves <= 0 or moves < 0 or moves > maxmoves then return end
+  if task.name and task.name ~= normal(own.name) then
+    K.stop("Zalogowano inna postac; poprzednie zadanie anulowane.")
+    return
+  end
+  updateVitals()
+  local recovery = task.mode == "escape" or task.mode == "heal_rest"
+    or task.mode == "recovery_return" or K.config.equipmentHold
+  local emergency = K.lastHp < K.config.escapeHp or K.lastMoves <= K.config.restAtMoves
+    or (K.config.teamEscapeHp > 0 and K.teamSeenCount > 0 and K.teamLowestHp < K.config.teamEscapeHp)
+  if not isFollower() and not recovery and not emergency then
+    local visible = {}
+    for _, member in ipairs(groupContext().members) do visible[normal(member.name)] = true end
+    for name, displayName in pairs(task.roster) do
+      if not visible[name] or K.teamHealth[name] == nil then
+        local reason = "Czekam na czlonka druzyny: " .. displayName
+        if K.reconnectWaitReason ~= reason then note(reason .. ". Wznowie automatycznie.", "yellow") end
+        K.reconnectWaitReason = reason
+        return
+      end
+    end
+  end
+  K.reconnectTask, K.reconnectWaitReason = nil, nil
+  K.enabled = true
+  K.route, K.routeIndex = nil, 1
+  K.lastRoom = room
+  K.mode = isFollower() and "support_wait" or (recovery and "escape" or "patrol")
+  K.lastProgressFingerprint = progressFingerprint()
+  note("Polaczenie przywrocone. Automatycznie wznawiam zadanie; baza "
+    .. tostring(K.config.startRoom) .. ".", "green")
+  if isFollower() then inspectRoom() return end
+  markCurrentRoom()
+  touchActivity()
+  local safe = safetyCheck()
+  if recovery or K.mode == "escape" or K.mode == "heal_rest" then
+    -- Brak wspierajacego nie blokuje pilnego odwrotu prowadzacego.
+    -- Nadal musimy na niego zaczekac w bazie przed wznowieniem patrolu.
+    K.recoveryRoster = K.recoveryRoster or {}
+    for name, displayName in pairs(task.roster) do K.recoveryRoster[name] = displayName end
+  end
+  if not safe then return end
+  if recovery then
+    K.escapeAttempts, K.escapeTailSent = 0, false
+    sendEscapeAttempt()
+  elseif task.mode == "returning" and task.returnRoom then
+    K.pursuitOriginRoom = task.returnRoom
+    beginPursuitReturn()
+  elseif task.mode == "idle_return" or not K.roomSet[room] then
+    K.mode = "idle_return"
+    K.idleSteps, K.idleAliasAttempts = 0, 0
+    idleReturnStep()
+  elseif task.mode == "panic_wait" or task.mode == "panic_search" then
+    K.mode = "panic_wait"
+    beginPanicSearch()
+  elseif task.mode == "kill_pause" then
+    K.mode = "kill_pause"
+    later("killTimer", K.config.killPause, function()
+      if not K.enabled or K.mode ~= "kill_pause" then return end
+      K.mode = "patrol"
+      inspectRoom()
+    end)
+  else
+    -- Stare ID celu i kierunek oczekujacego ruchu zostaly uniewaznione.
+    -- Walke lub dalszy patrol wybieramy na podstawie nowych danych.
+    inspectRoom()
+  end
+end
+
 function K.onSessionEvent(eventName)
   local wasEnabled = K.enabled
+  if wasEnabled and not K.reconnectTask then
+    local task = {mode=K.mode, role=K.config.role, roster={}, returnRoom=K.pursuitOriginRoom}
+    for _, entity in ipairs(entities()) do
+      if isSelf(entity) then task.name = normal(entity.name) break end
+    end
+    if not isFollower() then
+      for _, member in ipairs(groupContext().members) do
+        if not isSelf(member) then task.roster[normal(member.name)] = trim(member.name) end
+      end
+    end
+    K.reconnectTask = task
+  end
   K.enabled = false
-  K.mode = "stop"
+  K.mode = K.reconnectTask and "reconnect_wait" or "stop"
   K.generation = K.generation + 1
   cancelAllTimers()
   clearTarget()
@@ -2508,12 +2614,13 @@ function K.onSessionEvent(eventName)
   K.roomChangePending = false
   K.entitiesReady = false
   K.sessionBlocked = true
-  K.sessionFresh = {room=false, entities=false, combat=false, group=false}
+  K.sessionFresh = {room=false, entities=false, combat=false, group=false, vitals=false}
+  K.reconnectWaitReason = nil
   K.vitalsSource = nil
   K.leaderRescue = nil
   K.shieldAwaitCombatRevision = nil
   if wasEnabled then
-    note("Polaczenie z gra zmienilo sie. Bot zatrzymany; po zalogowaniu uzyj /kozojeb start.", "yellow")
+    note("Polaczenie z gra przerwane. Po zalogowaniu i odebraniu swiezych danych automatycznie wznowie zadanie.", "yellow")
   end
 end
 
@@ -2533,6 +2640,10 @@ end
 function K.start()
   if K.sessionBlocked or not K.entitiesReady or K.roomChangePending then
     note("Czekam na swieze dane pokoju i postaci po zalogowaniu lub ruchu.", "yellow")
+    return
+  end
+  if K.reconnectTask then
+    note("Czekam na swieze dane i druzyne; zadanie wznowi sie automatycznie.", "yellow")
     return
   end
   if not isFollower() and K.config.equipmentHold then
@@ -2713,13 +2824,14 @@ function K.status()
   statusEndRow()
   statusBorder("=")
   if K.sessionBlocked then statusRow("Polaczenie", "Czekam na zalogowanie i swieze dane") end
+  if K.reconnectTask then statusRow("Wznowienie", K.reconnectWaitReason or "Automatyczne po odebraniu swiezych danych") end
   if K.config.equipmentHold then statusRow("Ekwipunek", K.config.equipmentHold) end
   if K.recoveryMissing then statusRow("Brak w druzynie", K.recoveryMissing) end
   if K.leaderRescue then statusRow("Zaslony", "Po oslonie lidera czekam na przewage 5 pp HP") end
   if K.updater then statusRow("Aktualizacje", K.updater.status or "gotowy") end
 
   statusPrefix("Sterowanie")
-  if K.enabled then
+  if K.enabled or K.reconnectTask then
     statusLink("[ STOP ]", "stop", "Zatrzymaj Kozojeba", "red")
   else
     statusLink("[ START ]", "start", "Uruchom Kozojeba", "green")
@@ -2918,7 +3030,7 @@ end
 function K.help()
   cecho([[
 <cyan>+--------------------------------------------------------------+
-|                       KOZOJEB 2.8.2                           |
+|                       KOZOJEB 2.8.3                           |
 +--------------------------------------------------------------+<reset>
 <white>  Sterowanie<reset>
   <green>/kozojeb start<reset>                 uruchom wybrana role; prowadzacy
@@ -3050,7 +3162,9 @@ function K.help()
     z pokoju szybciej, ale nie przerywa trwajacej pogoni.
   - Brak trasy do reszty nie zatrzymuje bota: rozpoczyna nowe okrazenie,
     a przy braku wyjsc ponawia odczyt mapy.
-  - Rozlaczenie zatrzymuje bota. Po zalogowaniu wymagane /kozojeb start.
+  - Po rozlaczeniu aktywne zadanie wznawia sie automatycznie po zalogowaniu,
+    swiezych danych GMCP i zebraniu druzyny. Baza pozostaje bez zmian.
+    /kozojeb stop anuluje rowniez oczekujace automatyczne wznowienie.
   - Prowadzacy reaguje na pekniecie wlasnego lub druzynowego ekwipunku.
     Po jego uzupelnieniu wymagane /kozojeb ekwipunek gotowy.
   - Obszar, cele i ustawienia sa zapisywane osobno dla kazdego profilu.
@@ -3198,7 +3312,7 @@ local function executeCommand(arguments)
     if not roleLabels[value] then
       note("Uzycie: /kozojeb rola prowadzacy | wsparcie | zaslony", "red") return
     end
-    if K.enabled then K.stop("Zmiana roli; anulowano poprzednie dzialania.") end
+    if K.enabled or K.reconnectTask then K.stop("Zmiana roli; anulowano poprzednie dzialania.") end
     K.config.role = value
     saveRoleSettings()
     note("Rola profilu: " .. roleLabels[value] .. ". Uruchom /kozojeb start.", "green")

@@ -1,4 +1,4 @@
-# Chimera Kozojeb 2.8.2
+# Chimera Kozojeb 2.8.3
 
 [Pobierz najnowszą paczkę](https://github.com/gurninson-sketch/kozojeb/releases/latest/download/Chimera_Kozojeb.mpackage) · [Wydania](https://github.com/gurninson-sketch/kozojeb/releases)
 
@@ -90,14 +90,16 @@ Niepoprawna forma odrzucona przez grę jest blokowana do poprawienia.
 - Prowadzący decyduje o odwrocie według własnego HP, HP drużyny i własnego zmęczenia.
 - Po odwrocie czeka na swoje pełne HP, wymagany poziom ruchu oraz obecność i znane HP wcześniej widocznych członków drużyny. Osoba, której rany wywołały odwrót, musi odzyskać 100% HP.
 - Pęknięcie własnego lub widocznego drużynowego ekwipunku uruchamia wspólny odwrót i blokuje automatyczne wznowienie. Uzupełnij sprzęt i wpisz na prowadzącym `/kozojeb ekwipunek gotowy`.
-- Rozłączenie zatrzymuje bota. Ponowne połączenie nie uruchamia go samo. Po zalogowaniu i odebraniu nowych danych wpisz `/kozojeb start`.
+- Rozłączenie wstrzymuje komendy i zapamiętuje aktywne zadanie. Po ponownym zalogowaniu Kozojeb **automatycznie je wznawia, bez `/kozojeb start`**. Czeka na świeże dane pokoju, postaci, HP/ruchu, walki i drużyny. Przed wznowieniem patrolu prowadzący czeka też na wcześniej widocznych członków drużyny. Ich nieobecność nie blokuje pilnego odwrotu ani kontynuacji leczenia; zebranie drużyny jest wtedy sprawdzane w bazie. Wspierający wracają do swoich ról bez własnego ruchu.
+- Automatyczne wznowienie zachowuje bazę, obszar i postęp patrolu. Trwający odwrót, leczenie lub powrót jest kontynuowany. Cel walki i kolejny krok są wybierane ponownie z aktualnych danych. Logowanie i ponowne połączenie obsługuje Mudlet oraz dotychczasowa konfiguracja profilu.
+- `/kozojeb stop` anuluje również oczekujące wznowienie. Bot zatrzymany przed rozłączeniem pozostaje zatrzymany. Zmiana roli anuluje poprzednie zadanie; logowanie inną postacią również go nie wznawia. Po aktualizacji paczki bot pozostaje zatrzymany.
 - Po wysłaniu ruchu bot czeka na potwierdzenie pokoju i nową listę encji, zanim wybierze cel do ataku.
 
 `/kozojeb stop` zatrzymuje Kozojeba na danym profilu. Zatrzymanie wszystkich profili wymaga tej komendy na każdym z nich. Trwającą walkę i zewnętrzny chodzik obsługuje gra oraz główne skrypty Chimery.
 
 ## Aktualizacje z GitHuba
 
-Jeśli masz już Kozojeba 2.8.1, wykonaj na **każdym profilu**:
+Jeśli masz już Kozojeba 2.8.1 lub 2.8.2, wykonaj na **każdym profilu**:
 
 ```text
 /kozojeb stop
@@ -106,7 +108,7 @@ Jeśli masz już Kozojeba 2.8.1, wykonaj na **każdym profilu**:
 /kozojeb aktualizuj
 ```
 
-Poczekaj na zakończenie walki i ruchu oraz komunikat `Zainstalowano 2.8.2`. Sprawdź `/kozojeb status`; powinien pokazać wersję **2.8.2**. Następnie uruchom `/kozojeb start` — najpierw na wspierających, potem na prowadzącym. Nie trzeba usuwać ani ręcznie instalować paczki; ustawienia profili pozostają zachowane.
+Poczekaj na zakończenie walki i ruchu oraz komunikat `Zainstalowano 2.8.3`. Sprawdź `/kozojeb status`; powinien pokazać wersję **2.8.3**. Następnie uruchom `/kozojeb start` — najpierw na wspierających, potem na prowadzącym. To jednorazowy start po aktualizacji; późniejsze rozłączenia nie wymagają ręcznego wznowienia. Nie trzeba usuwać ani ręcznie instalować paczki; ustawienia profili pozostają zachowane.
 
 Przy paczce zbudowanej w tym repozytorium adres wydań jest wbudowany. W paczce przygotowanej bez adresu skonfiguruj na każdym profilu:
 

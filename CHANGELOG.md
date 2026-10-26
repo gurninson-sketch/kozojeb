@@ -1,5 +1,14 @@
 # Zmiany
 
+## 2.8.3
+
+- Automatyczne wznowienie aktywnego zadania po utracie połączenia i ponownym zalogowaniu — bez ręcznej komendy `/kozojeb start`.
+- Zachowanie bazy, obszaru i postępu patrolu; kontynuacja odwrotu, leczenia i powrotu. Nowy cel i krok są ustalane ze świeżych danych.
+- Komendy pozostają wstrzymane podczas logowania. Wznowienie czeka na aktualne dane pokoju, postaci, HP/ruchu, walki i drużyny; prowadzący czeka na wcześniej widocznych członków drużyny.
+- Wspierający automatycznie wracają do swoich ról i nadal nie wykonują własnego ruchu ani odwrotu.
+- Ręczny stop i zmiana roli anulują oczekujące wznowienie. Wcześniej zatrzymany bot, nowo zainstalowana paczka oraz logowanie inną postacią nie uruchamiają zadania.
+- Testy ponownych rozłączeń, kolejności danych, zachowania bazy, ról wspierających i leczenia.
+
 ## 2.8.2
 
 - Naprawa mieszania odczytów własnego HP z `Char.Vitals` i `Room.Entities`: procent jest liczony wyłącznie z kompletnej pary `hp/maxhp` z jednego źródła.
