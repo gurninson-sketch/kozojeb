@@ -1,0 +1,20 @@
+name: Tests
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        lua: ["lua5.1", "lua5.4"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Lua library
+        run: sudo apt-get update && sudo apt-get install -y lib${{ matrix.lua }}-0
+      - name: Run simulations and verify package
+        env:
+          KOZO_LUA_LIBRARY: ${{ matrix.lua }}
+        run: python3 tools/test.py

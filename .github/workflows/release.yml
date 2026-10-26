@@ -1,0 +1,44 @@
+name: Release
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing version tag, e.g. v2.8.0"
+        required: true
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - name: Install Lua library
+        run: sudo apt-get update && sudo apt-get install -y liblua5.4-0
+      - name: Verify version tag
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: python3 -c 'import os,pathlib; assert os.environ["RELEASE_TAG"] == "v" + pathlib.Path("VERSION").read_text().strip()'
+      - name: Test
+        run: python3 tools/test.py
+      - name: Build release assets
+        run: python3 tools/build.py --repository "$GITHUB_REPOSITORY"
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          if gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft > /tmp/kozojeb-release-draft; then
+            if test "$(cat /tmp/kozojeb-release-draft)" = true; then
+              gh release upload "$RELEASE_TAG" dist/Chimera_Kozojeb.mpackage dist/update.json --clobber
+              gh release edit "$RELEASE_TAG" --title "Kozojeb $RELEASE_TAG" --notes-file CHANGELOG.md
+            else
+              # Bootstrap an existing empty release; published assets are never overwritten.
+              gh release upload "$RELEASE_TAG" dist/Chimera_Kozojeb.mpackage dist/update.json
+            fi
+          else
+            gh release create "$RELEASE_TAG" dist/Chimera_Kozojeb.mpackage dist/update.json --verify-tag --draft --title "Kozojeb $RELEASE_TAG" --notes-file CHANGELOG.md
+          fi
