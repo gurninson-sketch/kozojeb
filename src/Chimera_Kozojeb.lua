@@ -53,7 +53,7 @@ end
 K.legacyImportTried = true
 K.initialized = false
 
-K.version = "2.8.4"
+K.version = "2.9.0"
 K.config = K.config or {
   chaseDelay = 0.20,
   patrolDelay = 0.70,
@@ -73,6 +73,9 @@ K.config = K.config or {
   teamEscapeHp = 50,
   teamShieldHp = 70,
   teamShieldInterval = 2.0,
+  shieldMaxAttackers = 2,
+  shieldHold = 8,
+  emptyPatrolMax = 3,
   maxCreatures = 0,
   restAtMoves = 25,
   resumeAtMoves = 55,
@@ -140,6 +143,7 @@ local settingTypes = {
   role="string", leaderName="string", leaderShieldHp="number", shieldSelfHp="number",
   zubrTargetInitialized="boolean", szkieletTargetInitialized="boolean", introducedTargets230="table",
   equipmentHold="string",
+  shieldMaxAttackers="number", shieldHold="number", emptyPatrolMax="number",
 }
 if not K.settingsLoaded then
   local saved, path = {}, settingsPath()
@@ -194,6 +198,9 @@ K.config.teamShieldHp = tonumber(K.config.teamShieldHp) or 70
 K.config.teamShieldInterval = tonumber(K.config.teamShieldInterval) or 2.0
 K.config.teamShieldHp = math.max(0, math.min(100, K.config.teamShieldHp))
 K.config.teamShieldInterval = math.max(0.5, K.config.teamShieldInterval)
+K.config.shieldMaxAttackers = math.max(1, math.min(5, math.floor(tonumber(K.config.shieldMaxAttackers) or 2)))
+K.config.shieldHold = math.max(2, math.min(30, tonumber(K.config.shieldHold) or 8))
+K.config.emptyPatrolMax = math.max(0, math.min(10, tonumber(K.config.emptyPatrolMax) or 3))
 do
   local escapeCeiling = math.max(K.config.escapeHp, K.config.teamEscapeHp)
   -- Prog zaslony zawsze musi byc wyzszy od obu progow odwrotu. Przy
@@ -360,7 +367,6 @@ K.herbSearchedRoom = nil
 K.roomChangePending = false
 K.failedExits = {}
 K.recoveryRoster = nil
-K.leaderRescue = nil
 K.sessionBlocked = K.sessionBlocked == true
 K.sessionFresh = K.sessionBlocked and {room=false, entities=false, combat=false, group=false}
   or {room=true, entities=true, combat=true, group=true}
@@ -371,6 +377,19 @@ K.vitalsRevision = 0
 K.vitalsSource = nil
 K.statusPanelStart = nil
 K.statusPanelEnd = nil
+K.dataRevision, K.hpRevision = 0, 0
+K.sourceRevisions = {entities=0, group=0, char=0}
+K.groupContextCache, K.entityIndexCache, K.combatCache = nil, nil, nil
+K.vitalsCacheRevision = nil
+K.healthHistory, K.shieldTransfers = {}, {}
+K.previousIncoming = nil
+K.transferRevision, K.lastHealthObservationRevision = nil, nil
+K.lastActivityAt = nil
+K.shieldFailure, K.shieldBlockedReason = nil, nil
+K.supportAttempt = nil
+K.emptyRounds, K.patrolRoundKills, K.emptyPatrolDelay = 0, 0, 0
+K.metrics = {events=0, actions=0, scheduled=0, coalesced=0, health=0,
+  combat=0, shields=0, shieldBlocked=0, support=0, index=0}
 
 local knownTargets = {
   "koza", "kon", "krowa", "jelen", "koziol", "byk", "zubr", "szkielet",
@@ -465,6 +484,17 @@ end
 
 local function normal(value)
   return trim(value):lower()
+end
+
+local function now()
+  -- Mudlet getEpoch: sekundy z czescia milisekundowa; bez aktywnego timera.
+  return type(getEpoch) == "function" and getEpoch() or os.time()
+end
+
+local function invalidateState(health)
+  K.dataRevision = K.dataRevision + 1
+  K.groupContextCache, K.entityIndexCache, K.combatCache = nil, nil, nil
+  if health then K.hpRevision = K.hpRevision + 1 end
 end
 
 -- Ustawienia rol sa lokalne dla profilu Mudleta. Nie wymagaja polaczenia
@@ -585,6 +615,7 @@ local function cancelAllTimers()
   K.supportCombatHint = nil
   K.supportLastTarget = nil
   K.shieldPendingTarget = nil
+  K.supportAttempt = nil
   -- Gotowosc szyku opisuje stan w grze; stop/start lub zmiana roli jej
   -- nie odnawia. Osobny formationTimer dziala tez podczas pauzy bota.
 end
@@ -608,22 +639,37 @@ local function later(name, seconds, callback)
   end)
 end
 
+local function queueInspection(callback)
+  if K.actionTimer then
+    K.metrics.coalesced = K.metrics.coalesced + 1
+    return
+  end
+  K.metrics.scheduled = K.metrics.scheduled + 1
+  later("actionTimer", K.config.actionDelay, callback)
+end
+
 local function idleIsIntentional()
   return K.mode == "stop" or K.mode == "kill_pause"
     or K.mode == "escape" or K.mode == "heal_rest" or K.mode == "recovery_return"
     or K.mode == "herb_search" or K.mode == "leader_wait"
 end
 
+local function checkIdleDeadline()
+  if not K.enabled or isFollower() then return end
+  if idleIsIntentional() then K.lastActivityAt = now() end
+  local remaining = K.config.idleTimeout - (now() - (K.lastActivityAt or now()))
+  if remaining > 0.01 then
+    later("idleTimer", remaining, checkIdleDeadline)
+  else
+    K.onIdleTimeout()
+  end
+end
+
 local function touchActivity()
   if not K.enabled or isFollower() then return end
-  later("idleTimer", K.config.idleTimeout, function()
-    if not K.enabled then return end
-    if idleIsIntentional() then
-      touchActivity()
-      return
-    end
-    K.onIdleTimeout()
-  end)
+  K.lastActivityAt = now()
+  -- Pakiety walki tylko przesuwaja termin; nie tworza nowego timera.
+  if not K.idleTimer then later("idleTimer", K.config.idleTimeout, checkIdleDeadline) end
 end
 
 local function rebuildRoomSet()
@@ -652,6 +698,17 @@ local function entities()
   return node and node.entities or {}
 end
 
+local function entityIndex()
+  if K.entityIndexCache then return K.entityIndexCache end
+  local index = {}
+  for _, entity in ipairs(entities()) do
+    if entity.id ~= nil then index[tostring(entity.id)] = entity end
+  end
+  K.metrics.index = K.metrics.index + 1
+  K.entityIndexCache = index
+  return index
+end
+
 local function combatState()
   if not K.sessionFresh.combat then return {} end
   return gmcp and gmcp.Chimera and gmcp.Chimera.Combat and gmcp.Chimera.Combat.State or {}
@@ -667,9 +724,36 @@ local function leaderRole(value)
   return role == "leader" or role == "prowadzacy" or role == "lider"
 end
 
+local function healthPair(record)
+  if type(record) ~= "table" then return nil end
+  local hp, maximum = tonumber(record.hp), tonumber(record.maxhp or record.max_hp)
+  if not hp or not maximum or hp ~= hp or maximum ~= maximum
+      or maximum <= 0 or maximum == math.huge or hp < 0 or hp > maximum then return nil end
+  return hp, maximum, math.floor(hp * 100 / maximum + 0.5)
+end
+
+local function healthPercent(record)
+  local _, _, percent = healthPair(record)
+  return percent
+end
+
+local function latestHealth(entity, member)
+  local first, second, source = entity, member, "entities"
+  if K.sourceRevisions.group > K.sourceRevisions.entities then
+    first, second, source = member, entity, "group"
+  end
+  local hp, maximum, percent = healthPair(first)
+  if not hp then
+    hp, maximum, percent = healthPair(second)
+    source = source == "group" and "entities" or "group"
+  end
+  if hp then return {hp=hp, maxhp=maximum, percent=percent, source=source} end
+end
+
 -- Jawna lista members ma pierwszenstwo przed starszymi group_role encji.
 -- Pusta lista po rozwiazaniu druzyny nie moze zostawic aktywnego wsparcia.
 local function groupContext()
+  if K.groupContextCache then return K.groupContextCache end
   local state = groupState()
   local ids, names, leaderRefs, memberVitals = {}, {}, {}, {}
   local rosterKnown = type(state.members) == "table"
@@ -698,7 +782,8 @@ local function groupContext()
   end
   for key, member in pairs(state.members or {}) do remember(member, key, false) end
   if not rosterEmpty then remember(state.leader_id or state.leader or state.leader_name, nil, true) end
-  local context = { members = {}, actualLeader = nil, leader = nil, self = nil }
+  local context = { members = {}, actualLeader = nil, leader = nil, self = nil,
+    memberVitals = memberVitals }
   for _, entity in ipairs(entities()) do
     if isSelf(entity) then context.self = entity end
     local role = normal(entity.group_role)
@@ -753,13 +838,11 @@ local function groupContext()
   end
   if context.leader then
     local leader = context.leader
-    local hp, maxhp = tonumber(leader.hp), tonumber(leader.maxhp or leader.max_hp)
-    if not hp or not maxhp or maxhp <= 0 then
-      local vitals = memberVitals[tostring(leader.id)] or memberVitals[normal(leader.name)] or {}
-      hp, maxhp = tonumber(vitals.hp), tonumber(vitals.maxhp or vitals.max_hp)
-    end
-    if hp and maxhp and maxhp > 0 then context.leaderHp = math.floor(hp * 100 / maxhp + 0.5) end
+    context.leaderVitals = latestHealth(leader,
+      memberVitals[tostring(leader.id)] or memberVitals[normal(leader.name)])
+    context.leaderHp = context.leaderVitals and context.leaderVitals.percent
   end
+  K.groupContextCache = context
   return context
 end
 
@@ -871,10 +954,7 @@ end
 
 local function entityById(id)
   if not id then return nil end
-  for _, entity in ipairs(entities()) do
-    if tostring(entity.id) == tostring(id) then return entity end
-  end
-  return nil
+  return entityIndex()[tostring(id)]
 end
 
 local function currentTargetEntity()
@@ -959,16 +1039,10 @@ local function findTarget()
   return nil, nil, nil, creatureCount
 end
 
-local function healthPercent(vitals)
-  if type(vitals) ~= "table" then return nil end
-  local hp = tonumber(vitals.hp)
-  local maxhp = tonumber(vitals.maxhp or vitals.max_hp)
-  if not hp or not maxhp or hp ~= hp or maxhp ~= maxhp
-      or maxhp <= 0 or maxhp == math.huge or hp < 0 or hp > maxhp then return nil end
-  return math.floor(hp * 100 / maxhp + 0.5)
-end
-
 local function updateVitals()
+  if K.vitalsCacheRevision == K.hpRevision then return end
+  K.vitalsCacheRevision = K.hpRevision
+  K.metrics.health = K.metrics.health + 1
   local roomHp
   local roomEntities = entities()
   for _, entity in ipairs(roomEntities) do
@@ -991,69 +1065,78 @@ local function updateVitals()
   if hp then K.lastHp = hp end
   if moves and maxmoves and maxmoves > 0 then K.lastMoves = math.floor(moves * 100 / maxmoves + 0.5) end
 
-  local groupIds, groupNames = {}, {}
-  local directMembers = {}
+  local context = groupContext()
   local state = groupState()
-  for key, member in pairs(state.members or {}) do
+  local own = context.self
+  local ownGroup = own and (context.memberVitals[tostring(own.id)] or context.memberVitals[normal(own.name)])
+  local groupOwnHp = healthPercent(ownGroup)
+  if groupOwnHp and K.sourceRevisions.group > math.max(K.sourceRevisions.entities, K.sourceRevisions.char) then
+    K.lastHp = groupOwnHp
+  end
+  local healthByName, rawByName, counted = {}, {}, {}
+  local lowest, lowestName, seen = 101, nil, 0
+  local function consider(entity, member, id, name)
+    if isSelf(entity) or isSelf(member) or (own and id and tostring(id) == tostring(own.id)) then return end
+    local key = normal(name or id)
+    if key == "" or counted[key] then return end
+    local value = latestHealth(K.entitiesReady and entity or nil, member)
+    if not value then return end
+    counted[key] = true
+    healthByName[key], rawByName[key] = value.percent, value
+    seen = seen + 1
+    if value.percent < lowest then lowest, lowestName = value.percent, tostring(name or id) end
+  end
+  for _, member in ipairs(context.members) do
+    consider(member, context.memberVitals[tostring(member.id)] or context.memberVitals[normal(member.name)],
+      member.id, member.name)
+  end
+  -- Pelny odczyt czlonka nie musi zawierac widocznej encji (np. podczas ruchu).
+  for _, member in pairs(state.members or {}) do
     if type(member) == "table" then
       local id = member.id or member.entity_id or member.obname or member.chimera_source_id
       local name = member.name or member.desc
-      if id then groupIds[tostring(id)] = true end
-      if name then groupNames[normal(name)] = true end
-      directMembers[#directMembers + 1] = member
-    elseif type(member) == "string" or type(member) == "number" then
-      groupIds[tostring(member)] = true
-      groupNames[normal(member)] = true
-      if type(key) == "string" then
-        groupIds[tostring(key)] = true
-        groupNames[normal(key)] = true
-      end
-    end
-  end
-  for name, enabled in pairs(K.config.teamMembers or {}) do
-    if enabled then groupNames[normal(name)] = true end
-  end
-
-  local lowest, lowestName, seen = 101, nil, 0
-  local healthByName = {}
-  local counted = {}
-  local function consider(id, name, memberHp, memberMaxHp)
-    memberHp, memberMaxHp = tonumber(memberHp), tonumber(memberMaxHp)
-    if not memberHp or not memberMaxHp or memberMaxHp <= 0 then return end
-    local key = tostring(id or normal(name))
-    if counted[key] then return end
-    counted[key] = true
-    local percent = math.floor(memberHp * 100 / memberMaxHp + 0.5)
-    if name then healthByName[normal(name)] = percent end
-    seen = seen + 1
-    if percent < lowest then
-      lowest, lowestName = percent, tostring(name or id or "czlonek druzyny")
-    end
-  end
-
-  for _, member in ipairs(directMembers) do
-    if member.self ~= 1 and member.relation ~= "self" then
-      consider(
-        member.id or member.entity_id or member.obname,
-        member.name or member.desc,
-        member.hp,
-        member.maxhp or member.max_hp
-      )
+      consider(entityById(id), member, id, name)
     end
   end
   for _, entity in ipairs(roomEntities) do
-    if entity.self ~= 1 and entity.relation ~= "self" then
-      local role = normal(entity.group_role)
-      local isMember = (role ~= "" and role ~= "none")
-        or groupIds[tostring(entity.id)]
-        or groupNames[normal(entity.name)]
-      if isMember then consider(entity.id, entity.name, entity.hp, entity.maxhp) end
+    if K.config.teamMembers[normal(entity.name)] and entity.kind ~= "npc" then
+      consider(entity, context.memberVitals[tostring(entity.id)], entity.id, entity.name)
     end
   end
   K.teamSeenCount = seen
   K.teamLowestHp = seen > 0 and lowest or 100
   K.teamLowestName = seen > 0 and lowestName or "brak wykrytej druzyny"
-  K.teamHealth = healthByName
+  K.teamHealth, K.teamVitals = healthByName, rawByName
+  K.selfVitals = own and latestHealth(own,
+    context.memberVitals[tostring(own.id)] or context.memberVitals[normal(own.name)]) or nil
+
+  -- Stala pamiec na widocznego gracza, bez rejestratora wszystkich pakietow.
+  -- Obrazenia obserwujemy tylko w jednej skali Room.Entities, nigdy po
+  -- zmianie pokoju, maksimum HP ani przy przelaczaniu zrodla.
+  if K.entitiesReady and K.lastHealthObservationRevision ~= K.sourceRevisions.entities then
+    K.lastHealthObservationRevision = K.sourceRevisions.entities
+    local history, time, room = {}, now(), currentRoom()
+    for _, entity in ipairs(roomEntities) do
+      if isSelf(entity) or healthByName[normal(entity.name)] then
+        local hp, maximum = healthPair(entity)
+        if hp and entity.id then
+          local id, previous = tostring(entity.id), K.healthHistory[tostring(entity.id)]
+          local value = {hp=hp, maxhp=maximum, at=time, room=room, debt=0, shock=0}
+          if previous and previous.room == room and previous.maxhp == maximum then
+            local elapsed = math.max(0, time - previous.at)
+            local loss = math.max(0, previous.hp - hp)
+            value.debt = previous.debt * math.exp(-math.min(60, elapsed) / 4) + loss
+            if loss > 0 then value.shock, value.lossAt = loss, time
+            elseif previous.lossAt and time - previous.lossAt < 8 then
+              value.shock, value.lossAt = previous.shock, previous.lossAt
+            end
+          end
+          history[id] = value
+        end
+      end
+    end
+    K.healthHistory = history
+  end
 end
 
 local function mapExitList(roomId)
@@ -1355,17 +1438,130 @@ local function shieldNameForm(name)
   return K.config.shieldNameForms[lowered] or nil
 end
 
-local function incomingNpc(entity)
-  if not entity or not entity.id or not K.entitiesReady then return nil end
+local function pressure(count)
+  return count * (1 + math.max(0, count - 1) * 0.5)
+end
+
+local function combatSnapshot()
+  if K.combatCache then return K.combatCache end
+  local snapshot = {incoming={}, owners={}}
+  local index = entityIndex()
   for _, relation in ipairs(combatState().relations or {}) do
-    -- Kierunek relacji ma znaczenie. Sam fakt, ze gracz atakuje NPC,
-    -- nie oznacza, ze NPC atakuje tego gracza.
-    if tostring(relation.defender) == tostring(entity.id) then
-      local attacker = entityById(relation.attacker)
-      if attacker and attacker.kind == "npc"
-          and (not tonumber(attacker.hp) or tonumber(attacker.hp) > 0) then return attacker end
+    local attacker, defender = index[tostring(relation.attacker)], index[tostring(relation.defender)]
+    if attacker and attacker.kind == "npc" and defender and defender.kind ~= "npc"
+        and (not tonumber(attacker.hp) or tonumber(attacker.hp) > 0) then
+      local npc, player = tostring(attacker.id), tostring(defender.id)
+      local incoming = snapshot.incoming[player] or {count=0, npcs={}}
+      if not incoming.npcs[npc] then incoming.count = incoming.count + 1 end
+      incoming.npcs[npc] = attacker
+      snapshot.incoming[player] = incoming
+      local owners = snapshot.owners[npc] or {}
+      owners[player] = true
+      snapshot.owners[npc] = owners
     end
   end
+  for id, transfer in pairs(K.shieldTransfers) do
+    if not snapshot.owners[id] or transfer.untilTime <= now() then K.shieldTransfers[id] = nil end
+  end
+  -- Porownujemy rzeczywiste zmiany NPC -> gracz, nie opis/imie NPC.
+  -- Wielu obroncow (np. atak obszarowy) nie jest pojedynczym przejeciem.
+  if K.transferRevision ~= K.combatRevision then
+    local time, transfers = now(), {}
+    for npc, owners in pairs(snapshot.owners) do
+      local previous = K.previousIncoming and K.previousIncoming[npc]
+      local target = next(owners)
+      local origin = previous and next(previous)
+      local old = K.shieldTransfers[npc]
+      if old and old.untilTime > time then transfers[npc] = old end
+      if origin and target and origin ~= target
+          and next(owners, target) == nil and next(previous, origin) == nil then
+        transfers[npc] = {from=origin, to=target, untilTime=time + K.config.shieldHold}
+      end
+    end
+    K.shieldTransfers = transfers
+    K.previousIncoming, K.transferRevision = snapshot.owners, K.combatRevision
+  end
+  K.metrics.combat = K.metrics.combat + 1
+  K.combatCache = snapshot
+  return snapshot
+end
+
+local function incomingNpc(entity)
+  if not entity or not entity.id or not K.entitiesReady then return nil end
+  local incoming = combatSnapshot().incoming[tostring(entity.id)]
+  if incoming then
+    local _, npc = next(incoming.npcs)
+    return npc
+  end
+end
+
+local function shieldHealthPair(own, target)
+  local context = groupContext()
+  local ownGroup = context.memberVitals[tostring(own.id)] or context.memberVitals[normal(own.name)]
+  local targetGroup = context.memberVitals[tostring(target.id)] or context.memberVitals[normal(target.name)]
+  local ownRaw, targetRaw = own, target
+  if K.sourceRevisions.group > K.sourceRevisions.entities
+      and healthPair(ownGroup) and healthPair(targetGroup) then
+    ownRaw, targetRaw = ownGroup, targetGroup
+  end
+  local ownHp, ownMax = healthPair(ownRaw)
+  local targetHp, targetMax = healthPair(targetRaw)
+  if not ownHp or not targetHp then
+    ownRaw, targetRaw = ownGroup, targetGroup
+    ownHp, ownMax = healthPair(ownRaw)
+    targetHp, targetMax = healthPair(targetRaw)
+  end
+  if not ownHp or not targetHp then return nil end
+  -- Obie pule punktow pochodza z tego samego kanalu. Char.Vitals moze
+  -- miec inna skale; jego procent sluzy tylko do ostroznego obnizenia HP.
+  local latestOwn, latestTarget = latestHealth(own, ownGroup), latestHealth(target, targetGroup)
+  if latestOwn then ownHp = ownMax * latestOwn.hp / latestOwn.maxhp end
+  ownHp = math.min(ownHp, ownMax * K.lastHp / 100)
+  if latestTarget then targetHp = targetMax * latestTarget.hp / latestTarget.maxhp end
+  local function reserve(entity, hp, maximum)
+    local history = K.healthHistory[tostring(entity.id)]
+    if history and history.maxhp == maximum and history.room == currentRoom() then
+      local debt = history.debt * math.exp(-math.min(60, math.max(0, now() - history.at)) / 4)
+      hp = hp - math.min(hp * 0.5, debt * 0.5)
+    end
+    return math.max(0.01, hp)
+  end
+  return reserve(own, ownHp, ownMax), reserve(target, targetHp, targetMax), ownHp, targetHp
+end
+
+local function shieldImprovesSafety(target, percent)
+  local own = groupContext().self
+  if not own or not own.id or not target.id then return false, "Brak identyfikatorow graczy" end
+  local snapshot = combatSnapshot()
+  local ownId, targetId = tostring(own.id), tostring(target.id)
+  local ownIncoming = snapshot.incoming[ownId] or {count=0, npcs={}}
+  local targetIncoming = snapshot.incoming[targetId]
+  if not targetIncoming or targetIncoming.count == 0 then return false, "Brak napastnika NPC" end
+  local ownBudget, targetBudget, ownHp, targetHp = shieldHealthPair(own, target)
+  if not ownBudget then return false, "Brak porownywalnych HP w punktach" end
+  local before = math.max(pressure(ownIncoming.count) / ownBudget,
+    pressure(targetIncoming.count) / targetBudget)
+  local worstAfter, reverse = 0, false
+  for id in pairs(targetIncoming.npcs) do
+    local afterCount = ownIncoming.count + (ownIncoming.npcs[id] and 0 or 1)
+    if afterCount > K.config.shieldMaxAttackers then
+      return false, "Limit napastnikow po zaslonie: " .. afterCount
+    end
+    local after = math.max(pressure(afterCount) / ownBudget,
+      pressure(targetIncoming.count - 1) / targetBudget)
+    worstAfter = math.max(worstAfter, after)
+    local transfer = K.shieldTransfers[id]
+    if transfer and transfer.untilTime > now() and transfer.from == ownId and transfer.to == targetId then
+      reverse = true
+    end
+  end
+  if worstAfter > before * 0.85 then return false, "Za maly zapas obrony po zaslonie" end
+  if reverse and percent >= math.min(100, K.config.escapeHp + 15) and worstAfter > before * 0.60 then
+    return false, "Stabilizacja po przejeciu NPC"
+  end
+  K.shieldDecision = {ownHp=ownHp, targetHp=targetHp, ownAttackers=ownIncoming.count,
+    targetAttackers=targetIncoming.count}
+  return true
 end
 
 local function waitForFormation()
@@ -1379,7 +1575,7 @@ local function waitForFormation()
     if K.formationToken ~= token then return end
     K.formationTimer, K.formationToken = nil, nil
     K.shieldFormationReady = true
-    if K.enabled then later("actionTimer", K.config.actionDelay, inspectRoom) end
+    if K.enabled then queueInspection(inspectRoom) end
   end)
 end
 
@@ -1388,6 +1584,12 @@ local function tryShield(entity, hp, threshold)
   if K.shieldAwaitCombatRevision == K.combatRevision then return end
   if not hp or hp >= threshold or K.lastHp <= 0 or K.lastHp < K.config.shieldSelfHp then return end
   if not incomingNpc(entity) then return end
+  local improves, reason = shieldImprovesSafety(entity, hp)
+  if not improves then
+    K.shieldBlockedReason = reason
+    K.metrics.shieldBlocked = K.metrics.shieldBlocked + 1
+    return
+  end
   local target = trim(entity.name)
   if target == "" or target == "ty" or target == "brak wykrytej druzyny" then return end
   local key = normal(target)
@@ -1401,7 +1603,9 @@ local function tryShield(entity, hp, threshold)
   end
   if K.shieldRejectedForms[key] == form then return end
   K.shieldLastTarget = target
-  K.shieldPendingTarget = { name = target, form = form, combatRevision = K.combatRevision }
+  K.shieldPendingTarget = { name = target, form = form, id=tostring(entity.id), hp=hp,
+    combatRevision = K.combatRevision }
+  K.shieldBlockedReason = nil
   note(string.format(
     "Zaslaniam %s (%d%% HP, prog %d%%).",
     form:gsub("^%l", string.upper), hp, threshold
@@ -1412,6 +1616,7 @@ local function tryShield(entity, hp, threshold)
   later("shieldTimer", K.config.teamShieldInterval, function() end)
   later("shieldReplyTimer", 2.0, function() K.shieldPendingTarget = nil end)
   send("zaslon " .. form)
+  K.metrics.shields = K.metrics.shields + 1
   touchActivity()
   return true
 end
@@ -1450,33 +1655,58 @@ function K.onShieldResult(form, succeeded)
     -- Liczymy od chwili wyslania polecenia, aby nie zgubic juz odebranej
     -- zmiany celu i moc zaslonic przed kolejnym NPC po odzyskaniu szyku.
     K.shieldAwaitCombatRevision = requestedRevision
+    K.shieldFailure = nil
+  elseif pending and normal(pending.form) == normal(form) then
+    K.shieldFailure = {id=pending.id, name=pending.name, at=now(), room=currentRoom()}
   end
+  queueInspection(inspectRoom)
 end
 
 function K.onFormationReady()
   K.shieldFormationReady = true
   K.formationToken = nil
   cancelTimer("formationTimer")
-  if K.enabled then later("actionTimer", K.config.actionDelay, inspectRoom) end
+  if K.enabled then queueInspection(inspectRoom) end
 end
 
 local function maybeShieldTeamMember()
   if isFollower() or not K.entitiesReady or not combatIsActive() or K.teamSeenCount <= 0 then return end
   local candidates = {}
+  local own, snapshot = groupContext().self, combatSnapshot()
   for _, entity in ipairs(entities()) do
     local hp = K.teamHealth[normal(entity.name)]
-    if not isSelf(entity) and hp and hp < K.config.teamShieldHp and incomingNpc(entity) then
-      candidates[#candidates + 1] = { entity = entity, hp = hp }
+    local incoming = snapshot.incoming[tostring(entity.id)]
+    if own and not isSelf(entity) and hp and hp < K.config.teamShieldHp and incoming then
+      local _, reserve = shieldHealthPair(own, entity)
+      candidates[#candidates + 1] = {entity=entity, hp=hp,
+        risk=reserve and pressure(incoming.count) / reserve or math.huge}
     end
   end
-  table.sort(candidates, function(a, b) return a.hp < b.hp end)
+  table.sort(candidates, function(a, b)
+    if a.risk ~= b.risk then return a.risk > b.risk end
+    if a.hp ~= b.hp then return a.hp < b.hp end
+    return tostring(a.entity.id) < tostring(b.entity.id)
+  end)
   for _, candidate in ipairs(candidates) do
     if tryShield(candidate.entity, candidate.hp, K.config.teamShieldHp) then return end
+    local guard = math.min(K.config.teamShieldHp - 1, K.config.teamEscapeHp + 15)
+    if K.config.teamEscapeHp > 0 and candidate.hp < guard then
+      local safe = shieldImprovesSafety(candidate.entity, candidate.hp)
+      if not K.shieldFormationReady or not safe then
+        K.escape("Nie moge bezpiecznie oslonic " .. tostring(candidate.entity.name)
+          .. " (" .. candidate.hp .. "% HP).", candidate.entity.name)
+        return
+      end
+    end
   end
 end
 
-local function safetyCheck()
+local function safetyCheck(urgentOnly)
   updateVitals()
+  if K.enabled and K.lastHp <= 0 then
+    K.stop("Brak HP postaci. Zadanie zatrzymane; sprawdz stan w grze.")
+    return false
+  end
   -- Wspierajacy zachowuje role nawet przy niskim HP i ruchu. Prowadzacy
   -- ocenia HP i stany druzyny dotychczasowym mechanizmem.
   if isFollower() then return true end
@@ -1516,6 +1746,16 @@ local function safetyCheck()
     ), injuredTeamMember)
     return false
   end
+  if K.enabled and not recovery and K.config.teamEscapeHp > 0 and K.shieldFailure
+      and K.shieldFailure.room == currentRoom() and now() - K.shieldFailure.at < 8 then
+    local failure = K.shieldFailure
+    local hp = K.teamHealth[normal(failure.name)]
+    local guard = math.min(K.config.teamShieldHp - 1, K.config.teamEscapeHp + 15)
+    if hp and hp < guard and incomingNpc(entityById(failure.id)) then
+      K.escape("Nieudana zaslona; " .. failure.name .. " ma " .. hp .. "% HP.", failure.name)
+      return false
+    end
+  end
   if K.enabled and not recovery and K.lastMoves <= K.config.restAtMoves then
     K.escape(string.format(
       "Niemoc: ruch spadl do %d%% (prog %d%%).",
@@ -1523,7 +1763,7 @@ local function safetyCheck()
     ))
     return false
   end
-  if K.enabled and not recovery then maybeShieldTeamMember() end
+  if K.enabled and not recovery and not urgentOnly then maybeShieldTeamMember() end
   return true
 end
 
@@ -1568,39 +1808,63 @@ local function inspectFollower()
   local leaderFighting = target ~= nil or (hint and hint.leaderId == tostring(leader.id))
   local selfTarget = npcById(combatState().primary) or opponentOf(context.self)
   K.mode = selfTarget and "support_combat" or "support_wait"
-  if K.leaderRescue then
-    -- Po oslonie otrzymanej od lidera ranny wspierajacy nie oddaje sobie
-    -- natychmiast tego samego zagrozenia. Wraca do zaslon z przewaga 5 pp
-    -- HP nad liderem lub po zakonczeniu walki. Nie wysyla zadnych raportow.
-    if K.leaderRescue.leaderId ~= tostring(leader.id)
-        or (not leaderFighting and not selfTarget)
-        or (K.leaderHp and K.lastHp >= math.min(100, K.leaderHp + 5)) then
-      K.leaderRescue = nil
-    end
-  end
-  if K.config.role == "zaslony" and not K.leaderRescue and (leaderFighting or selfTarget) then
+  if K.config.role == "zaslony" and (leaderFighting or selfTarget) then
     tryShield(leader, K.leaderHp, K.config.leaderShieldHp)
   end
-  if not leaderFighting then return end
-  -- Gdy juz walczymy, ataki/DPS wykonuje gra. Nie ponawiamy "wesprzyj"
-  -- po kazdym pakiecie ani nie wybieramy wlasnego gatunku do "zabij".
-  if selfTarget or K.supportTimer then return end
+  if not leaderFighting then K.supportAttempt = nil return end
+  if selfTarget then
+    if K.supportAttempt then K.supportAttempt.confirmed = true end
+    return
+  end
+  local key = tostring(leader.id) .. ":" .. tostring(target and target.id or "hint")
+  local attempt = K.supportAttempt
+  if attempt and attempt.key == key then
+    if attempt.confirmed or now() < attempt.untilTime then return end
+    if attempt.deniedRevision and K.combatRevision <= attempt.deniedRevision then return end
+  end
+  if K.supportTimer then return end
   K.currentTargetId = target and target.id or nil
   K.currentTargetName = target and trim(target.name) or nil
   K.currentTargetAnimal = nil
   K.supportLastTarget = K.leaderName
+  -- Rezerwacja przed send: odpowiedz serwera moze poprzedzic Combat.State.
+  K.supportAttempt = {key=key, untilTime=now() + K.config.supportInterval}
   note("Wspieram prowadzacego: " .. K.leaderName .. ".", "green")
   send("wesprzyj")
+  K.metrics.support = K.metrics.support + 1
   later("supportTimer", K.config.supportInterval, function() end)
 end
 
+function K.onSupportResult(alreadyFighting)
+  if not K.enabled or not isFollower() or not K.supportAttempt then return end
+  if alreadyFighting then K.supportAttempt.confirmed = true
+  else
+    K.supportAttempt.confirmed = nil
+    K.supportAttempt.deniedRevision = K.combatRevision
+  end
+end
+
+function K.onDeath()
+  if K.enabled or K.reconnectTask then K.stop("Postac zginela. Anulowano zadanie i automatyczne wznowienie.") end
+end
+
 function K.onCoveredByLeader(actor)
-  if not K.enabled or K.config.role ~= "zaslony" or not K.entitiesReady then return end
+  if not K.enabled or not K.entitiesReady then return end
   local context = groupContext()
-  if not context.leader or normal(actor) ~= normal(context.leader.name) then return end
-  updateVitals()
-  if context.leaderHp and K.lastHp < context.leaderHp + 5 then
-    K.leaderRescue = {leaderId=tostring(context.leader.id)}
+  if not context.self then return end
+  for _, member in ipairs(context.members) do
+    if not isSelf(member) and normal(member.name) == normal(actor) then
+      local incoming = combatSnapshot().incoming[tostring(member.id)]
+      -- Jednoznaczny wynik tekstowy uzupelnia historie, gdy pierwszy
+      -- Combat.State po logowaniu juz opisuje wykonana zaslone.
+      if incoming and incoming.count == 1 then
+        local id = next(incoming.npcs)
+        K.shieldTransfers[id] = {from=tostring(context.self.id), to=tostring(member.id),
+          untilTime=now() + K.config.shieldHold}
+      end
+      queueInspection(inspectRoom)
+      return
+    end
   end
 end
 
@@ -1634,7 +1898,7 @@ function K.onTeamCombat(actor, defended)
       and (not form or normal(defended) ~= form) then return end
   K.supportCombatHint = { leaderId = tostring(leader.id) }
   later("supportHintTimer", 3.0, function() K.supportCombatHint = nil end)
-  later("actionTimer", K.config.actionDelay, inspectRoom)
+  queueInspection(inspectRoom)
 end
 
 local function beginHerbSearch()
@@ -1672,11 +1936,12 @@ function K.onHerbSearchFinished()
   K.herbSearchedRoom = currentRoom()
   K.mode = "patrol"
   touchActivity()
-  later("actionTimer", K.config.actionDelay, inspectRoom)
+  queueInspection(inspectRoom)
 end
 
 local function attack(entity, animal)
   if not K.enabled or isFollower() or K.mode == "escape" or K.mode == "kill_pause" then return end
+  K.emptyRounds, K.emptyPatrolDelay = 0, 0
   local sameTarget = K.currentTargetId
     and tostring(K.currentTargetId) == tostring(entity.id)
     and K.currentTargetName and normal(K.currentTargetName) == normal(entity.name)
@@ -1708,7 +1973,14 @@ end
 
 inspectRoom = function()
   if not K.enabled then return end
+  K.metrics.actions = K.metrics.actions + 1
+  if K.entitiesReady and K.sessionFresh.combat then combatSnapshot() end
   if isFollower() then inspectFollower() return end
+  local fingerprint = progressFingerprint()
+  if fingerprint ~= K.lastProgressFingerprint then
+    K.lastProgressFingerprint = fingerprint
+    touchActivity()
+  end
   if not safetyCheck() then return end
   local observedRoom = currentRoom()
   if K.pursuitOriginRoom and observedRoom and not K.roomSet[observedRoom] then K.pursuitLeftArea = true end
@@ -1816,6 +2088,10 @@ patrolStep = function(delayOverride)
     return
   end
   if not hasUnvisited() then
+    K.emptyRounds = K.patrolRoundKills == 0 and K.emptyRounds + 1 or 0
+    K.patrolRoundKills = 0
+    K.emptyPatrolDelay = K.config.emptyPatrolMax > 0 and K.emptyRounds > 0
+      and math.min(K.config.emptyPatrolMax, K.config.patrolDelay * 2 ^ math.min(6, K.emptyRounds)) or 0
     K.visited = { [room] = true }
     note("Obejrzalem caly obszar; zaczynam kolejne losowe okrazenie.", "cyan")
   end
@@ -1825,7 +2101,7 @@ patrolStep = function(delayOverride)
   end
   if not K.route or not K.route[K.routeIndex] then
     if #K.rooms == 1 and K.rooms[1] == room then
-      later("moveTimer", delayOverride or K.config.patrolDelay, function()
+      later("moveTimer", delayOverride or math.max(K.config.patrolDelay, K.emptyPatrolDelay), function()
         if K.enabled and K.mode == "patrol" then inspectRoom() end
       end)
       return
@@ -1856,7 +2132,8 @@ patrolStep = function(delayOverride)
   local edge = K.route[K.routeIndex]
   local command = directionCommands[normal(edge.direction)] or edge.direction
   K.patrolMovePending = true
-  later("moveTimer", delayOverride or K.config.patrolDelay, function()
+  local delay = delayOverride or math.max(K.config.patrolDelay, K.emptyPatrolDelay)
+  later("moveTimer", delay, function()
     if K.enabled and K.mode == "patrol" then
       sendDirection(command)
     else
@@ -1973,7 +2250,7 @@ function K.onAttackRejected()
   clearTarget()
   resetPursuit()
   K.mode = "patrol"
-  later("actionTimer", K.config.actionDelay, inspectRoom)
+  queueInspection(inspectRoom)
 end
 
 local idleReturnStep
@@ -2166,7 +2443,7 @@ end
 function K.onPanicLanded()
   if not K.enabled then return end
   if isFollower() then
-    later("actionTimer", K.config.actionDelay, inspectRoom)
+    queueInspection(inspectRoom)
     return
   end
   -- "Uciekles <NPC>." pojawia sie takze przy zwyklym wyjsciu z pokoju,
@@ -2177,6 +2454,7 @@ function K.onPanicLanded()
 end
 
 function K.onRoomChanged(eventName)
+  invalidateState(true)
   local previousRoom = K.lastRoom
   if eventName == "gmcp.Room.Info" then
     K.sessionFresh.room = true
@@ -2189,12 +2467,18 @@ function K.onRoomChanged(eventName)
     K.failedTargetIds = {}
     K.supportCombatHint = nil
     K.shieldPendingTarget = nil
+    if previousRoom ~= currentRoom() then
+      K.supportAttempt = nil
+      cancelTimer("supportTimer")
+      K.healthHistory, K.shieldTransfers = {}, {}
+      K.previousIncoming, K.transferRevision = nil, nil
+    end
   end
   if not K.enabled then return end
   if isFollower() then
     K.lastRoom = currentRoom()
     clearTarget()
-    later("actionTimer", K.config.actionDelay, inspectRoom)
+    queueInspection(inspectRoom)
     return
   end
   local room = markCurrentRoom()
@@ -2256,25 +2540,34 @@ function K.onRoomChanged(eventName)
   if K.mode == "patrol" and K.route and K.route[K.routeIndex] then
     if room == K.route[K.routeIndex].room then K.routeIndex = K.routeIndex + 1 else K.route = nil end
   end
-  later("actionTimer", K.config.actionDelay, inspectRoom)
+  queueInspection(inspectRoom)
 end
 
 function K.onGmcp(eventName)
+  K.metrics.events = K.metrics.events + 1
+  local healthEvent = eventName == "gmcp.Chimera.Room.Entities"
+    or eventName == "gmcp.Char.Vitals" or eventName == "gmcp.Chimera.Group.State"
+  invalidateState(healthEvent)
   if eventName == "gmcp.Chimera.Room.Entities" and not K.roomChangePending then
     K.entitiesReady = true
     K.sessionFresh.entities = true
     K.vitalsRevision = K.vitalsRevision + 1
     K.vitalsSource = "entities"
+    K.sourceRevisions.entities = K.dataRevision
   end
   if eventName == "gmcp.Char.Vitals" then
     K.vitalsRevision = K.vitalsRevision + 1
     K.vitalsSource = "char"
+    K.sourceRevisions.char = K.dataRevision
   end
   if eventName == "gmcp.Chimera.Combat.State" then
     K.sessionFresh.combat = true
     K.combatRevision = K.combatRevision + 1
   end
-  if eventName == "gmcp.Chimera.Group.State" then K.sessionFresh.group = true end
+  if eventName == "gmcp.Chimera.Group.State" then
+    K.sessionFresh.group = true
+    K.sourceRevisions.group = K.dataRevision
+  end
   if K.sessionBlocked and K.sessionFresh.room and K.sessionFresh.entities then
     for _, entity in ipairs(entities()) do
       if isSelf(entity) then
@@ -2292,12 +2585,13 @@ function K.onGmcp(eventName)
   if isFollower() then
     if eventName == "gmcp.Chimera.Group.State" then
       K.supportCombatHint = nil
-      K.shieldPendingTarget = nil
     end
-    if not K.actionTimer then later("actionTimer", K.config.actionDelay, inspectRoom) end
+    queueInspection(inspectRoom)
     return
   end
-  if not safetyCheck() then return end
+  -- Pilne HP omijaja kolejke decyzji; same zmiany relacji nie powoduja
+  -- wielokrotnego przeliczania zaslon i sortowania tego samego pakietu.
+  if healthEvent and not safetyCheck(true) then return end
   if K.mode == "idle_return" then return end
   if K.mode == "herb_search" then
     local combat = activeCombatTarget()
@@ -2307,14 +2601,9 @@ function K.onGmcp(eventName)
       K.herbSearchedRoom = nil
       K.mode = "patrol"
       note("Przerywam szukanie ziol: pojawil sie cel walki.", "yellow")
-      later("actionTimer", K.config.actionDelay, inspectRoom)
+      queueInspection(inspectRoom)
     end
     return
-  end
-  local fingerprint = progressFingerprint()
-  if fingerprint ~= K.lastProgressFingerprint then
-    K.lastProgressFingerprint = fingerprint
-    touchActivity()
   end
   if K.mode == "panic_wait" then return end
   if K.mode == "panic_search" then
@@ -2325,7 +2614,7 @@ function K.onGmcp(eventName)
   end
   if K.mode ~= "escape" and K.mode ~= "heal_rest" and K.mode ~= "recovery_return"
       and K.mode ~= "returning" and K.mode ~= "herb_search" then
-    later("actionTimer", K.config.actionDelay, inspectRoom)
+    queueInspection(inspectRoom)
   end
 end
 
@@ -2369,7 +2658,7 @@ function K.onFlee(name, direction)
       clearTarget()
       resetPursuit()
       K.mode = "patrol"
-      later("actionTimer", K.config.actionDelay, inspectRoom)
+      queueInspection(inspectRoom)
     end
     return
   end
@@ -2419,6 +2708,8 @@ end
 
 local function finishCurrentKill()
   if not K.enabled or K.mode == "kill_pause" or not K.currentTargetName then return end
+  K.patrolRoundKills = K.patrolRoundKills + 1
+  K.emptyRounds, K.emptyPatrolDelay = 0, 0
   local returnAfterPause = K.pursuitLeftArea and #K.pursuitTrail > 0
   clearTarget()
   K.route = nil
@@ -2444,7 +2735,7 @@ function K.onKill(name, confirmedByServer)
   if K.enabled and isFollower() then
     K.supportCombatHint = nil
     clearTarget()
-    later("actionTimer", K.config.actionDelay, inspectRoom)
+    queueInspection(inspectRoom)
     return
   end
   if not K.enabled or K.mode == "kill_pause" or not K.currentTargetName then return end
@@ -2474,6 +2765,7 @@ function K.onKill(name, confirmedByServer)
 end
 
 function K.stop(reason)
+  invalidateState(true)
   K.reconnectTask, K.reconnectWaitReason = nil, nil
   K.enabled = false
   K.mode = "stop"
@@ -2617,6 +2909,10 @@ function K.tryResumeAfterReconnect()
 end
 
 function K.onSessionEvent(eventName)
+  invalidateState(true)
+  K.healthHistory, K.shieldTransfers = {}, {}
+  K.previousIncoming, K.transferRevision = nil, nil
+  K.shieldFailure = nil
   local wasEnabled = K.enabled
   if wasEnabled and not K.reconnectTask then
     local task = {mode=K.mode, role=K.config.role, roster={}, returnRoom=K.pursuitOriginRoom}
@@ -2645,7 +2941,6 @@ function K.onSessionEvent(eventName)
   K.sessionFresh = {room=false, entities=false, combat=false, group=false, vitals=false}
   K.reconnectWaitReason = nil
   K.vitalsSource = nil
-  K.leaderRescue = nil
   K.shieldAwaitCombatRevision = nil
   if wasEnabled then
     note("Polaczenie z gra przerwane. Po zalogowaniu i odebraniu swiezych danych automatycznie wznowie zadanie.", "yellow")
@@ -2662,10 +2957,12 @@ function K.onMoveRejected()
   K.entitiesReady = true
   K.patrolMovePending, K.chaseMovePending = false, false
   K.route = nil
-  if K.mode == "patrol" then later("actionTimer", K.config.actionDelay, inspectRoom) end
+  if K.mode == "patrol" then queueInspection(inspectRoom) end
 end
 
 function K.start()
+  invalidateState(true)
+  K.emptyRounds, K.patrolRoundKills, K.emptyPatrolDelay = 0, 0, 0
   if K.sessionBlocked or not K.entitiesReady or K.roomChangePending then
     note("Czekam na swieze dane pokoju i postaci po zalogowaniu lub ruchu.", "yellow")
     return
@@ -2747,6 +3044,7 @@ function K.setRooms(roomIds)
   rebuildRoomSet()
   K.visited = {}
   K.route = nil
+  K.emptyRounds, K.patrolRoundKills, K.emptyPatrolDelay = 0, 0, 0
   K.saveSettings()
   note("Ustawiono obszar: " .. #K.rooms .. " pokoi.", #K.rooms > 0 and "green" or "red")
 end
@@ -2855,7 +3153,6 @@ function K.status()
   if K.reconnectTask then statusRow("Wznowienie", K.reconnectWaitReason or "Automatyczne po odebraniu swiezych danych") end
   if K.config.equipmentHold then statusRow("Ekwipunek", K.config.equipmentHold) end
   if K.recoveryMissing then statusRow("Brak w druzynie", K.recoveryMissing) end
-  if K.leaderRescue then statusRow("Zaslony", "Po oslonie lidera czekam na przewage 5 pp HP") end
   if K.updater then statusRow("Aktualizacje", K.updater.status or "gotowy") end
 
   statusPrefix("Sterowanie")
@@ -2944,6 +3241,16 @@ function K.status()
   statusEndRow()
   if isFollower() then statusRow("Zaslony druzyny", "Tylko prowadzacy; wspierajacy ma osobny prog lidera") end
   statusRow("Odmiany zaslon", #shieldForms > 0 and table.concat(shieldForms, ", ") or "brak (/kozojeb imie)")
+  statusRow("Limit zaslony", K.config.shieldMaxAttackers .. " napastnikow; stabilizacja " .. K.config.shieldHold .. " s")
+  if K.selfVitals then
+    local incoming = context.self and combatSnapshot().incoming[tostring(context.self.id)]
+    statusRow("Moje HP / wrogowie", string.format("%.0f/%.0f HP; %d napastnikow",
+      K.selfVitals.hp, K.selfVitals.maxhp, incoming and incoming.count or 0))
+  end
+  if K.shieldBlockedReason then statusRow("Zaslona wstrzymana", K.shieldBlockedReason) end
+  if not isFollower() and K.emptyPatrolDelay > 0 then
+    statusRow("Pusty patrol", string.format("%d pustych obiegow; ruch co %.1f s", K.emptyRounds, K.emptyPatrolDelay))
+  end
 
   if isFollower() then
     statusRow("Ruch postaci", K.lastMoves .. "% (odwrotem kieruje prowadzacy)")
@@ -3058,7 +3365,7 @@ end
 function K.help()
   cecho([[
 <cyan>+--------------------------------------------------------------+
-|                       KOZOJEB 2.8.4                           |
+|                       KOZOJEB 2.9.0                           |
 +--------------------------------------------------------------+<reset>
 <white>  Sterowanie<reset>
   <green>/kozojeb start<reset>                 uruchom wybrana role; prowadzacy
@@ -3083,8 +3390,13 @@ function K.help()
   <green>/kozojeb lider Yarrim yarrima<reset>   opcjonalnie wskaz imie i biernik
   <green>/kozojeb proglidera 70<reset>          zaslona prowadzacego ponizej 70% HP;
                               0 = wylaczona; prog dotyczy tylko lidera
-  <green>/kozojeb minhpzaslony 50<reset>       zaslaniaj, gdy sam mam co najmniej
-                              50% HP; minimum niezalezne od HP celu
+  <green>/kozojeb minhpzaslony 50<reset>       wlasne minimum procentowe;
+                              dodatkowo oceniam punkty HP i napastnikow
+  <green>/kozojeb limitzaslony 2<reset>        maksymalnie 2 napastnikow po oslonie
+  <green>/kozojeb stabilizacja 8<reset>        8 s ochrony przed oddaniem NPC
+  <green>/kozojeb pustypatrol 3<reset>         pusty patrol zwalnia do 3 s/krok;
+                              0 wylacza spowalnianie (zakres 0-10)
+  <green>/kozojeb wydajnosc<reset>             liczniki GMCP, decyzji i komend
   - Role, wybor lidera, oba progi zaslony i odmiany sa zapisywane na profilu.
   - Zmiana roli zatrzymuje bota. Po zmianie wpisz /kozojeb start.
   - Wsparcie dziala tylko przy widocznym prowadzacym nalezacym do druzyny.
@@ -3313,14 +3625,38 @@ local function configureIgnores(text)
     -- Skrot: /kozojeb ignoruj szaman dziala tak samo jak "ignoruj dodaj".
     addName(trim(text))
   end
-  if K.enabled then later("actionTimer", K.config.actionDelay, inspectRoom) end
+  if K.enabled then queueInspection(inspectRoom) end
+end
+
+function K.performance()
+  local m = K.metrics
+  note(string.format("Wydajnosc: GMCP %d; decyzje %d; timery decyzji %d; polaczone zdarzenia %d.",
+    m.events, m.actions, m.scheduled, m.coalesced))
+  note(string.format("Przeliczenia: HP %d; relacje walki %d; indeks encji %d. Komendy: zaslony %d, wsparcie %d; blokady zaslon %d.",
+    m.health, m.combat, m.index, m.shields, m.support, m.shieldBlocked))
 end
 
 local function executeCommand(arguments)
   local input = trim(arguments)
   local action, rest = input:match("^(%S+)%s*(.-)$")
   action = normal(action or "status")
-  if action == "aktualizuj" or action == "autoaktualizacja" or action == "repo" then
+  if action == "wydajnosc" then
+    K.performance()
+  elseif action == "limitzaslony" or action == "stabilizacja" or action == "pustypatrol" then
+    local value = tonumber(rest)
+    local low = action == "limitzaslony" and 1 or (action == "stabilizacja" and 2 or 0)
+    local high = action == "limitzaslony" and 5 or (action == "stabilizacja" and 30 or 10)
+    if not value or value ~= value or value < low or value > high or value % 1 ~= 0 then
+      note("Uzycie: /kozojeb " .. action .. " <" .. low .. "-" .. high .. ">.", "red") return
+    end
+    if action == "limitzaslony" then K.config.shieldMaxAttackers = value
+    elseif action == "stabilizacja" then K.config.shieldHold = value
+    else
+      K.config.emptyPatrolMax = value
+      K.emptyRounds, K.emptyPatrolDelay = 0, 0
+    end
+    note("Ustawiono " .. action .. ": " .. value .. ".", "green")
+  elseif action == "aktualizuj" or action == "autoaktualizacja" or action == "repo" then
     if K.updater then K.updater.command(action, rest)
     else note("Modul aktualizacji nie jest zaladowany.", "yellow") end
   elseif action == "ekwipunek" then
@@ -3364,7 +3700,7 @@ local function executeCommand(arguments)
     cancelTimer("supportHintTimer")
     saveRoleSettings()
     note("Prowadzacy: " .. (K.config.leaderName ~= "" and name or "auto (GMCP)") .. ".", "green")
-    if K.enabled and isFollower() then later("actionTimer", K.config.actionDelay, inspectRoom) end
+    if K.enabled and isFollower() then queueInspection(inspectRoom) end
   elseif action == "proglidera" or action == "zaslonalidera" then
     local value = tonumber(rest)
     if not value or value < 0 or value > 100 or value % 1 ~= 0 then
@@ -3426,7 +3762,7 @@ local function executeCommand(arguments)
       if K.mode == "herb_search" then
         K.herbSearchedRoom = currentRoom()
         K.mode = "patrol"
-        later("actionTimer", K.config.actionDelay, inspectRoom)
+        queueInspection(inspectRoom)
       end
       note("Szukanie ziol wylaczone.", "yellow")
       return
@@ -3448,7 +3784,7 @@ local function executeCommand(arguments)
     end
     K.herbSearchedRoom = nil
     note("Szukanie ziol wlaczone; komenda: " .. K.config.herbSearchCommand .. ".", "green")
-    if K.enabled and K.mode == "patrol" then later("actionTimer", K.config.actionDelay, inspectRoom) end
+    if K.enabled and K.mode == "patrol" then queueInspection(inspectRoom) end
   elseif action == "bezczynnosc" then
     local timeText, roomText = trim(rest):match("^(%S+)%s*(%d*)$")
     local cleaned = normal(timeText):gsub(",", ".")
@@ -3613,8 +3949,11 @@ local function executeCommand(arguments)
 end
 
 function K.command(arguments)
+  invalidateState(true)
   executeCommand(arguments)
-  K.saveSettings()
+  invalidateState(true)
+  local action = normal(arguments):match("^(%S+)") or "status"
+  if action ~= "status" and action ~= "help" and action ~= "wydajnosc" then K.saveSettings() end
 end
 
 function K.statusAction(action)
@@ -3636,6 +3975,12 @@ K.handlers = { triggers = {}, aliases = {}, events = {} }
 
 K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
   "^(.+) zaslania cie przed ciosami ", [[kozojeb.onCoveredByLeader(matches[2])]])
+K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
+  "^Juz walczysz .+\\.$", [[kozojeb.onSupportResult(true)]])
+K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
+  "^Nikt z twojej druzyny nie jest zaangazowany w walke\\.$", [[kozojeb.onSupportResult(false)]])
+K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
+  "^Umierasz\\.$", [[kozojeb.onDeath()]])
 K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
   "^.+ peka!!!$", [[kozojeb.onEquipmentBroken(matches[1])]])
 K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(

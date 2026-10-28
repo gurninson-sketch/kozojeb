@@ -1,5 +1,16 @@
 # Zmiany
 
+## 2.9.0
+
+- Zasłony oceniają HP w punktach, liczbę napastników po przejęciu i ostatnie spadki HP; progi procentowe pozostają dodatkowymi warunkami.
+- Nowszy pełny odczyt HP drużyny zastępuje starszy, z zachowaniem jednej skali przy porównywaniu postaci.
+- Domyślny limit 2 napastników po zasłonie i stabilizacja przejęć po ID NPC zamiast reguły 5 punktów procentowych.
+- Wcześniejszy wspólny odwrót prowadzącego przy nieskutecznej lub niebezpiecznej osłonie. Śmierć anuluje zadanie i wznowienie.
+- Jedna kolejka decyzji dla serii GMCP, zachowana pilna kontrola HP, ponowne użycie odczytów i jeden watchdog bez odtwarzania timera po każdym pakiecie.
+- Potwierdzanie własnej walki ogranicza powtarzanie wsparcia; odmowa wymaga nowych danych przed kolejną próbą.
+- Stopniowe zwalnianie pustego patrolu do 3 s/krok oraz komenda `/kozojeb wydajnosc`.
+- Testy różnych pul HP, przeciążenia, stabilizacji osłon, odmów wsparcia i serii 2000 pakietów.
+
 ## 2.8.4
 
 - Naprawa blokady `reconnect_wait`, gdy po ponownym zalogowaniu nie przychodzą zdarzenia dla niezmienionych kanałów GMCP.
