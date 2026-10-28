@@ -1,5 +1,16 @@
 # Zmiany
 
+## 2.9.1
+
+- Restart po powrocie do bazy zachowuje aktywne zadanie i czeka na spóźnione encje oraz kompletne HP. Ręczny stop nadal anuluje oczekiwanie.
+- Watchdog rozpoznaje postęp HP ze wszystkich obsługiwanych kanałów i rzeczywiste własne ciosy; znacznik czasu nie wymaga odtwarzania timera.
+- Własny atak na wybrany NPC ma pierwszeństwo przed sprzecznym `primary`. Niepotwierdzone ataki mają najwyżej trzy próby dla niezmienionych relacji, z odstępami 1 i 2 s.
+- Wsparcie zachowuje potwierdzenie przy uzgodnieniu tekstu z ID NPC, nie ponawia odmów po identycznych relacjach i pomija potwierdzone zgony widoczne jeszcze w starych pakietach.
+- Pamięć podręczna indeksu encji jest unieważniana przez zmianę danych pokoju zamiast przez każdy pakiet walki lub parametrów postaci.
+- Prowadzący uwzględnia rezerwę na kolejny ostatnio obserwowany silny spadek HP; bezpieczna dostępna zasłona ma pierwszeństwo przed dodatkowym odwrotem drużyny.
+- Poprawiona odmiana imienia w komunikacie o niedostępnej zasłonie. Rozszerzone liczniki wydajności bez dodatkowej pętli ani zapisu pakietów.
+- Symulacje odtwarzają problemy z logów, spóźnione dane po restarcie, ograniczenie prób i unieważnianie pamięci podręcznej.
+
 ## 2.9.0
 
 - Zasłony oceniają HP w punktach, liczbę napastników po przejęciu i ostatnie spadki HP; progi procentowe pozostają dodatkowymi warunkami.

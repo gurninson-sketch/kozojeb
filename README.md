@@ -1,4 +1,4 @@
-# Chimera Kozojeb 2.9.0
+# Chimera Kozojeb 2.9.1
 
 [Pobierz najnowszą paczkę](https://github.com/gurninson-sketch/kozojeb/releases/latest/download/Chimera_Kozojeb.mpackage) · [Wydania](https://github.com/gurninson-sketch/kozojeb/releases)
 
@@ -98,6 +98,7 @@ Niepoprawna forma odrzucona przez grę jest blokowana do poprawienia.
 
 - Prowadzący decyduje o odwrocie według własnego HP, HP drużyny i własnego zmęczenia.
 - Przy nieudanej lub niedostępnej bezpiecznej osłonie prowadzący może wycofać drużynę wcześniej: poniżej mniejszej wartości z `prog zasłony - 1` i `próg odwrotu drużyny + 15`. Przykładowo progi 50%/80% dają dodatkową granicę 65%. Wyłączenie kontroli HP drużyny przez `progdruzyny 0` wyłącza też ten dodatkowy odwrót. Wspierający nie wykonują osobnego odwrotu ani raportowania.
+- Od 2.9.1 prowadzący przez 8 s pamięta największy ostatni spadek HP w bieżącym pokoju. Przy stracie co najmniej 15% maksymalnego HP i nadal atakującym NPC zachowuje rezerwę na kolejny taki cios ponad skonfigurowany próg odwrotu. Przykład: próg 50%, ostatni spadek 25 punktów procentowych, teraz 74% — możliwy wcześniejszy odwrót. Przy zagrożonym koledze bezpieczna dostępna zasłona jest rozważana przed tym dodatkowym odwrotem. `progdruzyny 0` wyłącza rezerwę drużynową. Jest to reakcja na zaobserwowane HP, a nie przewidywanie pierwszego silnego ciosu, pancerza czy umiejętności przeciwnika.
 - Śmierć własnej postaci zatrzymuje bota i anuluje oczekujące wznowienie.
 - Po odwrocie czeka na swoje pełne HP, wymagany poziom ruchu oraz obecność i znane HP wcześniej widocznych członków drużyny. Osoba, której rany wywołały odwrót, musi odzyskać 100% HP.
 - Pęknięcie własnego lub widocznego drużynowego ekwipunku uruchamia wspólny odwrót i blokuje automatyczne wznowienie. Uzupełnij sprzęt i wpisz na prowadzącym `/kozojeb ekwipunek gotowy`.
@@ -111,7 +112,7 @@ Niepoprawna forma odrzucona przez grę jest blokowana do poprawienia.
 
 ## Aktualizacje z GitHuba
 
-Jeśli masz już Kozojeba 2.8.1–2.8.4, wykonaj na **każdym profilu**:
+Jeśli masz już Kozojeba 2.8.1–2.9.0, wykonaj na **każdym profilu**:
 
 ```text
 /kozojeb stop
@@ -120,7 +121,7 @@ Jeśli masz już Kozojeba 2.8.1–2.8.4, wykonaj na **każdym profilu**:
 /kozojeb aktualizuj
 ```
 
-Poczekaj na zakończenie walki i ruchu oraz komunikat `Zainstalowano 2.9.0`. Sprawdź `/kozojeb status`; powinien pokazać wersję **2.9.0**. Następnie uruchom `/kozojeb start` — najpierw na wspierających, potem na prowadzącym. To jednorazowy start po aktualizacji; późniejsze rozłączenia nie wymagają ręcznego wznowienia. Nie trzeba usuwać ani ręcznie instalować paczki; ustawienia profili pozostają zachowane.
+Poczekaj na zakończenie walki i ruchu oraz komunikat `Zainstalowano 2.9.1`. Sprawdź `/kozojeb status`; powinien pokazać wersję **2.9.1**. Następnie uruchom `/kozojeb start` — najpierw na wspierających, potem na prowadzącym. To jednorazowy start po aktualizacji; późniejsze rozłączenia nie wymagają ręcznego wznowienia. Nie trzeba usuwać ani ręcznie instalować paczki; ustawienia profili pozostają zachowane.
 
 Przy paczce zbudowanej w tym repozytorium adres wydań jest wbudowany. W paczce przygotowanej bez adresu skonfiguruj na każdym profilu:
 
@@ -142,9 +143,13 @@ Konfiguracja — w tym obszar, cele, prędkości, progi, role i odmiany — pozo
 
 ## Wydajność i powtarzane komendy
 
-Kolejne zdarzenia GMCP współdzielą jeden oczekujący timer decyzji (zwykle 0,12 s). Krytyczny odczyt HP prowadzącego lub drużyny jest sprawdzany od razu, bez oczekiwania na tę kolejkę. Dane HP, indeks encji oraz relacje walki są obliczane raz dla aktualnego stanu i wykorzystywane ponownie. Watchdog bezczynności przesuwa termin bez tworzenia nowego timera przy każdym pakiecie.
+Kolejne zdarzenia GMCP współdzielą jeden oczekujący timer decyzji (zwykle 0,12 s). Krytyczny odczyt HP prowadzącego lub drużyny jest sprawdzany od razu, bez oczekiwania na tę kolejkę. Dane HP, indeks encji oraz relacje walki są obliczane raz dla aktualnego stanu i wykorzystywane ponownie. Aktualizacje walki i własnych parametrów nie przebudowują indeksu niezmienionej listy encji.
 
-Potwierdzenie własnej walki, w tym odpowiedź `Juz walczysz`, powstrzymuje kolejne `wesprzyj` dla tego samego starcia. Po odmowie wsparcia bot czeka na nowe dane walki. To ogranicza komendy Kozojeba; inne skrypty i ręczne aliasy mogą nadal wysyłać własne polecenia.
+Watchdog uwzględnia zmiany pełnych HP z `Char.Vitals`, `Group.State` i `Room.Entities`, również mniejsze od zaokrąglonego procenta, oraz rzeczywiste własne ciosy. Przesuwa znacznik czasu bez tworzenia nowego timera przy każdym pakiecie lub ciosie. Identyczne pakiety nie udają postępu. Po powrocie do bazy restart czeka na świeży pokój i kompletne HP, zachowując aktywne zadanie. Nie wymaga ręcznego startu po spóźnionej liście encji; ręczny stop anuluje oczekiwanie.
+
+Potwierdzenie własnej walki, w tym odpowiedź `Juz walczysz`, powstrzymuje kolejne `wesprzyj` dla tego samego starcia. Krótkie przejście od tekstowej informacji o walce do konkretnego ID przeciwnika zachowuje potwierdzenie. Po odmowie wsparcia bot czeka na zmianę relacji walki lub nowy komunikat walki; identyczne pakiety, kolejność i duplikaty relacji nie wystarczają. Potwierdzona śmierć jednoznacznie rozpoznanego NPC blokuje reakcje na jego stare dane.
+
+Własna relacja ataku na wybrany cel potwierdza walkę także wtedy, gdy `primary` wskazuje innego agresora. Przy braku potwierdzenia bot wysyła najwyżej trzy próby ataku dla niezmienionego stanu, z odstępami 1 i 2 s; kolejne wymagają zmiany walki. To ogranicza komendy Kozojeba; inne skrypty i ręczne aliasy mogą nadal wysyłać własne polecenia.
 
 Po pustych pełnych okrążeniach patrol stopniowo zwalnia. Domyślny maksymalny odstęp wynosi 3 sekundy na krok. Nowy cel jest sprawdzany po GMCP bez czekania na wolniejszy krok, a walka przywraca zwykłe tempo. Ustawienie jest lokalne dla profilu:
 
@@ -154,7 +159,7 @@ Po pustych pełnych okrążeniach patrol stopniowo zwalnia. Domyślny maksymalny
 /kozojeb wydajnosc
 ```
 
-`0` wyłącza zwalnianie. `wydajnosc` wypisuje liczniki zdarzeń, decyzji, przeliczeń i komend od załadowania skryptu; nie jest pomiarem całkowitego CPU Mudleta. Nie uruchamia nagrywania pakietów, pętli odpytywania, testów sieciowych ani zapisu logu na dysk. Dane obserwacji są ograniczone do widocznych członków drużyny i NPC bieżącego pokoju.
+`0` wyłącza zwalnianie. `wydajnosc` wypisuje liczniki zdarzeń, decyzji, przeliczeń, ataków i ich ponowień, powrotów watchdogu oraz oczekiwań na restart od załadowania skryptu; nie jest pomiarem całkowitego CPU Mudleta. Nie uruchamia nagrywania pakietów, pętli odpytywania, testów sieciowych ani zapisu logu na dysk. Dane obserwacji są ograniczone do widocznych członków drużyny i NPC bieżącego pokoju.
 
 Kozojeb wznawia zadanie po odzyskaniu sesji, ale nie zmienia automatycznego logowania Mudleta, obsługi pytania o przejęcie postaci ani odstępów ponownego łączenia w innych skryptach. Te ustawienia wymagają osobnego sprawdzenia przy odrzucanych połączeniach.
 
