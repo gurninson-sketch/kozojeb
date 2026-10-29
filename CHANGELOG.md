@@ -1,5 +1,16 @@
 # Zmiany
 
+## 2.9.2
+
+- Obsługa rzeczywistego pola `fatigue` Chimery: 0% oznacza wypoczęcie, 100% wyczerpanie. Progi `odpoczynek` nadal określają pozostałe siły do ruchu; pełna para `moves/maxmoves` jest obsługiwana zastępczo.
+- Odmowa `Jestes tak zmeczony, ze nie mozesz isc [w tym kierunku].` zwalnia oczekiwanie na nieudany krok i wstrzymuje ruch bez oznaczania wyjścia jako błędnego. Wznowienie wymaga świeżego odczytu sił; stare HP i ruch sprzed odmowy nie wystarczają.
+- Prowadzący uwzględnia dostępne odczyty zmęczenia drużyny i czeka na odpoczynek zmęczonego członka przed wznowieniem po odwrocie. Brak danych nie jest uznawany za potwierdzone wypoczęcie.
+- Po własnym kroku patrolu lub pościgu prowadzący daje drużynie 1 s na przybycie. Przy pozostawionym członku blokuje nowy atak i dalszy patrol, wraca jednym potwierdzonym wyjściem mapy i odpoczywa. Kolejne nieudane przejścia wydłużają przerwę do 10, 20 i 30 s. Bez drogi powrotnej czeka na zebranie drużyny.
+- Pilny odwrót ma pierwszeństwo przed zbieraniem drużyny; brakujący członkowie pozostają wymagani przed wznowieniem patrolu w bazie. Wspierający nadal nie wykonują własnego ruchu, odwrotu ani raportowania.
+- Znane zmęczenie podczas powrotu przez `/idz` nie zużywa kolejnych prób dotarcia do bazy. Odpoczynek i zbieranie drużyny są kontynuowane po ponownym połączeniu; stop, zmiana roli i śmierć anulują oczekiwanie.
+- Jeden timer tylko podczas wstrzymania ruchu; `stan` najwyżej co 10 s po własnej odmowie ruchu. Dodatkowe liczniki odpoczynków i powrotów po drużynę w `/kozojeb wydajnosc`.
+- Testy odmów z logów, progów i kolejności źródeł zmęczenia, spóźnionego przybycia, powrotów po członka, stopniowego odpoczynku, priorytetu HP, ponownego łączenia i serii 2000 pakietów.
+
 ## 2.9.1
 
 - Restart po powrocie do bazy zachowuje aktywne zadanie i czeka na spóźnione encje oraz kompletne HP. Ręczny stop nadal anuluje oczekiwanie.

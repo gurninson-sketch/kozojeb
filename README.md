@@ -1,4 +1,4 @@
-# Chimera Kozojeb 2.9.1
+# Chimera Kozojeb 2.9.2
 
 [Pobierz najnowszą paczkę](https://github.com/gurninson-sketch/kozojeb/releases/latest/download/Chimera_Kozojeb.mpackage) · [Wydania](https://github.com/gurninson-sketch/kozojeb/releases)
 
@@ -112,7 +112,7 @@ Niepoprawna forma odrzucona przez grę jest blokowana do poprawienia.
 
 ## Aktualizacje z GitHuba
 
-Jeśli masz już Kozojeba 2.8.1–2.9.0, wykonaj na **każdym profilu**:
+Jeśli masz już Kozojeba 2.8.1–2.9.1, wykonaj na **każdym profilu**:
 
 ```text
 /kozojeb stop
@@ -121,7 +121,7 @@ Jeśli masz już Kozojeba 2.8.1–2.9.0, wykonaj na **każdym profilu**:
 /kozojeb aktualizuj
 ```
 
-Poczekaj na zakończenie walki i ruchu oraz komunikat `Zainstalowano 2.9.1`. Sprawdź `/kozojeb status`; powinien pokazać wersję **2.9.1**. Następnie uruchom `/kozojeb start` — najpierw na wspierających, potem na prowadzącym. To jednorazowy start po aktualizacji; późniejsze rozłączenia nie wymagają ręcznego wznowienia. Nie trzeba usuwać ani ręcznie instalować paczki; ustawienia profili pozostają zachowane.
+Poczekaj na zakończenie walki i ruchu oraz komunikat `Zainstalowano 2.9.2`. Sprawdź `/kozojeb status`; powinien pokazać wersję **2.9.2**. Następnie uruchom `/kozojeb start` — najpierw na wspierających, potem na prowadzącym. To jednorazowy start po aktualizacji; późniejsze rozłączenia nie wymagają ręcznego wznowienia. Nie trzeba usuwać ani ręcznie instalować paczki; ustawienia profili pozostają zachowane.
 
 Przy paczce zbudowanej w tym repozytorium adres wydań jest wbudowany. W paczce przygotowanej bez adresu skonfiguruj na każdym profilu:
 
@@ -160,6 +160,22 @@ Po pustych pełnych okrążeniach patrol stopniowo zwalnia. Domyślny maksymalny
 ```
 
 `0` wyłącza zwalnianie. `wydajnosc` wypisuje liczniki zdarzeń, decyzji, przeliczeń, ataków i ich ponowień, powrotów watchdogu oraz oczekiwań na restart od załadowania skryptu; nie jest pomiarem całkowitego CPU Mudleta. Nie uruchamia nagrywania pakietów, pętli odpytywania, testów sieciowych ani zapisu logu na dysk. Dane obserwacji są ograniczone do widocznych członków drużyny i NPC bieżącego pokoju.
+
+## Zmęczenie i odmowa ruchu
+
+Od 2.9.2 bot odczytuje `fatigue` Chimery: **0% oznacza wypoczęcie, 100% wyczerpanie**. W panelu ruch nadal oznacza pozostałe siły, czyli `100 - fatigue`. Gdy tego pola nie ma, bot korzysta z kompletnej pary `moves/maxmoves` z jednego źródła.
+
+```text
+/kozojeb odpoczynek 25 55
+```
+
+To wspólne progi prowadzącego: odwrót przy co najwyżej 25% pozostałych sił (co najmniej 75% zmęczenia), wznowienie po osiągnięciu co najmniej 55% sił (zmęczenie co najwyżej 45%). Dostępne pełne odczyty drużynowe są oceniane według tych samych progów. Osoba, której zmęczenie wywołało odwrót, musi mieć potwierdzone odzyskanie sił przed powrotem do patrolu. Wspierający nadal pozostają w drużynie i nie wysyłają raportów ani własnych komend ruchu.
+
+Po komunikacie `Jestes tak zmeczony, ze nie mozesz isc w tym kierunku.` prowadzący wstrzymuje własny ruch w miejscu. Nie czeka na watchdog, nie blokuje poprawnego wyjścia na mapie i nie ponawia kroków na podstawie starego odczytu 100%. Automatyczne wznowienie wymaga nowego kompletnego odczytu sił. Podczas tego oczekiwania bot wysyła `stan` najwyżej raz na 10 sekund; poza oczekiwaniem ten timer nie działa.
+
+Gdy serwer nie udostępnia zmęczenia wspierającego, prowadzący korzysta z obecności drużyny po własnym kroku patrolu lub pościgu. Daje postaciom **1 sekundę** na przybycie. Jeśli ktoś pozostał z tyłu, wstrzymuje nowy atak i dalszy patrol, wraca **o jeden pokój**, jeśli mapa potwierdza takie wyjście, i odpoczywa z zebraną drużyną. Kolejne nieudane przejścia wydłużają przerwę do **10, 20 i 30 sekund**. Przy dostępnych danych czeka również na wymagane siły; bez tych danych po przerwie wykonuje kontrolowaną próbę dalszego wspólnego przejścia. Brak drogi powrotnej oznacza oczekiwanie na zebranie drużyny, bez zgadywania kierunku.
+
+Niski HP i pilny odwrót nadal mają pierwszeństwo. Odpoczynek nie zmienia decyzji gry o podążaniu w drużynie ani działania ręcznie uruchomionego chodzika; nie zapewnia bezpieczeństwa lokacji. Po odzyskaniu połączenia oczekiwanie jest kontynuowane automatycznie. Ręczny stop, zmiana roli i śmierć je anulują. Panel pokazuje powód wstrzymania ruchu, a `/kozojeb wydajnosc` także liczbę odpoczynków i powrotów po drużynę.
 
 Kozojeb wznawia zadanie po odzyskaniu sesji, ale nie zmienia automatycznego logowania Mudleta, obsługi pytania o przejęcie postaci ani odstępów ponownego łączenia w innych skryptach. Te ustawienia wymagają osobnego sprawdzenia przy odrzucanych połączeniach.
 

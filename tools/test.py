@@ -1,6 +1,7 @@
 """Run the Lua simulations and verify the reproducible release package."""
 import hashlib
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -9,6 +10,18 @@ import zipfile
 from pathlib import Path
 
 from build import ROOT, build
+
+# Sprawdzenie rzeczywistego zarejestrowanego wzorca, obok symulacji handlera.
+source = (ROOT / "src/Chimera_Kozojeb.lua").read_text()
+rejection = re.search(
+    r'tempRegexTrigger\(\s*("(?:\\.|[^"\\])*"),\s*\[\[kozojeb\.onMovementExhausted\(\)\]\]', source
+)
+assert rejection, "Missing movement exhaustion trigger"
+pattern = json.loads(rejection.group(1))
+for line in ("Jestes tak zmeczony, ze nie mozesz isc.",
+             "Jestes tak zmeczony, ze nie mozesz isc w tym kierunku."):
+    assert re.fullmatch(pattern, line), "Logged movement refusal did not match: " + line
+assert not re.fullmatch(pattern, "Nie widzisz zadnego wyjscia prowadzacego na zachod.")
 
 for test in ("roles.lua", "sha256.lua", "updater.lua"):
     subprocess.run([sys.executable, "tools/run_lua.py", f"tests/{test}"], cwd=ROOT, check=True)

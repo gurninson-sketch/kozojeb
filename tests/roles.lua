@@ -2022,4 +2022,295 @@ test("a new living HP snapshot after a zero HP snapshot releases a recycled NPC 
   assert(not kozojeb.deadNpcIds.N and count("wesprzyj")==1)
 end)
 
+local function movementLeader()
+  reset(nil)
+  gmcp.Chimera.Group.State.leader = "S"
+  gmcp.Chimera.Room.Entities.entities[1].group_role = "leader"
+  gmcp.Chimera.Room.Entities.entities[2].group_role = "member"
+  table.remove(gmcp.Chimera.Room.Entities.entities, 4)
+  gmcp.Chimera.Combat.State = {primary="", relations={}}
+  kozojeb.setRooms({1322,1323})
+  kozojeb.command("pustypatrol 0")
+  kozojeb.start()
+end
+
+test("native Chimera fatigue overrides stale full moves and triggers the leader retreat", function()
+  movementLeader()
+  room = 1323
+  kozojeb.onRoomChanged("gmcp.Room.Info")
+  gmcp.Char.Vitals.fatigue = 80
+  event("gmcp.Char.Vitals")
+  assert(kozojeb.lastMoves == 20 and kozojeb.mode == "escape")
+  assert(aliases[1] == "/idz 1322")
+end)
+
+test("fatigue recovery retains the existing movement thresholds and full HP requirement", function()
+  movementLeader()
+  room = 1323
+  kozojeb.onRoomChanged("gmcp.Room.Info")
+  gmcp.Char.Vitals = {hp=100,maxhp=100,fatigue=80}
+  event("gmcp.Char.Vitals")
+  room = 1322;kozojeb.onRoomChanged("gmcp.Room.Info");event()
+  gmcp.Char.Vitals.fatigue = 46
+  event("gmcp.Char.Vitals");advance(3.1)
+  assert(kozojeb.mode == "heal_rest")
+  gmcp.Char.Vitals.fatigue = 45
+  event("gmcp.Char.Vitals");advance(3.1)
+  assert(kozojeb.enabled and kozojeb.mode == "patrol")
+end)
+
+test("fresh low teammate fatigue from Group State works even without a teammate HP field", function()
+  movementLeader()
+  room = 1323;kozojeb.onRoomChanged("gmcp.Room.Info");event()
+  gmcp.Chimera.Group.State.members = {"S","L",{id="M",name="Morrid",fatigue=90}}
+  event("gmcp.Chimera.Group.State")
+  assert(kozojeb.mode == "escape" and kozojeb.teamMoves.morrid == 10)
+  assert(kozojeb.recoveryTired.morrid == "Morrid" and aliases[1] == "/idz 1322")
+end)
+
+test("team movement recovery cannot use a missing or incomplete tired member reading", function()
+  movementLeader()
+  room = 1323;kozojeb.onRoomChanged("gmcp.Room.Info");event()
+  local member = gmcp.Chimera.Room.Entities.entities[3]
+  member.fatigue = 85;event()
+  assert(kozojeb.mode == "escape" and kozojeb.recoveryTired.morrid == "Morrid")
+  room = 1322;kozojeb.onRoomChanged("gmcp.Room.Info");event();advance(3.1)
+  assert(kozojeb.mode == "heal_rest")
+  member.fatigue = nil;event();advance(3.1)
+  assert(kozojeb.mode == "heal_rest")
+  member.fatigue = 46;event();advance(3.1)
+  assert(kozojeb.mode == "heal_rest")
+  member.fatigue = 45;event();advance(3.1)
+  assert(kozojeb.mode == "patrol" and not next(kozojeb.recoveryTired))
+end)
+
+test("unrelated NPC fatigue cannot force a team rest", function()
+  movementLeader()
+  gmcp.Chimera.Room.Entities.entities[4] = {id="X",name="Obcy wilk",kind="npc",fatigue=100}
+  kozojeb.command("cele snotling")
+  event()
+  assert(kozojeb.mode == "patrol" and not next(kozojeb.recoveryTired) and #aliases == 0)
+end)
+
+test("both supporting roles ignore personal fatigue and the new movement refusal trigger", function()
+  for _, role in ipairs({"wsparcie","zaslony"}) do
+    reset(role)
+    gmcp.Char.Vitals.fatigue = 100
+    kozojeb.start()
+    local fired = 0
+    for _, trigger in ipairs(triggers) do
+      if trigger.handler:find("kozojeb.onMovementExhausted()",1,true) then
+        assert(compile(trigger.handler))();fired = fired + 1
+      end
+    end
+    assert(fired == 1 and kozojeb.enabled and not kozojeb.movementRest)
+    advance(35)
+    noMovement()
+  end
+end)
+
+test("a refused own step releases room acknowledgement without blacklisting a valid exit", function()
+  movementLeader();advance(.71)
+  assert(count("e") == 1 and kozojeb.roomChangePending)
+  kozojeb.onMovementExhausted()
+  assert(not kozojeb.roomChangePending and kozojeb.entitiesReady and kozojeb.movementRest)
+  assert(not kozojeb.failedExits[1322] and not kozojeb.moveSnapshot)
+  advance(31)
+  assert(count("e") == 1 and count("stan") == 3 and #aliases == 0)
+  assert(kozojeb.metrics.idleResets == 0 and kozojeb.enabled)
+end)
+
+test("cached full movement and unrelated HP packets cannot end a refusal rest", function()
+  movementLeader();advance(.71);kozojeb.onMovementExhausted()
+  advance(11)
+  for i=1,20 do event() end
+  assert(kozojeb.movementRest and count("e") == 1)
+  gmcp.Char.Vitals = {hp=100,maxhp=100};event("gmcp.Char.Vitals")
+  assert(kozojeb.movementRest)
+  gmcp.Char.Vitals.fatigue = 45;event("gmcp.Char.Vitals");advance(1)
+  assert(not kozojeb.movementRest and count("e") == 2)
+end)
+
+test("GMCP bursts during a refusal reuse one rest timer and never send movement probes", function()
+  movementLeader();advance(.71);kozojeb.onMovementExhausted()
+  local timer = kozojeb.movementRestTimer
+  for i=1,2000 do kozojeb.onGmcp("gmcp.Chimera.Room.Entities") end
+  assert(kozojeb.movementRestTimer == timer and count("e") == 1 and count("stan") == 0)
+end)
+
+test("delayed room data cannot be restored from a refusal after Room Info", function()
+  movementLeader();advance(.71)
+  kozojeb.onRoomChanged("gmcp.Room.Info")
+  assert(not kozojeb.entitiesReady)
+  kozojeb.onMovementExhausted()
+  assert(not kozojeb.entitiesReady and kozojeb.movementRest)
+  advance(11)
+  assert(count("e") == 1)
+end)
+
+test("a teammate arriving within the one second grace prevents a needless return", function()
+  movementLeader();advance(.71)
+  local member = table.remove(gmcp.Chimera.Room.Entities.entities,3)
+  room=1323;kozojeb.onRoomChanged("gmcp.Room.Info");event()
+  assert(kozojeb.teamStep and kozojeb.teamStepTimer and count("w") == 0)
+  advance(.3)
+  gmcp.Chimera.Room.Entities.entities[3]=member;event()
+  assert(not kozojeb.teamStep and not kozojeb.movementRest and not kozojeb.teamStepTimer)
+  assert(count("w") == 0 and kozojeb.metrics.regroups == 0)
+end)
+
+test("the leader returns one mapped room for a lagging teammate and rests before retrying", function()
+  movementLeader();advance(.71)
+  local member = table.remove(gmcp.Chimera.Room.Entities.entities,3)
+  room=1323;kozojeb.onRoomChanged("gmcp.Room.Info");event();advance(1)
+  assert(kozojeb.movementRest and count("w") == 1 and count("e") == 1)
+  assert(#aliases == 0 and kozojeb.metrics.regroups == 1)
+  room=1322;kozojeb.onRoomChanged("gmcp.Room.Info")
+  gmcp.Chimera.Room.Entities.entities[3]=member;event()
+  advance(5)
+  assert(kozojeb.movementRest and count("e") == 1)
+  advance(6)
+  assert(not kozojeb.movementRest and count("e") == 2 and kozojeb.metrics.idleResets == 0)
+end)
+
+test("missing teammates block new attacks during the arrival grace", function()
+  movementLeader();advance(.71)
+  table.remove(gmcp.Chimera.Room.Entities.entities,3)
+  gmcp.Chimera.Room.Entities.entities[3]={id="N",name="Maly glupkowaty snotling",kind="npc",hp=100,maxhp=100}
+  room=1323;kozojeb.onRoomChanged("gmcp.Room.Info");event()
+  assert(kozojeb.teamStep and count("zabij snotlinga") == 0)
+end)
+
+test("a dissolved team cannot cause permanent regroup waiting", function()
+  movementLeader();advance(.71)
+  gmcp.Chimera.Room.Entities.entities={gmcp.Chimera.Room.Entities.entities[1]}
+  gmcp.Chimera.Group.State={members={}}
+  room=1323;kozojeb.onRoomChanged("gmcp.Room.Info");event();advance(.2)
+  assert(not kozojeb.teamStep and not kozojeb.movementRest and kozojeb.metrics.regroups == 0)
+end)
+
+test("unknown return exits do not invent a direction or repeatedly move the leader", function()
+  movementLeader();advance(.71)
+  local originalExits = getRoomExits
+  getRoomExits = function(id) if id == 9999 then return {} end return originalExits(id) end
+  table.remove(gmcp.Chimera.Room.Entities.entities,3)
+  room=9999;kozojeb.onRoomChanged("gmcp.Room.Info");event();advance(1)
+  assert(kozojeb.movementRest and #sends == 1 and #aliases == 0)
+  advance(40)
+  assert(#sends == 1 and kozojeb.enabled and kozojeb.metrics.idleResets == 0)
+  getRoomExits = originalExits
+end)
+
+test("critical HP overrides the team arrival wait and preserves the absent recovery roster", function()
+  movementLeader();advance(.71)
+  table.remove(gmcp.Chimera.Room.Entities.entities,3)
+  room=1323;kozojeb.onRoomChanged("gmcp.Room.Info")
+  gmcp.Chimera.Room.Entities.entities[1].hp=20;gmcp.Char.Vitals.hp=20;event()
+  assert(kozojeb.mode == "escape" and aliases[1] == "/idz 1322")
+  assert(kozojeb.recoveryRoster.morrid == "Morrid" and not kozojeb.teamStep)
+end)
+
+test("a known tired walker does not exhaust three retreat attempts while resting", function()
+  movementLeader()
+  room=1323;kozojeb.onRoomChanged("gmcp.Room.Info")
+  gmcp.Char.Vitals.fatigue=80;event("gmcp.Char.Vitals")
+  advance(60)
+  assert(kozojeb.enabled and kozojeb.mode == "escape" and #aliases == 1)
+  assert(kozojeb.escapeAttempts == 1)
+end)
+
+test("manual stop, role change and death cancel movement rest permanently", function()
+  for _, action in ipairs({"stop","rola wsparcie","death"}) do
+    movementLeader();advance(.71);kozojeb.onMovementExhausted()
+    if action == "death" then kozojeb.onDeath() else kozojeb.command(action) end
+    sends,aliases={},{}
+    gmcp.Char.Vitals.fatigue=0;event("gmcp.Char.Vitals");advance(60)
+    assert(not kozojeb.enabled and not kozojeb.movementRest and not kozojeb.movementRestTimer)
+    assert(#sends == 0 and #aliases == 0)
+  end
+end)
+
+test("disconnect and fresh recovery retain an active refusal rest without manual start", function()
+  movementLeader();advance(.71);kozojeb.onMovementExhausted()
+  kozojeb.onSessionEvent("sysDisconnectionEvent")
+  sends,aliases={},{}
+  kozojeb.onSessionEvent("sysConnectionEvent")
+  gmcp.Char.Vitals.fatigue=45
+  reconnectPackets()
+  assert(kozojeb.enabled and kozojeb.movementRest and not kozojeb.reconnectTask)
+  advance(11)
+  assert(kozojeb.enabled and not kozojeb.movementRest and count("e") == 1)
+end)
+
+test("repeated failed group steps back off for ten twenty and thirty seconds", function()
+  movementLeader();advance(.71)
+  for attempt=1,3 do
+    local member=table.remove(gmcp.Chimera.Room.Entities.entities,3)
+    room=1323;kozojeb.onRoomChanged("gmcp.Room.Info");event();advance(1)
+    assert(kozojeb.movementRest and count("w") == attempt)
+    room=1322;kozojeb.onRoomChanged("gmcp.Room.Info")
+    gmcp.Chimera.Room.Entities.entities[3]=member;event()
+    advance(attempt * 10 - 1)
+    assert(kozojeb.movementRest and count("e") == attempt)
+    advance(2)
+    assert(not kozojeb.movementRest and count("e") == attempt + 1)
+  end
+end)
+
+test("critical HP interrupts regroup rest without waiting for missing teammates", function()
+  movementLeader();advance(.71)
+  table.remove(gmcp.Chimera.Room.Entities.entities,3)
+  room=1323;kozojeb.onRoomChanged("gmcp.Room.Info");event();advance(1)
+  assert(kozojeb.movementRest)
+  room=1322;kozojeb.onRoomChanged("gmcp.Room.Info");event()
+  -- The leader reaches a different room before the late follower does.
+  room=1323;kozojeb.onRoomChanged("gmcp.Room.Info")
+  gmcp.Chimera.Room.Entities.entities[1].hp=20;gmcp.Char.Vitals.hp=20;event()
+  assert(kozojeb.mode == "escape" and not kozojeb.movementRest and aliases[1] == "/idz 1322")
+  assert(kozojeb.recoveryRoster.morrid == "Morrid")
+end)
+
+test("emergency escape after a refusal uses fresh usable movement without waiting for full rest", function()
+  movementLeader()
+  room=1323;kozojeb.onRoomChanged("gmcp.Room.Info");event();advance(.71)
+  kozojeb.onMovementExhausted()
+  gmcp.Char.Vitals.hp=20;gmcp.Chimera.Room.Entities.entities[1].hp=20;event()
+  assert(kozojeb.mode == "escape" and kozojeb.movementRest and #aliases == 0)
+  gmcp.Char.Vitals.fatigue=60;event("gmcp.Char.Vitals")
+  assert(kozojeb.mode == "escape" and not kozojeb.movementRest and aliases[1] == "/idz 1322")
+end)
+
+test("invalid fatigue and incomplete movement pairs cannot confirm recovery after refusal", function()
+  movementLeader();advance(.71);kozojeb.onMovementExhausted();advance(11)
+  for _, fatigue in ipairs({-1,101,math.huge,0/0,"unknown"}) do
+    gmcp.Char.Vitals={hp=100,maxhp=100,fatigue=fatigue,moves=100}
+    event("gmcp.Char.Vitals")
+    assert(kozojeb.movementRest and count("e") == 1)
+  end
+end)
+
+test("a refusal rest reconnect continues the saved watchdog return instead of patrolling", function()
+  movementLeader()
+  room=1323;kozojeb.onRoomChanged("gmcp.Room.Info");event()
+  kozojeb.onIdleTimeout();advance(.3);kozojeb.onMovementExhausted()
+  assert(kozojeb.mode == "idle_return" and kozojeb.movementRest)
+  kozojeb.onSessionEvent("sysDisconnectionEvent");sends,aliases={},{}
+  kozojeb.onSessionEvent("sysConnectionEvent")
+  gmcp.Char.Vitals.fatigue=0;reconnectPackets();advance(11)
+  assert(kozojeb.enabled and kozojeb.mode == "idle_return" and count("w") == 1)
+  assert(count("e") == 0 and #aliases == 0)
+end)
+
+test("a disconnect during the regroup return cannot leave the leader waiting ahead forever", function()
+  movementLeader();advance(.71)
+  table.remove(gmcp.Chimera.Room.Entities.entities,3)
+  room=1323;kozojeb.onRoomChanged("gmcp.Room.Info");event();advance(1)
+  assert(count("w") == 1 and kozojeb.movementRest)
+  kozojeb.onSessionEvent("sysDisconnectionEvent");sends,aliases={},{}
+  kozojeb.onSessionEvent("sysConnectionEvent");reconnectPackets()
+  assert(kozojeb.enabled and not kozojeb.reconnectTask and kozojeb.movementRest)
+  advance(11)
+  assert(count("w") == 1 and kozojeb.movementRest and #aliases == 0)
+end)
+
 print(string.format("%d simulations passed", total))

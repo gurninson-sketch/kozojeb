@@ -53,7 +53,7 @@ end
 K.legacyImportTried = true
 K.initialized = false
 
-K.version = "2.9.1"
+K.version = "2.9.2"
 K.config = K.config or {
   chaseDelay = 0.20,
   patrolDelay = 0.70,
@@ -391,10 +391,16 @@ K.supportHintSerial = 0
 K.deadNpcIds = {}
 K.restartPending = nil
 K.progressOwnHp, K.progressOwnMax = nil, nil
+K.movementKnown, K.movementRevision = false, nil
+K.teamMoves = {}
+K.recoveryTired = {}
+K.movementRest, K.moveSnapshot, K.teamStep = nil, nil, nil
+K.regroupFailures = 0
 K.emptyRounds, K.patrolRoundKills, K.emptyPatrolDelay = 0, 0, 0
 K.metrics = {events=0, actions=0, scheduled=0, coalesced=0, health=0,
   combat=0, shields=0, shieldBlocked=0, support=0, index=0,
-  attacks=0, attackRetries=0, idleResets=0, restartWaits=0}
+  attacks=0, attackRetries=0, idleResets=0, restartWaits=0,
+  movementRests=0, regroups=0}
 
 local knownTargets = {
   "koza", "kon", "krowa", "jelen", "koziol", "byk", "zubr", "szkielet",
@@ -615,6 +621,7 @@ local function cancelAllTimers()
     "focusTimer", "pendingFleeTimer", "targetLostTimer",
     "killConfirmTimer", "escapeWatchTimer", "shieldTimer", "herbTimer",
     "supportTimer", "supportHintTimer", "shieldReplyTimer", "reconnectTimer",
+    "movementRestTimer", "teamStepTimer",
   }) do
     cancelTimer(name)
   end
@@ -633,7 +640,8 @@ end
 
 -- Lista encji z poprzedniego pokoju nie moze wywolac ataku po wyslaniu
 -- kierunku. Dopiero Room.Info, a nastepnie nowa lista encji zwalnia blokade.
-local function sendDirection(command)
+local function sendDirection(command, regroup)
+  if K.prepareMovement and not K.prepareMovement(command, regroup) then return end
   K.roomChangePending = true
   K.entitiesReady = false
   K.sentDirection = command
@@ -660,7 +668,8 @@ local function queueInspection(callback)
 end
 
 local function idleIsIntentional()
-  return K.restartPending ~= nil or K.mode == "stop" or K.mode == "kill_pause"
+  return K.movementRest ~= nil or K.teamStep ~= nil
+    or K.restartPending ~= nil or K.mode == "stop" or K.mode == "kill_pause"
     or K.mode == "escape" or K.mode == "heal_rest" or K.mode == "recovery_return"
     or K.mode == "herb_search" or K.mode == "leader_wait"
 end
@@ -761,6 +770,33 @@ local function latestHealth(entity, member)
   if hp then return {hp=hp, maxhp=maximum, percent=percent, source=source} end
 end
 
+-- Chimera podaje fatigue (0 = wypoczety, 100 = wycienczony).
+-- Progi odpoczynek nadal oznaczaja pozostala sile do ruchu.
+local function movementPercent(record)
+  if type(record) ~= "table" then return nil end
+  local fatigue = tonumber(record.fatigue)
+  if fatigue and fatigue == fatigue and fatigue >= 0 and fatigue <= 100 then
+    return 100 - fatigue
+  end
+  local moves, maximum = tonumber(record.moves), tonumber(record.maxmoves)
+  if moves and maximum and moves == moves and maximum == maximum
+      and maximum > 0 and maximum < math.huge and moves >= 0 and moves <= maximum then
+    return moves * 100 / maximum
+  end
+end
+
+local function latestMovement(entity, member)
+  local first, second, firstRev, secondRev = entity, member,
+    K.sourceRevisions.entities, K.sourceRevisions.group
+  if secondRev > firstRev then
+    first, second, firstRev, secondRev = member, entity, secondRev, firstRev
+  end
+  local value = movementPercent(first)
+  if value ~= nil then return value, firstRev end
+  value = movementPercent(second)
+  if value ~= nil then return value, secondRev end
+end
+
 -- Jawna lista members ma pierwszenstwo przed starszymi group_role encji.
 -- Pusta lista po rozwiazaniu druzyny nie moze zostawic aktywnego wsparcia.
 local function groupContext()
@@ -775,11 +811,11 @@ local function groupContext()
       local name = ref.name or ref.desc
       if id then
         ids[tostring(id)] = true
-        if ref.hp ~= nil then memberVitals[tostring(id)] = ref end
+        memberVitals[tostring(id)] = ref
       end
       if name then
         names[normal(name)] = true
-        if ref.hp ~= nil then memberVitals[normal(name)] = ref end
+        memberVitals[normal(name)] = ref
       end
       if isLeader or leaderRole(ref.group_role or ref.role)
           or ref.is_leader == true or ref.is_leader == 1 then
@@ -1091,10 +1127,7 @@ local function updateVitals()
     hp = charHp or roomHp
     ownRecord = charHp and vitals or roomRecord
   end
-  local moves = tonumber(vitals.moves)
-  local maxmoves = tonumber(vitals.maxmoves)
   if hp then K.lastHp = hp end
-  if moves and maxmoves and maxmoves > 0 then K.lastMoves = math.floor(moves * 100 / maxmoves + 0.5) end
 
   local context = groupContext()
   local state = groupState()
@@ -1105,15 +1138,27 @@ local function updateVitals()
     K.lastHp = groupOwnHp
     ownRecord = ownGroup
   end
+  local movement, movementRevision = latestMovement(K.entitiesReady and own or nil, ownGroup)
+  local charMovement
+  if K.sessionFresh.vitals then charMovement = movementPercent(vitals) end
+  if charMovement ~= nil and (movement == nil or K.sourceRevisions.char >= movementRevision) then
+    movement, movementRevision = charMovement, K.sourceRevisions.char
+  end
+  if movement ~= nil then
+    K.lastMoves, K.movementKnown, K.movementRevision = math.floor(movement + 0.5), true, movementRevision
+  end
+  local teamMoves = {}
   local healthByName, rawByName, counted = {}, {}, {}
   local lowest, lowestName, seen = 101, nil, 0
   local function consider(entity, member, id, name)
     if isSelf(entity) or isSelf(member) or (own and id and tostring(id) == tostring(own.id)) then return end
     local key = normal(name or id)
     if key == "" or counted[key] then return end
+    counted[key] = true
+    local strength = latestMovement(K.entitiesReady and entity or nil, member)
+    if strength ~= nil then teamMoves[key] = strength end
     local value = latestHealth(K.entitiesReady and entity or nil, member)
     if not value then return end
-    counted[key] = true
     healthByName[key], rawByName[key] = value.percent, value
     seen = seen + 1
     if value.percent < lowest then lowest, lowestName = value.percent, tostring(name or id) end
@@ -1150,6 +1195,17 @@ local function updateVitals()
   K.teamLowestHp = seen > 0 and lowest or 100
   K.teamLowestName = seen > 0 and lowestName or "brak wykrytej druzyny"
   K.teamHealth, K.teamVitals = healthByName, rawByName
+  K.teamMoves = teamMoves
+  if K.enabled and not isFollower() then
+    for name, value in pairs(teamMoves) do
+      if value <= K.config.restAtMoves then
+        K.recoveryTired[name] = name
+        for _, member in ipairs(context.members) do
+          if normal(member.name) == name then K.recoveryTired[name] = trim(member.name) break end
+        end
+      end
+    end
+  end
   K.selfVitals = own and latestHealth(own,
     context.memberVitals[tostring(own.id)] or context.memberVitals[normal(own.name)]) or nil
 
@@ -1405,8 +1461,15 @@ local function scheduleHealingCheck()
         break
       end
     end
+    for name, displayName in pairs(K.recoveryTired) do
+      if K.teamMoves[name] == nil or K.teamMoves[name] < K.config.resumeAtMoves then
+        teamReady = false
+        K.recoveryMissing = displayName .. " (zmeczenie)"
+        break
+      end
+    end
     if K.lastHp >= 100 and K.lastMoves >= K.config.resumeAtMoves and teamReady
-        and not K.config.equipmentHold then
+        and not K.config.equipmentHold and not K.movementRest then
       K.mode = "recovery_return"
       K.recoveryAttempts = 0
       note("HP wrocilo do pelni. Wracam przez /idz do startu patrolu.", "green")
@@ -1445,8 +1508,15 @@ end
 
 local function sendEscapeAttempt()
   if not K.enabled or isFollower() or K.mode ~= "escape" then return end
+  if K.movementRest then K.armMovementRest() return end
   if currentRoom() == tonumber(K.config.startRoom) then
     finishEscapeTail()
+    return
+  end
+  -- Chodzik moze juz odpoczywac po drodze. Znane zmeczenie nie jest
+  -- nieudana proba trasy; nie uruchamiamy ponownie /idz co 12 sekund.
+  if (K.escapeAttempts or 0) > 0 and K.movementKnown and K.lastMoves <= K.config.restAtMoves then
+    later("escapeWatchTimer", K.config.escapeRetryDelay, sendEscapeAttempt)
     return
   end
   K.escapeAttempts = (K.escapeAttempts or 0) + 1
@@ -1472,6 +1542,15 @@ function K.escape(reason, injuredTeamMember)
   if isFollower() then return end
   if K.mode == "escape" or K.mode == "heal_rest" or K.mode == "recovery_return" then return end
   K.recoveryRoster = {}
+  for name, member in pairs(K.moveSnapshot and K.moveSnapshot.roster or K.teamStep and K.teamStep.roster or {}) do
+    K.recoveryRoster[name] = member.name
+  end
+  for name, member in pairs(K.movementRest and K.movementRest.roster or {}) do
+    K.recoveryRoster[name] = member.name
+  end
+  -- Pilny odwrot ma pierwszenstwo przed zbieraniem druzyny. Wlasna
+  -- potwierdzona niemoc nadal wymaga swiezego odczytu sil do ruchu.
+  if K.movementRest and not K.movementRest.ownRejected then K.movementRest = nil end
   for _, member in ipairs(groupContext().members) do
     if not isSelf(member) then K.recoveryRoster[normal(member.name)] = trim(member.name) end
   end
@@ -1479,6 +1558,7 @@ function K.escape(reason, injuredTeamMember)
   K.mode = "escape"
   K.generation = K.generation + 1
   cancelAllTimers()
+  K.moveSnapshot, K.teamStep = nil, nil
   K.route = nil
   clearTarget()
   resetPursuit()
@@ -1486,7 +1566,12 @@ function K.escape(reason, injuredTeamMember)
   K.escapeTailSent = false
   K.escapeAttempts = 0
   K.injuredTeamMember = injuredTeamMember and trim(injuredTeamMember) or nil
+  if K.movementRest and K.armMovementRest then K.armMovementRest() end
   note((reason or "Awaryjny odwrot.") .. " Ide przez /idz " .. K.config.startRoom .. ".", "red")
+  if K.movementRest and K.tryResumeMovement then
+    K.tryResumeMovement()
+    if not K.movementRest then return end
+  end
   if currentRoom() == tonumber(K.config.startRoom) then
     finishEscapeTail()
     return
@@ -1793,7 +1878,7 @@ local function needsBurstReserve(entity, percent, threshold)
   return incomingNpc(entity) ~= nil
 end
 
-local function safetyCheck(urgentOnly)
+local function safetyCheck(urgentOnly, skipMovementWait)
   updateVitals()
   if K.enabled and K.lastHp <= 0 then
     K.stop("Brak HP postaci. Zadanie zatrzymane; sprawdz stan w grze.")
@@ -1869,14 +1954,25 @@ local function safetyCheck(urgentOnly)
       return false
     end
   end
-  if K.enabled and not recovery and K.lastMoves <= K.config.restAtMoves then
+  if K.enabled and not recovery and not K.movementRest and K.lastMoves <= K.config.restAtMoves then
     K.escape(string.format(
       "Niemoc: ruch spadl do %d%% (prog %d%%).",
       K.lastMoves, K.config.restAtMoves
     ))
     return false
   end
+  if K.enabled and not recovery and not K.movementRest then
+    for name, displayName in pairs(K.recoveryTired) do
+      local value = K.teamMoves[name]
+      if value ~= nil and value <= K.config.restAtMoves then
+        K.escape(string.format("Zmeczenie druzyny: %s ma %.0f%% sil do ruchu (prog %d%%).",
+          displayName, value, K.config.restAtMoves))
+        return false
+      end
+    end
+  end
   if K.enabled and not recovery and not urgentOnly then maybeShieldTeamMember() end
+  if K.enabled and not skipMovementWait and K.checkMovementState and not K.checkMovementState() then return false end
   return true
 end
 
@@ -2601,6 +2697,14 @@ function K.onRoomChanged(eventName)
   invalidateState(true)
   local previousRoom = K.lastRoom
   if eventName == "gmcp.Room.Info" then
+    local step = K.moveSnapshot
+    if step and step.from ~= currentRoom() then
+      if not step.regroup and next(step.roster)
+          and (step.mode == "patrol" or step.mode == "combat" or step.mode == "chase") then
+        K.teamStep = step
+      end
+      K.moveSnapshot = nil
+    end
     K.sessionFresh.room = true
     K.sessionFresh.entities = false
     K.roomChangePending = false
@@ -2634,6 +2738,7 @@ function K.onRoomChanged(eventName)
     K.mode = "patrol"
   end
   if K.mode == "idle_return" then
+    if K.movementRest or K.teamStep then return end
     if K.idleAliasActive and room ~= tonumber(K.config.startRoom) then
       -- /idz nadal robi postep; nie uruchamiamy kolejnej kopii aliasu.
       later("idleReturnTimer", 10.0, idleReturnStep)
@@ -2733,6 +2838,10 @@ function K.onGmcp(eventName)
   if eventName == "gmcp.Char.Vitals" then K.sessionFresh.vitals = true end
   if K.reconnectTask then K.tryResumeAfterReconnect() return end
   if not K.enabled then return end
+  if K.movementRest and K.tryResumeMovement then
+    K.tryResumeMovement()
+    K.armMovementRest()
+  end
   if K.restartPending then restartPatrolWhenReady(K.restartPending) return end
   if isFollower() then
     if eventName == "gmcp.Chimera.Group.State" then
@@ -2934,6 +3043,7 @@ function K.stop(reason)
   invalidateState(true)
   K.reconnectTask, K.reconnectWaitReason = nil, nil
   K.restartPending = nil
+  K.movementRest, K.moveSnapshot, K.teamStep = nil, nil, nil
   K.enabled = false
   K.mode = "stop"
   K.generation = K.generation + 1
@@ -3017,7 +3127,9 @@ function K.tryResumeAfterReconnect()
     or task.mode == "recovery_return" or K.config.equipmentHold
   local emergency = K.lastHp < K.config.escapeHp or K.lastMoves <= K.config.restAtMoves
     or (K.config.teamEscapeHp > 0 and K.teamSeenCount > 0 and K.teamLowestHp < K.config.teamEscapeHp)
-  if not isFollower() and not recovery and not emergency then
+  local gathering = task.movementRest and task.movementRest.gatherFrom
+    and room ~= task.movementRest.gatherFrom
+  if not isFollower() and not recovery and not emergency and not gathering then
     local visible = {}
     for _, member in ipairs(groupContext().members) do visible[normal(member.name)] = true end
     for name, displayName in pairs(task.roster) do
@@ -3034,6 +3146,14 @@ function K.tryResumeAfterReconnect()
   K.route, K.routeIndex = nil, 1
   K.lastRoom = room
   K.mode = isFollower() and "support_wait" or (recovery and "escape" or "patrol")
+  if not isFollower() and task.movementRest then
+    K.movementRest = task.movementRest
+    K.movementRest.afterRevision = task.movementRevision
+    K.movementRest.readyAt = now() + 10
+    K.movementRest.gatherAttempted = false
+    K.movementRest.resumeAfterReconnect = {mode=task.mode, returnRoom=task.returnRoom}
+    K.armMovementRest()
+  end
   K.lastProgressFingerprint = progressFingerprint()
   note("Polaczenie przywrocone. Automatycznie wznawiam zadanie; baza "
     .. tostring(K.config.startRoom) .. ".", "green")
@@ -3083,18 +3203,30 @@ function K.onSessionEvent(eventName)
   K.restartPending, K.deadNpcIds = nil, {}
   local wasEnabled = K.enabled
   if wasEnabled and not K.reconnectTask then
-    local task = {mode=K.mode, role=K.config.role, roster={}, returnRoom=K.pursuitOriginRoom}
+    local task = {mode=K.mode, role=K.config.role, roster={}, returnRoom=K.pursuitOriginRoom,
+      movementRest=K.movementRest}
     for _, entity in ipairs(entities()) do
       if isSelf(entity) then task.name = normal(entity.name) break end
     end
     if not isFollower() then
+      for name, member in pairs(K.moveSnapshot and K.moveSnapshot.roster or K.teamStep and K.teamStep.roster or {}) do
+        task.roster[name] = member.name
+      end
+      for name, member in pairs(K.movementRest and K.movementRest.roster or {}) do
+        task.roster[name] = member.name
+      end
       for _, member in ipairs(groupContext().members) do
         if not isSelf(member) then task.roster[normal(member.name)] = trim(member.name) end
       end
     end
     K.reconnectTask = task
   end
-  if K.reconnectTask then K.reconnectTask.snapshotReady = nil end
+  if K.reconnectTask then
+    K.reconnectTask.snapshotReady = nil
+    K.reconnectTask.movementRevision = K.dataRevision
+  end
+  K.movementRest, K.moveSnapshot, K.teamStep = nil, nil, nil
+  K.movementRevision = nil
   K.enabled = false
   K.mode = K.reconnectTask and "reconnect_wait" or "stop"
   K.generation = K.generation + 1
@@ -3125,7 +3257,184 @@ function K.onMoveRejected()
   K.entitiesReady = true
   K.patrolMovePending, K.chaseMovePending = false, false
   K.route = nil
+  K.moveSnapshot = nil
   if K.mode == "patrol" then queueInspection(inspectRoom) end
+end
+
+-- Tylko prowadzacy zbiera druzyne. Brak ruchu wspierajacego jest widoczny
+-- po przejsciu w aktualnych encjach, bez raportow miedzy profilami.
+local function missingTravelMembers(roster)
+  local visible, membership, state = {}, {}, groupState()
+  for _, member in ipairs(groupContext().members) do visible[normal(member.name)] = true end
+  for key, member in pairs(state.members or {}) do
+    if type(member) == "table" then
+      local id = member.id or member.entity_id or member.obname or member.chimera_source_id
+      if id then membership[tostring(id)] = true end
+      if member.name or member.desc then membership[normal(member.name or member.desc)] = true end
+    else
+      membership[tostring(member)] = true
+      membership[normal(member)] = true
+      if type(key) == "string" then membership[key] = true end
+    end
+  end
+  local missing = {}
+  for name, member in pairs(roster or {}) do
+    if type(state.members) == "table" and not membership[member.id] and not membership[name] then
+      roster[name] = nil -- gracz naprawde opuscil lub rozwiazal druzyne
+    elseif not visible[name] then
+      missing[#missing + 1] = member.name
+    end
+  end
+  table.sort(missing)
+  return missing
+end
+
+function K.prepareMovement(command, regroup)
+  if isFollower() or K.sessionBlocked then return false end
+  if not regroup and (K.movementRest or K.teamStep) then return false end
+  local roster = {}
+  for _, member in ipairs(groupContext().members) do
+    if not isSelf(member) then
+      roster[normal(member.name)] = {name=trim(member.name), id=tostring(member.id)}
+    end
+  end
+  K.moveSnapshot = {from=currentRoom(), command=command, roster=roster, regroup=regroup, mode=K.mode}
+  return true
+end
+
+function K.armMovementRest()
+  if K.movementRestTimer or not K.movementRest or not K.enabled or isFollower() then return end
+  later("movementRestTimer", 10, function()
+    K.tryResumeMovement()
+    local rest = K.movementRest
+    if not rest then return end
+    -- Tylko rzeczywista odmowa wlasnego ruchu, najwyzej raz na 10 s.
+    -- Nie odpytujemy postaci wspierajacych ani nie wysylamy im polecen.
+    if rest.ownRejected and rest.polledMovementRevision == K.movementRevision then send("stan", false) end
+    rest.polledMovementRevision = K.movementRevision
+    K.armMovementRest()
+  end)
+end
+
+local function holdMovement(rest)
+  K.movementRest = rest
+  K.teamStep, K.route = nil, nil
+  for _, timer in ipairs({"moveTimer", "returnTimer", "idleReturnTimer", "panicTimer",
+      "escapeWatchTimer", "recoveryTimer", "teamStepTimer"}) do cancelTimer(timer) end
+  K.patrolMovePending, K.chaseMovePending = false, false
+  K.metrics.movementRests = K.metrics.movementRests + 1
+  note(rest.reason .. " Wstrzymuje ruch; wznowie automatycznie po odpoczynku.", "yellow")
+  K.armMovementRest()
+end
+
+local function gatherTravelTeam(rest)
+  if rest.gatherAttempted or not rest.gatherFrom or rest.ownRejected then return end
+  rest.gatherAttempted = true
+  local ok, exits = pcall(getRoomExits, currentRoom())
+  if ok and type(exits) == "table" then
+    for direction, destination in pairs(exits) do
+      if tonumber(destination) == rest.gatherFrom then
+        K.metrics.regroups = K.metrics.regroups + 1
+        note("Wracam o jeden pokoj, aby zebrac druzyne.", "yellow")
+        sendDirection(directionCommands[normal(direction)] or direction, true)
+        break
+      end
+    end
+  end
+end
+
+function K.onMovementExhausted()
+  if not K.enabled or isFollower() or K.sessionBlocked then return end
+  local step = K.moveSnapshot
+  -- Odmowa nie oznacza zmiany pokoju ani blednego wyjscia na mapie.
+  if K.roomChangePending and step and step.from == currentRoom() then
+    K.roomChangePending, K.sentDirection = false, nil
+    K.entitiesReady = true
+    K.moveSnapshot = nil
+    invalidateState(true)
+  end
+  local rest = K.movementRest or {roster=step and step.roster or {}, readyAt=now() + 10}
+  rest.ownRejected, rest.afterRevision = true, K.dataRevision
+  rest.polledMovementRevision = K.movementRevision
+  rest.reason = "Gra odmowila ruchu z powodu zmeczenia."
+  holdMovement(rest)
+end
+
+function K.checkMovementState()
+  if K.movementRest then return false end
+  local step = K.teamStep
+  if not step then return true end
+  if not K.entitiesReady then return false end
+  local missing = missingTravelMembers(step.roster)
+  if #missing == 0 then
+    cancelTimer("teamStepTimer")
+    K.teamStep, K.regroupFailures = nil, 0
+    return true
+  end
+  if not K.teamStepTimer then
+    later("teamStepTimer", 1.0, function()
+      if not K.enabled or K.teamStep ~= step or not K.entitiesReady then return end
+      if not safetyCheck(true, true) then return end
+      missing = missingTravelMembers(step.roster)
+      if #missing == 0 then K.teamStep = nil queueInspection(inspectRoom) return end
+      K.regroupFailures = math.min(3, K.regroupFailures + 1)
+      local rest = {roster=step.roster, readyAt=now() + math.min(30, 10 * K.regroupFailures),
+        gatherFrom=step.from, reason="Po przejsciu nie nadaza druzyna: " .. table.concat(missing, ", ") .. "."}
+      holdMovement(rest)
+      gatherTravelTeam(rest)
+    end)
+  end
+  return false
+end
+
+function K.tryResumeMovement()
+  local rest = K.movementRest
+  if not rest or not K.enabled or isFollower() or K.sessionBlocked or not K.entitiesReady then return end
+  updateVitals()
+  local escaping = K.mode == "escape"
+  if not escaping and now() < rest.readyAt then return end
+  if K.movementKnown and K.lastMoves < (escaping and 1 or K.config.resumeAtMoves) then return end
+  if rest.ownRejected and (not K.movementRevision or K.movementRevision <= rest.afterRevision) then return end
+  if not escaping then
+    if #missingTravelMembers(rest.roster) > 0 then gatherTravelTeam(rest) return end
+    for name in pairs(rest.roster) do
+      if K.teamMoves[name] ~= nil and K.teamMoves[name] < K.config.resumeAtMoves then return end
+    end
+  end
+  K.movementRest = nil
+  cancelTimer("movementRestTimer")
+  touchActivity()
+  note("Druzyna gotowa do ruchu. Automatycznie wznawiam zadanie.", "green")
+  if not safetyCheck(true) then return end
+  local resume = rest.resumeAfterReconnect
+  if not escaping and resume then
+    if resume.mode == "returning" and resume.returnRoom then
+      K.pursuitOriginRoom = resume.returnRoom
+      beginPursuitReturn()
+      return
+    elseif resume.mode == "idle_return" or not K.roomSet[currentRoom()] then
+      K.mode = "idle_return"
+    elseif resume.mode == "panic_wait" or resume.mode == "panic_search" then
+      K.mode = "panic_wait"
+    elseif resume.mode == "kill_pause" then
+      K.mode = "kill_pause"
+      later("killTimer", K.config.killPause, function()
+        K.mode = "patrol"
+        inspectRoom()
+      end)
+      return
+    end
+  end
+  if K.mode == "escape" then sendEscapeAttempt()
+  elseif K.mode == "heal_rest" then scheduleHealingCheck()
+  elseif K.mode == "recovery_return" then sendRecoveryReturnAttempt()
+  elseif K.mode == "idle_return" then idleReturnStep()
+  elseif K.mode == "returning" then returnToPursuitOriginStep()
+  elseif K.mode == "panic_wait" or K.mode == "panic_search" then
+    resetPanicSearch()
+    K.mode = "panic_wait"
+    beginPanicSearch()
+  else queueInspection(inspectRoom) end
 end
 
 function K.start()
@@ -3140,6 +3449,8 @@ function K.start()
     return
   end
   K.restartPending = nil
+  K.movementRest, K.moveSnapshot, K.teamStep = nil, nil, nil
+  K.recoveryTired, K.regroupFailures = {}, 0
   if not isFollower() and K.config.equipmentHold then
     note(K.config.equipmentHold .. " Po uzupelnieniu wpisz /kozojeb ekwipunek gotowy.", "red")
     return
@@ -3377,6 +3688,10 @@ function K.status()
   statusLink("[ + ]", "minhpzaslony " .. math.min(100, K.config.shieldSelfHp + 5), "Zwieksz minimalne HP zaslaniajacego", "green")
   statusEndRow()
   statusRow("Gotowosc szyku", K.shieldFormationReady and "gotowy" or "czekam na gotowosc z serwera")
+  if K.movementRest then statusRow("Ruch wstrzymany", K.movementRest.reason) end
+  if K.teamStep then
+    statusRow("Zebranie druzyny", "Czekam na encje druzyny po ostatnim kroku")
+  end
 
   statusPrefix("Prog druzyny")
   statusLink("[ - ]", "progdruzyny " .. math.max(0, K.config.teamEscapeHp - 5), "Zmniejsz prog HP druzyny", "yellow")
@@ -3535,7 +3850,7 @@ end
 function K.help()
   cecho([[
 <cyan>+--------------------------------------------------------------+
-|                       KOZOJEB 2.9.1                           |
+|                       KOZOJEB 2.9.2                           |
 +--------------------------------------------------------------+<reset>
 <white>  Sterowanie<reset>
   <green>/kozojeb start<reset>                 uruchom wybrana role; prowadzacy
@@ -3806,6 +4121,8 @@ function K.performance()
     m.health, m.combat, m.index, m.shields, m.support, m.shieldBlocked))
   note(string.format("Ataki %d; ponowienia ataku %d; powroty watchdogu %d; oczekiwania restartu %d.",
     m.attacks, m.attackRetries, m.idleResets, m.restartWaits))
+  note(string.format("Odpoczynki po odmowie ruchu lub rozdzieleniu druzyny %d; powroty po druzyne %d.",
+    m.movementRests, m.regroups))
 end
 
 local function executeCommand(arguments)
@@ -4158,6 +4475,9 @@ K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
   "^Umierasz\\.$", [[kozojeb.onDeath()]])
 K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
   "^.+ peka!!!$", [[kozojeb.onEquipmentBroken(matches[1])]])
+K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
+  "^Jestes tak zmeczony, ze nie mozesz isc(?: w tym kierunku)?\\.$",
+  [[kozojeb.onMovementExhausted()]])
 K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
   "^Nie widzisz zadnego wyjscia prowadzacego na .+\\.$", [[kozojeb.onMoveRejected()]])
 K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
