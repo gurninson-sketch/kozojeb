@@ -1,4 +1,4 @@
-# Chimera Kozojeb 2.9.3
+# Chimera Kozojeb 2.9.4
 
 [Pobierz najnowszą paczkę](https://github.com/gurninson-sketch/kozojeb/releases/latest/download/Chimera_Kozojeb.mpackage) · [Wydania](https://github.com/gurninson-sketch/kozojeb/releases)
 
@@ -83,7 +83,9 @@ Bot ocenia obciążenie przed i po przejęciu jednego NPC. Kolejny napastnik ma 
 
 Domyślnie zasłona nie może podnieść liczby napastników osłaniającego powyżej **2** (ustawienie 1–5). Nie jest to limit samoczynnej agresji NPC ani polecenie rozdzielania przeciwników na profile drugiej linii. Po potwierdzonej w GMCP zmianie obrońcy konkretnego NPC bot przez **8 sekund** ogranicza oddawanie go poprzedniemu obrońcy. Wyjątkiem jest stan bliski progowi odwrotu albo znaczna, co najmniej 40-procentowa poprawa oceny bezpieczeństwa. Identyczne opisy NPC są rozróżniane po ID. Po zmianie pokoju i sesji historia jest czyszczona. Dawna reguła przewagi 5 punktów procentowych została zastąpiona tą oceną.
 
-Każda próba rezerwuje zmianę szyku od razu. Bot czeka na `Jestes gotowy do zmiany w szyku.`; limit awaryjny przy braku komunikatu wynosi 10 sekund. Nieudana próba umiejętności również zużywa gotowość szyku.
+Każda próba rezerwuje zmianę szyku od razu. Od 2.9.4 dotyczy to również rozpoznanych poleceń `zaslon <imię>` wysłanych ręcznie lub przez inne skrypty: automat czeka na ich wynik. Nie blokuje przy tym ręcznych poleceń. Spóźniony komunikat gotowości sprzed odpowiedzi na próbę nie zwalnia rezerwacji. Rezerwacja trwa także podczas zatrzymania bota; nie uruchamia go ponownie. Bot czeka na `Jestes gotowy do zmiany w szyku.`; limit awaryjny przy braku komunikatu wynosi 10 sekund. Nieudana próba umiejętności również zużywa gotowość szyku.
+
+Profile z rolą `zaslony` rozkładają decyzje w czasie: kandydat z korzystniejszym przewidywanym obciążeniem względem punktów HP ma pierwszeństwo, pozostali czekają najwyżej 0,36 s. Nie zakładają, że inne profile mają włączone zasłony — po tym czasie mogą osłonić samodzielnie. Widoczna zasłona innego członka daje do 0,5 s na aktualizację relacji walki. Zmiana napastników kończy to oczekiwanie, a niskie HP prowadzącego pomija dodatkowe opóźnienie. Nie wymaga to komunikacji między profilami ani nowych progów. Notatka przy wykonanej komendzie pokazuje punkty HP i liczby napastników obu postaci, aby ułatwić analizę logów.
 
 Odmiany imion są zapisane dla Yarrima, Morrida, Yerga i Grora. Dla kolejnej postaci ustaw biernik, np.:
 
@@ -98,6 +100,7 @@ Niepoprawna forma odrzucona przez grę jest blokowana do poprawienia.
 
 - Prowadzący decyduje o odwrocie według własnego HP, HP drużyny i własnego zmęczenia.
 - Przy nieudanej lub niedostępnej bezpiecznej osłonie prowadzący może wycofać drużynę wcześniej: poniżej mniejszej wartości z `prog zasłony - 1` i `próg odwrotu drużyny + 15`. Przykładowo progi 50%/80% dają dodatkową granicę 65%. Wyłączenie kontroli HP drużyny przez `progdruzyny 0` wyłącza też ten dodatkowy odwrót. Wspierający nie wykonują osobnego odwrotu ani raportowania.
+- Od 2.9.4 własna trwająca próba zasłony nie wywołuje sprzecznego odwrotu tylko z powodu zajętego szyku. Oczekiwanie na odpowiedź trwa najwyżej 2 s od komendy, a po sukcesie najwyżej 0,5 s na uzgodnienie relacji walki, w granicach pierwotnych 2 s. Dotyczy wyłącznie osłanianej osoby przy niezmienionych napastnikach i HP. Krytyczne HP, dalsza utrata zdrowia, zmiana napastników, odmowa zasłony lub zagrożenie innego członka nie korzystają z tej zwłoki. Nie zmienia to progów odwrotu.
 - Od 2.9.1 prowadzący przez 8 s pamięta największy ostatni spadek HP w bieżącym pokoju. Przy stracie co najmniej 15% maksymalnego HP i nadal atakującym NPC zachowuje rezerwę na kolejny taki cios ponad skonfigurowany próg odwrotu. Przykład: próg 50%, ostatni spadek 25 punktów procentowych, teraz 74% — możliwy wcześniejszy odwrót. Przy zagrożonym koledze bezpieczna dostępna zasłona jest rozważana przed tym dodatkowym odwrotem. `progdruzyny 0` wyłącza rezerwę drużynową. Jest to reakcja na zaobserwowane HP, a nie przewidywanie pierwszego silnego ciosu, pancerza czy umiejętności przeciwnika.
 - Śmierć własnej postaci zatrzymuje bota i anuluje oczekujące wznowienie.
 - Po odwrocie czeka na swoje pełne HP, wymagany poziom ruchu oraz obecność i znane HP wcześniej widocznych członków drużyny. Osoba, której rany wywołały odwrót, musi odzyskać 100% HP.
@@ -112,7 +115,7 @@ Niepoprawna forma odrzucona przez grę jest blokowana do poprawienia.
 
 ## Aktualizacje z GitHuba
 
-Jeśli masz już Kozojeba 2.8.1–2.9.1, wykonaj na **każdym profilu**:
+Jeśli masz już Kozojeba 2.8.1–2.9.3, wykonaj na **każdym profilu**:
 
 ```text
 /kozojeb stop
@@ -121,7 +124,7 @@ Jeśli masz już Kozojeba 2.8.1–2.9.1, wykonaj na **każdym profilu**:
 /kozojeb aktualizuj
 ```
 
-Poczekaj na zakończenie walki i ruchu oraz komunikat `Zainstalowano 2.9.3`. Sprawdź `/kozojeb status`; powinien pokazać wersję **2.9.3**. Następnie uruchom `/kozojeb start` — najpierw na wspierających, potem na prowadzącym. To jednorazowy start po aktualizacji; późniejsze rozłączenia nie wymagają ręcznego wznowienia. Nie trzeba usuwać ani ręcznie instalować paczki; ustawienia profili pozostają zachowane.
+Poczekaj na zakończenie walki i ruchu oraz komunikat `Zainstalowano 2.9.4`. Sprawdź `/kozojeb status`; powinien pokazać wersję **2.9.4**. Następnie uruchom `/kozojeb start` — najpierw na wspierających, potem na prowadzącym. To jednorazowy start po aktualizacji; późniejsze rozłączenia nie wymagają ręcznego wznowienia. Nie trzeba usuwać ani ręcznie instalować paczki; ustawienia profili pozostają zachowane. Można przejść bezpośrednio z 2.9.2 do 2.9.4.
 
 Przy paczce zbudowanej w tym repozytorium adres wydań jest wbudowany. W paczce przygotowanej bez adresu skonfiguruj na każdym profilu:
 
@@ -135,6 +138,8 @@ Adres repozytorium ma postać `OWNER/REPO`, bez `https://`. Repozytorium z wydan
 
 Aktualizator sprawdza wydanie 30 sekund po załadowaniu profilu, a następnie co 6 godzin. Ręczne `/kozojeb aktualizuj` działa również przy wyłączonym sprawdzaniu automatycznym. Pobiera tylko opublikowane stabilne wydania z **Releases**. Zmiany na `main` i wydania robocze nie aktualizują profili.
 
+Od 2.9.4 po błędzie połączenia lub przekroczeniu czasu pobierania aktualizator podejmuje najwyżej trzy ponowienia: po 1, 5 i 15 minutach. Ponownie zaczyna od weryfikacji manifestu, zachowując dotychczasową wersję do poprawnej instalacji. Pokazuje przyczynę błędu bez pełnych adresów pobierania. Błędy sumy kontrolnej, formatu lub instalacji nie powodują ponowień. Nowe ręczne sprawdzenie zastępuje oczekujące ponowienie, a wyłączenie automatycznych aktualizacji lub zmiana repozytorium je anuluje. Starszy aktualizator nie ma tej funkcji: jeśli pierwsze pobranie 2.9.4 nie powiedzie się, ponów `/kozojeb aktualizuj` albo zainstaluj paczkę z Releases przez Menedżer pakietów.
+
 Instalacja czeka na zatrzymanie bota, zakończenie własnej walki i aktualne dane pokoju. Nie zatrzymuje samodzielnie prowadzącego ani wspierających. Bot po aktualizacji pozostaje zatrzymany; uruchom go przez `/kozojeb start`.
 
 Przed podmianą sprawdzane są rozmiar, format i SHA-256 paczki. Bieżące skrypty są zachowywane w kopii `kozojeb_rollback/Chimera_Kozojeb.xml` w katalogu profilu. Gdy nowa wersja nie zainstaluje się poprawnie, aktualizator próbuje przywrócić tę kopię. Można ją też zainstalować ręcznie przez Menedżer pakietów.
@@ -144,6 +149,8 @@ Konfiguracja — w tym obszar, cele, prędkości, progi, role i odmiany — pozo
 ## Wydajność i powtarzane komendy
 
 Kolejne zdarzenia GMCP współdzielą jeden oczekujący timer decyzji (zwykle 0,12 s). Krytyczny odczyt HP prowadzącego lub drużyny jest sprawdzany od razu, bez oczekiwania na tę kolejkę. Dane HP, indeks encji oraz relacje walki są obliczane raz dla aktualnego stanu i wykorzystywane ponownie. Aktualizacje walki i własnych parametrów nie przebudowują indeksu niezmienionej listy encji.
+
+Kolejka zasłony ma jeden dodatkowy timer tylko podczas krótkiego oczekiwania, a ponowienia aktualizacji jeden tylko po błędzie pobierania. Nie dodają stałego odpytywania gry. Obserwacja wysyłania poleceń odrzuca inne komendy bez zapisywania ich treści; rozszerzona notatka pojawia się tylko przy rzeczywistym poleceniu zasłony.
 
 Watchdog uwzględnia zmiany pełnych HP z `Char.Vitals`, `Group.State` i `Room.Entities`, również mniejsze od zaokrąglonego procenta, oraz rzeczywiste własne ciosy. Każde źródło porównuje z jego poprzednim odczytem: przełączanie między niezmienionymi skalami, np. `1000/1000` i `10/10`, nie udaje aktywności. Przesuwa znacznik czasu bez tworzenia nowego timera przy każdym pakiecie lub ciosie. Po powrocie do bazy restart czeka na świeży pokój i kompletne HP, zachowując aktywne zadanie. Nie wymaga ręcznego startu po spóźnionej liście encji; ręczny stop anuluje oczekiwanie.
 

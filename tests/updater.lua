@@ -234,4 +234,93 @@ test("checking in the background does not send game commands",function()
   advance(31)
   assert(#requests==1)
 end)
+local function networkFailure(message)
+  local request=requests[#requests]
+  assert(U.pending and request)
+  U.onDownloadError("sysDownloadError",message or "Host not found",request.path)
+end
+
+test("network retries wait one five and fifteen minutes then stop",function()
+  U.check(true); networkFailure()
+  assert(U.retryAttempt==1 and U.timers.retry and not U.pending)
+  advance(59); assert(#requests==1)
+  advance(1); assert(#requests==2 and U.pending)
+  networkFailure(); advance(299); assert(#requests==2)
+  advance(1); assert(#requests==3)
+  networkFailure(); advance(899); assert(#requests==3)
+  advance(1); assert(#requests==4)
+  networkFailure(); advance(1000)
+  assert(#requests==4 and U.retryAttempt==3 and not U.timers.retry and removals==0)
+end)
+
+test("a timeout schedules a bounded retry and ignores the previous late file",function()
+  U.check(true); local old=requests[1].path
+  advance(60)
+  assert(U.timers.retry and not U.pending)
+  files[old]="good"; U.onDownloaded("sysDownloadDone",old)
+  advance(59); assert(#requests==1 and removals==0)
+  advance(1); assert(#requests==2 and requests[2].path~=old)
+end)
+
+test("a package network error restarts manifest validation before a successful retry",function()
+  U.check(true); reply("good")
+  local old=requests[2].path; files[old]="partial"
+  networkFailure(); assert(not files[old])
+  advance(60)
+  assert(#requests==3 and requests[3].url:find("/releases/latest/download/update.json",1,true))
+  reply("good"); reply(payload); advance(.2)
+  assert(removals==1 and #installs==1 and U.retryAttempt==0)
+end)
+
+test("checksum failures are not automatically retried",function()
+  U.command("autoaktualizacja","off")
+  decoder.good.sha256=string.rep("0",64)
+  U.check(true); reply("good"); reply(payload); advance(.2)
+  assert(not U.timers.retry and removals==0)
+  advance(1000); assert(#requests==2 and removals==0)
+end)
+
+test("disabling automatic checks cancels a scheduled background retry",function()
+  U.check(false); networkFailure()
+  assert(U.timers.retry)
+  U.command("autoaktualizacja","off"); advance(1000)
+  assert(#requests==1 and not U.timers.retry)
+end)
+
+test("an explicit manual check replaces the earlier retry without overlapping requests",function()
+  U.check(true); networkFailure(); advance(10)
+  U.check(true)
+  assert(#requests==2 and not U.timers.retry and U.retryAttempt==0)
+  reply("good"); reply(payload); advance(.2)
+  assert(removals==1 and #installs==1)
+end)
+
+test("repository changes cancel retries for the previous release source",function()
+  U.command("autoaktualizacja","off")
+  U.check(true); networkFailure()
+  U.command("repo","other/kozojeb"); advance(1000)
+  assert(#requests==1 and not U.timers.retry and U.retryAttempt==0)
+end)
+
+test("updater cleanup removes both retry and periodic timers",function()
+  U.check(true); networkFailure(); U.cleanup(); advance(30000)
+  assert(#requests==1 and next(U.timers)==nil)
+end)
+
+test("download reasons are short single line text without redirected URL secrets",function()
+  U.check(true)
+  networkFailure("Host not found\n<red>https://assets.example/file?token=private123 "..string.rep("x",300))
+  assert(U.status:find("Host not found",1,true))
+  assert(not U.status:find("private123",1,true) and not U.status:find("https://",1,true))
+  assert(not U.status:find("\n",1,true) and not U.status:find("<red>",1,true) and #U.status<300)
+end)
+
+test("a failure to start downloading is retried without exceeding the retry budget",function()
+  local original=downloadFile
+  downloadFile=function(path,url) original(path,url); return false end
+  U.check(true); advance(1261)
+  downloadFile=original
+  assert(#requests==4 and not U.timers.retry and not U.pending and removals==0)
+end)
+
 print(string.format("%d updater simulations passed",total))

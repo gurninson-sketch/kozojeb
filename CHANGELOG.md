@@ -1,5 +1,14 @@
 # Zmiany
 
+## 2.9.4
+
+- Prowadzący nie wycofuje drużyny tylko dlatego, że własna zasłona czeka jeszcze na odpowiedź lub świeże relacje walki. Oczekiwanie ograniczone do 2 s od komendy i do 0,5 s po sukcesie; krytyczne HP, dalsza utrata zdrowia i zagrożenie innego członka zachowują pierwszeństwo.
+- Rozpoznane ręczne i zewnętrzne komendy `zaslon` rezerwują szyk również dla automatu. Spóźniona gotowość nie uwalnia trwającej próby. Stop/start zachowuje rezerwację bez samoczynnego uruchamiania bota. Obserwacja korzysta z `sysDataSendRequest`, bez podmiany `send`, blokowania ręcznych poleceń lub zapisu innych komend.
+- Profile osłaniające rozkładają decyzje w czasie według przewidywanego obciążenia i punktów HP, z opóźnieniem najwyżej 0,36 s. Tekst zasłony kolegi pozwala krótko poczekać na relacje walki; zmiana napastników wymusza nową ocenę. Przy niskim HP prowadzącego dodatkowa zwłoka jest pomijana. Role, progi i limity pozostają zachowane; brak komunikacji między profilami.
+- Notatka przy zasłonie pokazuje punkty HP oraz liczbę napastników osłaniającego i celu. Pamięć i timery są ograniczone; brak nowej stałej pętli lub rejestratora pakietów.
+- Aktualizator pokazuje przyczynę błędu pobierania i ponawia błędy sieciowe lub przekroczenie czasu po 1, 5 i 15 minutach, najwyżej trzy razy. Każde ponowienie zaczyna od manifestu i zachowuje kontrolę rozmiaru oraz SHA-256. Okresowe sprawdzanie nie przerywa tej kolejki. Błędy integralności lub instalacji nie są ponawiane; ręczne sprawdzenie, wyłączenie aktualizacji i zmiana repozytorium obsługują anulowanie oczekiwania.
+- 40 nowych symulacji regresji: opóźnione potwierdzenia zasłon, pilny odwrót, ręczne komendy, kilka profili, różne pule HP, seria 2000 pakietów, ograniczone ponowienia pobierania i czyszczenie timerów.
+
 ## 2.9.3
 
 - Prowadzący przyjmuje potwierdzony własny cel tego samego dozwolonego gatunku, gdy ogólne `zabij fimira` wybrało innego NPC niż pierwszy wpis w GMCP. Własny atak ma pierwszeństwo przed `primary`; lista ignorowanych i ograniczenia gatunku nadal obowiązują.

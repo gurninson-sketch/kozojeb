@@ -1,6 +1,6 @@
 local source = "src/Chimera_Kozojeb.lua"
 local compile = loadstring or load
-local clock, serial, timers, sends, aliases, output, saved, room, triggers
+local clock, serial, timers, sends, aliases, output, saved, room, triggers, sendHandlers
 local function clone(value)
   if type(value) ~= "table" then return value end
   local result = {}
@@ -9,7 +9,13 @@ local function clone(value)
 end
 function cecho(value) output[#output + 1] = value end
 function cechoLink(label, action) output[#output + 1] = label end
-function send(command) sends[#sends + 1] = command end
+function send(command)
+  for _, handler in pairs(sendHandlers or {}) do
+    assert(handler == "kozojeb.onShieldCommand")
+    kozojeb.onShieldCommand("sysDataSendRequest", command)
+  end
+  sends[#sends + 1] = command
+end
 function expandAlias(command) aliases[#aliases + 1] = command end
 function getPlayerRoom() return room end
 function getEpoch() return clock end
@@ -31,10 +37,14 @@ function tempRegexTrigger(pattern, handler)
   return serial
 end
 function raiseGlobalEvent() error("Unexpected cross-profile communication") end
-function registerAnonymousEventHandler() serial = serial + 1 return serial end
+function registerAnonymousEventHandler(event, handler)
+  serial = serial + 1
+  if event == "sysDataSendRequest" then sendHandlers[serial] = handler end
+  return serial
+end
 function killTrigger() end
 function killAlias() end
-function killAnonymousEventHandler() end
+function killAnonymousEventHandler(id) sendHandlers[id] = nil end
 function getRoomExits(id) return id == 1322 and {east = 1323} or {west = 1322} end
 function getPath() speedWalkDir = {"west"} speedWalkPath = {1322} return true end
 local function advance(seconds)
@@ -61,7 +71,7 @@ local function count(command)
 end
 local function reset(role, leaderHp)
   clock, serial, timers, sends, aliases, output, saved, room = 0, 0, {}, {}, {}, {}, {}, 1322
-  triggers = {}
+  triggers, sendHandlers = {}, {}
   kozojeb = nil
   kozobot = nil
   gmcp = {
@@ -2638,6 +2648,236 @@ test("a newly ignored zero HP target cannot trap the leader in death processing"
   kozojeb.command("ignoruj dodaj maly")
   gmcp.Chimera.Room.Entities.entities[4].hp=0; event()
   assert(not kozojeb.currentTargetName and not kozojeb.killTimer and kozojeb.mode=="patrol")
+end)
+
+local function rescueLeader()
+  setupLeader()
+  gmcp.Chimera.Combat.State={primary="N",relations={{attacker="S",defender="N"},{attacker="N",defender="M"}}}
+  kozojeb.start()
+  room=1323; kozojeb.onRoomChanged("gmcp.Room.Info")
+  gmcp.Chimera.Room.Entities.entities[3].hp=64
+  event()
+  assert(count("zaslon morrida")==1 and kozojeb.shieldPendingTarget and kozojeb.mode=="combat")
+end
+
+test("a pending rescue does not trigger a contradictory retreat before its reply", function()
+  rescueLeader(); event("gmcp.Chimera.Combat.State")
+  assert(kozojeb.mode=="combat" and #aliases==0 and count("zaslon morrida")==1)
+end)
+
+test("a successful rescue waits for delayed incoming relations without retreating", function()
+  rescueLeader(); kozojeb.onShieldResult("morrida",true); advance(.13)
+  assert(kozojeb.mode=="combat" and #aliases==0 and not kozojeb.shieldPendingTarget)
+  gmcp.Chimera.Combat.State.relations={{attacker="S",defender="N"},{attacker="N",defender="S"}}
+  event("gmcp.Chimera.Combat.State"); advance(.6)
+  assert(kozojeb.mode=="combat" and #aliases==0)
+end)
+
+test("unrelated combat revisions do not prematurely end the rescue reply window", function()
+  rescueLeader()
+  gmcp.Chimera.Room.Entities.entities[5]={id="X",name="Obcy ork",kind="npc",hp=100,maxhp=100}
+  gmcp.Chimera.Room.Entities.entities[6]={id="Y",name="Obcy troll",kind="npc",hp=100,maxhp=100}
+  gmcp.Chimera.Combat.State.relations[3]={attacker="X",defender="Y"}
+  event("gmcp.Chimera.Combat.State")
+  assert(kozojeb.mode=="combat" and #aliases==0)
+end)
+
+test("missing shield replies expire and cannot mask a need to retreat indefinitely", function()
+  rescueLeader(); advance(2.3)
+  assert(kozojeb.mode=="escape" and #aliases==1 and not kozojeb.shieldRescue)
+end)
+
+test("success without a changed incoming attack only grants a bounded half second settlement", function()
+  rescueLeader(); kozojeb.onShieldResult("morrida",true); advance(.7)
+  assert(kozojeb.mode=="escape" and #aliases==1 and not kozojeb.shieldRescue)
+end)
+
+test("failed shields do not retain a rescue grace period", function()
+  rescueLeader(); kozojeb.onShieldResult("morrida",false); advance(.13)
+  assert(kozojeb.mode=="escape" and #aliases==1 and not kozojeb.shieldRescue)
+end)
+
+test("critical own HP bypasses a pending rescue immediately", function()
+  rescueLeader(); gmcp.Chimera.Room.Entities.entities[1].hp=40
+  kozojeb.onGmcp("gmcp.Chimera.Room.Entities")
+  assert(kozojeb.mode=="escape" and #aliases==1)
+end)
+
+test("critical teammate HP bypasses its own pending rescue immediately", function()
+  rescueLeader(); gmcp.Chimera.Room.Entities.entities[3].hp=40
+  kozojeb.onGmcp("gmcp.Chimera.Room.Entities")
+  assert(kozojeb.mode=="escape" and #aliases==1)
+end)
+
+test("new teammate damage above the normal HP floor also ends the rescue grace", function()
+  rescueLeader(); gmcp.Chimera.Room.Entities.entities[3].hp=63; event()
+  assert(kozojeb.mode=="escape" and #aliases==1)
+end)
+
+test("rescuing one teammate cannot postpone retreat for another threatened teammate", function()
+  rescueLeader()
+  local e=gmcp.Chimera.Room.Entities.entities
+  e[2].hp=60; e[5]={id="T",name="Drugi snotling",kind="npc",hp=100,maxhp=100}
+  gmcp.Chimera.Combat.State.relations[3]={attacker="T",defender="L"}
+  event()
+  assert(kozojeb.mode=="escape" and #aliases==1)
+end)
+
+test("two thousand packets during a rescue reuse the existing reply and decision timers", function()
+  rescueLeader()
+  local before,reply,formation=serial,kozojeb.shieldReplyTimer,kozojeb.formationTimer
+  for i=1,2000 do kozojeb.onGmcp("gmcp.Chimera.Combat.State") end
+  assert(serial-before==1 and kozojeb.shieldReplyTimer==reply and kozojeb.formationTimer==formation)
+  advance(.13); assert(#aliases==0 and kozojeb.mode=="combat")
+end)
+
+test("native outgoing events cannot double reserve the bot's own shield", function()
+  reset("zaslony",60); kozojeb.start()
+  assert(count("zaslon yarrima")==1 and kozojeb.shieldPendingTarget.external==false)
+  assert(next(sendHandlers) and not kozojeb.shieldPendingTarget.conflicted)
+end)
+
+test("an external shield reserves formation before a stale readiness message and automatic action", function()
+  reset("zaslony",80); kozojeb.start()
+  gmcp.Chimera.Room.Entities.entities[2].hp=64
+  kozojeb.onGmcp("gmcp.Chimera.Room.Entities")
+  send("zaslon yarrima"); kozojeb.onFormationReady(); advance(.13)
+  assert(count("zaslon yarrima")==1 and not kozojeb.shieldFormationReady)
+  assert(kozojeb.shieldPendingTarget.external)
+end)
+
+test("external commands while stopped retain their formation reservation through start", function()
+  reset("zaslony",60); send("zaslon yarrima"); kozojeb.onFormationReady()
+  kozojeb.start(); advance(.13)
+  assert(count("zaslon yarrima")==1 and not kozojeb.shieldFormationReady)
+  kozojeb.stop(); advance(15)
+  assert(not kozojeb.enabled and count("zaslon yarrima")==1)
+end)
+
+test("manual spam does not extend a protective grace or overwrite its first deadline", function()
+  reset("zaslony",60); send("zaslon yarrima")
+  local pending=kozojeb.shieldPendingTarget
+  for i=1,5 do advance(.1); send("zaslon yarrima") end
+  assert(kozojeb.shieldPendingTarget==pending and pending.deadline==2 and pending.conflicted)
+  assert(not kozojeb.shieldRescue and count("zaslon yarrima")==6)
+  advance(1.6); assert(not kozojeb.shieldPendingTarget)
+end)
+
+test("irrelevant outgoing commands add no timers or reservations", function()
+  reset("wsparcie")
+  local before=serial
+  for i=1,2000 do send("wez monety") end
+  assert(serial==before and not kozojeb.shieldPendingTarget and not kozojeb.shieldRescue)
+end)
+
+test("an external invalid name cannot blacklist the configured automatic form", function()
+  reset("zaslony",60); send("zaslon yarrim"); kozojeb.onShieldRejected()
+  kozojeb.start()
+  assert(not kozojeb.shieldRejectedForms.yarrim and count("zaslon yarrima")==1)
+end)
+
+test("disconnect invalidates pending replies and rescue state", function()
+  rescueLeader(); local before=#aliases
+  kozojeb.onSessionEvent("sysDisconnectionEvent"); advance(3)
+  assert(not kozojeb.shieldPendingTarget and not kozojeb.shieldRescue and #aliases==before)
+end)
+
+test("an outstanding external shield blocks installation before combat packets arrive", function()
+  reset(nil); gmcp.Chimera.Combat.State={primary="",relations={}}
+  assert(kozojeb.isUpdateSafe()); send("zaslon yarrima")
+  assert(not kozojeb.isUpdateSafe()); kozojeb.onShieldRejected()
+  assert(kozojeb.isUpdateSafe())
+end)
+
+local function secondProtector(hp)
+  reset("zaslony",hp or 60)
+  local e=gmcp.Chimera.Room.Entities.entities
+  e[1].self,e[1].relation=nil,nil
+  e[3].self,e[3].relation=1,"self"
+end
+
+test("a second eligible protector waits and skips an NPC already transferred by the first", function()
+  secondProtector(); kozojeb.start()
+  assert(count("zaslon yarrima")==0 and kozojeb.shieldTurnTimer)
+  kozojeb.onTeamShield("Yergo","Yarrima")
+  gmcp.Chimera.Combat.State.relations={{attacker="L",defender="N"},{attacker="N",defender="S"}}
+  event("gmcp.Chimera.Combat.State"); advance(.6)
+  assert(count("zaslon yarrima")==0 and not kozojeb.shieldTurnTimer); noMovement()
+end)
+
+test("a second protector acts after its bounded turn when the preferred teammate is DPS only", function()
+  secondProtector(); kozojeb.start(); advance(.13)
+  assert(count("zaslon yarrima")==1 and not kozojeb.shieldTurnTimer); noMovement()
+end)
+
+test("very low leader HP bypasses the optional shielding turn delay", function()
+  secondProtector(40); kozojeb.start()
+  assert(count("zaslon yarrima")==1 and not kozojeb.shieldTurnTimer); noMovement()
+end)
+
+test("another protector's text reserves a bounded window while combat data is unchanged", function()
+  secondProtector(); kozojeb.start(); kozojeb.onTeamShield("Yergo","Yarrima")
+  advance(.3); assert(count("zaslon yarrima")==0)
+  advance(.4); assert(count("zaslon yarrima")==1); noMovement()
+end)
+
+test("non-team shield text cannot defer a team rescue", function()
+  secondProtector(); kozojeb.start(); kozojeb.onTeamShield("Obcy","Yarrima"); advance(.13)
+  assert(count("zaslon yarrima")==1 and not kozojeb.teamShieldNotice); noMovement()
+end)
+
+test("manual stop cancels a scheduled shielding turn without restarting support", function()
+  secondProtector(); kozojeb.start(); kozojeb.stop(); advance(2)
+  assert(count("zaslon yarrima")==0 and not kozojeb.enabled and not kozojeb.shieldTurnTimer)
+end)
+
+test("turn and incoming packet bursts retain one delayed shield rather than a timer per packet", function()
+  secondProtector(); kozojeb.start()
+  local before,turn=serial,kozojeb.shieldTurnTimer
+  for i=1,2000 do kozojeb.onGmcp("gmcp.Chimera.Combat.State") end
+  assert(serial-before==1 and kozojeb.shieldTurnTimer==turn)
+  advance(.13); assert(count("zaslon yarrima")==1); noMovement()
+end)
+
+test("shield turn priority uses real HP pools rather than percentages alone", function()
+  secondProtector(60)
+  local e=gmcp.Chimera.Room.Entities.entities
+  e[1].hp,e[1].maxhp=90,100
+  e[2].hp,e[2].maxhp=600,1000
+  e[3].hp,e[3].maxhp=1400,2000
+  gmcp.Char.Vitals.hp,gmcp.Char.Vitals.maxhp=1400,2000
+  kozojeb.start()
+  assert(count("zaslon yarrima")==1 and not kozojeb.shieldTurnTimer); noMovement()
+end)
+
+test("a new incoming NPC receives its own bounded shield turn", function()
+  secondProtector(); kozojeb.start()
+  local first=kozojeb.shieldTurn
+  advance(.05)
+  gmcp.Chimera.Room.Entities.entities[5]={id="T",name="Drugi snotling",kind="npc",hp=100,maxhp=100}
+  gmcp.Chimera.Combat.State.relations={{attacker="L",defender="T"},{attacker="T",defender="L"}}
+  kozojeb.onGmcp("gmcp.Chimera.Room.Entities")
+  kozojeb.onGmcp("gmcp.Chimera.Combat.State")
+  advance(.08)
+  assert(count("zaslon yarrima")==0 and kozojeb.shieldTurn~=first)
+  advance(.13); assert(count("zaslon yarrima")==1); noMovement()
+end)
+
+test("moving rooms cancels a deferred shield and its previous team notice", function()
+  secondProtector(); kozojeb.start(); kozojeb.onTeamShield("Yergo","Yarrima")
+  room=1323; kozojeb.onRoomChanged("gmcp.Room.Info"); advance(.6)
+  assert(count("zaslon yarrima")==0 and not kozojeb.shieldTurnTimer and not kozojeb.teamShieldNotice)
+  noMovement()
+end)
+
+test("a shield note records raw HP and incoming counts only when a command is sent", function()
+  reset("zaslony",60); kozojeb.start()
+  local all=table.concat(output,"\n")
+  assert(all:find("moje 100 HP / 0 napastnikow, cel 60 HP / 1",1,true))
+  local before=#output
+  for i=1,2000 do kozojeb.onGmcp("gmcp.Chimera.Combat.State") end
+  advance(.13)
+  assert(#output==before and count("zaslon yarrima")==1); noMovement()
 end)
 
 print(string.format("%d simulations passed", total))

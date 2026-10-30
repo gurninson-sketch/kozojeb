@@ -5,7 +5,7 @@ if releaseRepository:sub(1,2) == "__" then releaseRepository = "" end
 local K = kozojeb
 if not K or not K.initialized then return end
 if K.updater and K.updater.cleanup then K.updater.cleanup() end
-local U = {handlers={}, timers={}, status="gotowy", serial=0}
+local U = {handlers={}, timers={}, status="gotowy", serial=0, retryAttempt=0}
 K.updater = U
 local profile = getMudletHomeDir()
 local settings = profile .. "/chimera_kozojeb_updates.lua"
@@ -75,13 +75,27 @@ local function newer(a,b)
   end
   return false
 end
-local function fail(message)
+local function errorDetail(message)
+  return tostring(message or "nieznany blad"):gsub("\27%[[%d;]*m", "")
+    :gsub("https?://%S+", "[adres]"):gsub("[<>]", ""):gsub("%s+", " "):sub(1,180)
+end
+local function fail(message, retryable)
   local pending=U.pending
   local candidate=U.candidate
   U.pending,U.candidate=nil,nil
   cancel("timeout"); cancel("hash"); cancel("apply")
+  cancel("retry")
   if pending and pending.path then os.remove(pending.path) end
   if candidate and candidate.path then os.remove(candidate.path) end
+  if retryable and pending and (pending.manual or U.config.automatic) and U.retryAttempt < 3 then
+    U.retryAttempt=U.retryAttempt+1
+    local delay=({60,300,900})[U.retryAttempt]
+    message=message.." Ponowie za "..delay.." s ("..U.retryAttempt.."/3)."
+    timer("retry",delay,function()
+      if U.config.repository~=pending.repository or (not pending.manual and not U.config.automatic) then return end
+      U.check(pending.manual,true)
+    end)
+  end
   U.status=message
   note(message,"red")
 end
@@ -100,11 +114,13 @@ local function download(kind,url,manual,manifest)
   local extension=kind=="manifest" and ".json" or ".mpackage"
   local path=profile .. "/kozojeb_download_" .. tostring(os.time()) .. "_" .. U.serial .. extension
   U.pending={kind=kind,path=path,repository=U.config.repository,manual=manual,manifest=manifest}
-  timer("timeout",60,function() fail("Przekroczono czas pobierania. Dotychczasowa wersja pozostaje aktywna.") end)
+  timer("timeout",60,function() fail("Przekroczono czas pobierania. Dotychczasowa wersja pozostaje aktywna.",true) end)
   local ok,result=pcall(downloadFile,path,url)
-  if not ok or result==false then fail("Nie mozna rozpoczac pobierania aktualizacji.") end
+  if not ok or result==false then
+    fail("Nie mozna rozpoczac pobierania aktualizacji"..(not ok and (": "..errorDetail(result)) or "."),true)
+  end
 end
-function U.check(manual)
+function U.check(manual,retrying)
   if not repositoryValid(U.config.repository) then
     if manual then note("Ustaw /kozojeb repo OWNER/REPO, wskazujac repozytorium publicznych wydan.") end
     return
@@ -113,6 +129,7 @@ function U.check(manual)
     if manual then note("Aktualizacja jest juz pobierana albo czeka na instalacje.") end
     return
   end
+  if not retrying then cancel("retry"); U.retryAttempt=0 end
   if not supported() then
     U.status="Aktualizator wymaga Mudleta 4.20+ i kompletu modulow paczki"
     if manual then note(U.status,"red") end
@@ -226,6 +243,7 @@ function U.onDownloaded(_,path)
     end
     if not newer(manifest.version,K.version) then
       U.pending=nil
+      U.retryAttempt=0
       U.status="wersja "..K.version.." jest aktualna"
       if job.manual then note(U.status,"green") end
       return
@@ -244,6 +262,7 @@ function U.onDownloaded(_,path)
       U.candidate={path=path,version=job.manifest.version,manual=job.manual,
         sha256=job.manifest.sha256,size=job.manifest.size}
       U.pending=nil
+      U.retryAttempt=0
       note("Pobrano "..job.manifest.version..". Instalacja po zatrzymaniu bota i zakonczeniu walki.","green")
       U.tryInstall()
     end)
@@ -251,7 +270,7 @@ function U.onDownloaded(_,path)
 end
 function U.onDownloadError(_,message,path)
   if U.pending and U.pending.path==path then
-    fail("Nie udalo sie pobrac wydania. Sprawdz dostepnosc repozytorium i polaczenie z internetem.")
+    fail("Nie udalo sie pobrac wydania: "..errorDetail(message)..".",true)
   end
 end
 function U.onBotStopped() if U.candidate then timer("apply",0.1,U.tryInstall) end end
@@ -261,7 +280,8 @@ function U.command(action,rest)
     if U.installing then note("Trwa weryfikacja instalacji; poczekaj na jej zakonczenie.") return end
     if rest=="" then note("Repozytorium: "..(U.config.repository~="" and U.config.repository or "nieustawione")) return end
     if not repositoryValid(rest) then note("Uzycie: /kozojeb repo OWNER/REPO","red") return end
-    cancel("timeout");cancel("hash");cancel("apply")
+    cancel("timeout");cancel("hash");cancel("apply");cancel("retry")
+    U.retryAttempt=0
     if U.pending then os.remove(U.pending.path) end
     if U.candidate then os.remove(U.candidate.path) end
     U.pending,U.candidate=nil,nil
@@ -274,12 +294,15 @@ function U.command(action,rest)
     U.config.automatic=rest=="on"
     save()
     if U.config.automatic then U.check(false)
-    elseif U.candidate and not U.candidate.manual then cancel("apply") end
+    else
+      cancel("retry")
+      if U.candidate and not U.candidate.manual then cancel("apply") end
+    end
     note(U.config.automatic and "Automatyczne sprawdzanie wlaczone." or "Automatyczne sprawdzanie wylaczone.")
   end
 end
 local function periodic()
-  if U.config.automatic then U.check(false) end
+  if U.config.automatic and not U.timers.retry then U.check(false) end
   timer("periodic",21600,periodic)
 end
 U.handlers[#U.handlers+1]=registerAnonymousEventHandler("sysDownloadDone",U.onDownloaded)
