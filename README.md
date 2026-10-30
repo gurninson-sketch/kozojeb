@@ -1,4 +1,4 @@
-# Chimera Kozojeb 2.9.2
+# Chimera Kozojeb 2.9.3
 
 [Pobierz najnowszą paczkę](https://github.com/gurninson-sketch/kozojeb/releases/latest/download/Chimera_Kozojeb.mpackage) · [Wydania](https://github.com/gurninson-sketch/kozojeb/releases)
 
@@ -121,7 +121,7 @@ Jeśli masz już Kozojeba 2.8.1–2.9.1, wykonaj na **każdym profilu**:
 /kozojeb aktualizuj
 ```
 
-Poczekaj na zakończenie walki i ruchu oraz komunikat `Zainstalowano 2.9.2`. Sprawdź `/kozojeb status`; powinien pokazać wersję **2.9.2**. Następnie uruchom `/kozojeb start` — najpierw na wspierających, potem na prowadzącym. To jednorazowy start po aktualizacji; późniejsze rozłączenia nie wymagają ręcznego wznowienia. Nie trzeba usuwać ani ręcznie instalować paczki; ustawienia profili pozostają zachowane.
+Poczekaj na zakończenie walki i ruchu oraz komunikat `Zainstalowano 2.9.3`. Sprawdź `/kozojeb status`; powinien pokazać wersję **2.9.3**. Następnie uruchom `/kozojeb start` — najpierw na wspierających, potem na prowadzącym. To jednorazowy start po aktualizacji; późniejsze rozłączenia nie wymagają ręcznego wznowienia. Nie trzeba usuwać ani ręcznie instalować paczki; ustawienia profili pozostają zachowane.
 
 Przy paczce zbudowanej w tym repozytorium adres wydań jest wbudowany. W paczce przygotowanej bez adresu skonfiguruj na każdym profilu:
 
@@ -145,11 +145,13 @@ Konfiguracja — w tym obszar, cele, prędkości, progi, role i odmiany — pozo
 
 Kolejne zdarzenia GMCP współdzielą jeden oczekujący timer decyzji (zwykle 0,12 s). Krytyczny odczyt HP prowadzącego lub drużyny jest sprawdzany od razu, bez oczekiwania na tę kolejkę. Dane HP, indeks encji oraz relacje walki są obliczane raz dla aktualnego stanu i wykorzystywane ponownie. Aktualizacje walki i własnych parametrów nie przebudowują indeksu niezmienionej listy encji.
 
-Watchdog uwzględnia zmiany pełnych HP z `Char.Vitals`, `Group.State` i `Room.Entities`, również mniejsze od zaokrąglonego procenta, oraz rzeczywiste własne ciosy. Przesuwa znacznik czasu bez tworzenia nowego timera przy każdym pakiecie lub ciosie. Identyczne pakiety nie udają postępu. Po powrocie do bazy restart czeka na świeży pokój i kompletne HP, zachowując aktywne zadanie. Nie wymaga ręcznego startu po spóźnionej liście encji; ręczny stop anuluje oczekiwanie.
+Watchdog uwzględnia zmiany pełnych HP z `Char.Vitals`, `Group.State` i `Room.Entities`, również mniejsze od zaokrąglonego procenta, oraz rzeczywiste własne ciosy. Każde źródło porównuje z jego poprzednim odczytem: przełączanie między niezmienionymi skalami, np. `1000/1000` i `10/10`, nie udaje aktywności. Przesuwa znacznik czasu bez tworzenia nowego timera przy każdym pakiecie lub ciosie. Po powrocie do bazy restart czeka na świeży pokój i kompletne HP, zachowując aktywne zadanie. Nie wymaga ręcznego startu po spóźnionej liście encji; ręczny stop anuluje oczekiwanie.
 
-Potwierdzenie własnej walki, w tym odpowiedź `Juz walczysz`, powstrzymuje kolejne `wesprzyj` dla tego samego starcia. Krótkie przejście od tekstowej informacji o walce do konkretnego ID przeciwnika zachowuje potwierdzenie. Po odmowie wsparcia bot czeka na zmianę relacji walki lub nowy komunikat walki; identyczne pakiety, kolejność i duplikaty relacji nie wystarczają. Potwierdzona śmierć jednoznacznie rozpoznanego NPC blokuje reakcje na jego stare dane.
+Potwierdzenie własnej walki, w tym odpowiedź `Juz walczysz`, powstrzymuje kolejne `wesprzyj` dla tego samego starcia. Krótkie przejście od tekstowej informacji o walce do konkretnego ID przeciwnika zachowuje potwierdzenie. Sygnał tekstowy jest powiązany z pokojem i widocznymi żywymi NPC. Po śmierci przeciwnika stary komunikat nie uruchamia kolejnego wsparcia; dalsza walka prowadzącego musi mieć potwierdzenie w świeżych danych. Po odmowie wsparcia wymagane są nowe relacje dotyczące prowadzącego lub jego przeciwnika albo nowy poprawny komunikat walki. Walka innych NPC, identyczne pakiety, kolejność i duplikaty relacji nie odnawiają próby.
 
-Własna relacja ataku na wybrany cel potwierdza walkę także wtedy, gdy `primary` wskazuje innego agresora. Przy braku potwierdzenia bot wysyła najwyżej trzy próby ataku dla niezmienionego stanu, z odstępami 1 i 2 s; kolejne wymagają zmiany walki. To ogranicza komendy Kozojeba; inne skrypty i ręczne aliasy mogą nadal wysyłać własne polecenia.
+Własna relacja ataku ma pierwszeństwo przed `primary`. Jeżeli ogólne `zabij fimira` wybrało innego dozwolonego fimira, bot przyjmuje jego potwierdzone ID i nie ponawia komendy, próbując wymusić pierwszy wpis z listy. Inny gatunek, ignorowany NPC i sam napastnik nie zastępują wybranego celu. Przy braku potwierdzenia bot wysyła najwyżej trzy próby na konkretny cel w danym pokoju, z odstępami 1 i 2 s. Nowy cel, nowy pokój lub rzeczywiste odzyskanie i późniejsza utrata własnej walki pozwalają rozpocząć nowy cykl; zmiany pobocznych relacji nie wystarczają. To ogranicza komendy Kozojeba; inne skrypty i ręczne aliasy mogą nadal wysyłać własne polecenia.
+
+Potwierdzone `0 HP` śledzonego NPC uruchamia pełną ustawioną pauzę po zabiciu. Po zniknięciu celu bot przez 3 sekundy pamięta jego ID, nazwę i pokój, aby rozpoznać spóźnione potwierdzenie śmierci. Kontekst wygasa po ruchu, wyborze nowego celu, zatrzymaniu lub zmianie sesji. Powtórzona linia śmierci nie wydłuża pauzy; opóźniony zgon z poprzedniego pokoju nie przerywa nowej walki. Przy identycznych opisach bot wymaga potwierdzenia dotyczącego konkretnego ID, zamiast oznaczać oba NPC jako martwe.
 
 Po pustych pełnych okrążeniach patrol stopniowo zwalnia. Domyślny maksymalny odstęp wynosi 3 sekundy na krok. Nowy cel jest sprawdzany po GMCP bez czekania na wolniejszy krok, a walka przywraca zwykłe tempo. Ustawienie jest lokalne dla profilu:
 

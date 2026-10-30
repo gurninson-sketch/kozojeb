@@ -53,7 +53,7 @@ end
 K.legacyImportTried = true
 K.initialized = false
 
-K.version = "2.9.2"
+K.version = "2.9.3"
 K.config = K.config or {
   chaseDelay = 0.20,
   patrolDelay = 0.70,
@@ -327,6 +327,7 @@ K.roomSet = {}
 K.currentTargetId = nil
 K.currentTargetName = nil
 K.currentTargetAnimal = nil
+K.currentTargetAmbiguous, K.pendingKill = false, nil
 K.lastHp = 100
 K.lastMoves = 100
 K.teamLowestHp = 100
@@ -380,6 +381,7 @@ K.statusPanelEnd = nil
 K.dataRevision, K.hpRevision = 0, 0
 K.sourceRevisions = {entities=0, group=0, char=0}
 K.groupContextCache, K.entityIndexCache, K.combatCache = nil, nil, nil
+K.npcNameCounts = {}
 K.vitalsCacheRevision = nil
 K.healthHistory, K.shieldTransfers = {}, {}
 K.previousIncoming = nil
@@ -388,9 +390,11 @@ K.lastActivityAt = nil
 K.shieldFailure, K.shieldBlockedReason = nil, nil
 K.supportAttempt = nil
 K.supportHintSerial = 0
+K.supportDeathBarrier = nil
 K.deadNpcIds = {}
+K.recentTarget = nil
 K.restartPending = nil
-K.progressOwnHp, K.progressOwnMax = nil, nil
+K.progressOwn, K.progressTeam = {}, {}
 K.movementKnown, K.movementRevision = false, nil
 K.teamMoves = {}
 K.recoveryTired = {}
@@ -631,6 +635,7 @@ local function cancelAllTimers()
   K.idleAliasActive = false
   K.shieldLastTarget = nil
   K.supportCombatHint = nil
+  K.supportDeathBarrier = nil
   K.supportLastTarget = nil
   K.shieldPendingTarget = nil
   K.supportAttempt = nil
@@ -642,6 +647,7 @@ end
 -- kierunku. Dopiero Room.Info, a nastepnie nowa lista encji zwalnia blokade.
 local function sendDirection(command, regroup)
   if K.prepareMovement and not K.prepareMovement(command, regroup) then return end
+  K.recentTarget = nil
   K.roomChangePending = true
   K.entitiesReady = false
   K.sentDirection = command
@@ -720,9 +726,17 @@ end
 
 local function entityIndex()
   if K.entityIndexCache then return K.entityIndexCache end
-  local index = {}
+  local index, names = {}, {}
   for _, entity in ipairs(entities()) do
     if entity.id ~= nil then index[tostring(entity.id)] = entity end
+    if entity.kind == "npc" then
+      local name = normal(entity.name)
+      names[name] = (names[name] or 0) + 1
+    end
+  end
+  K.npcNameCounts = names
+  if K.currentTargetName and (names[normal(K.currentTargetName)] or 0) > 1 then
+    K.currentTargetAmbiguous = true
   end
   K.metrics.index = K.metrics.index + 1
   K.entityIndexCache = index
@@ -987,8 +1001,16 @@ end
 
 local function isCurrentTarget(entity)
   if not entity or not K.currentTargetName then return false end
-  if K.currentTargetId and tostring(entity.id or "") == tostring(K.currentTargetId) then return true end
+  if K.currentTargetId and entity.id then return tostring(entity.id) == tostring(K.currentTargetId) end
   return normal(entity.name) == normal(K.currentTargetName)
+end
+
+local function targetNameAmbiguous(name)
+  local key = normal(name)
+  local recent = K.recentTarget
+  return (normal(K.currentTargetName) == key and K.currentTargetAmbiguous)
+    or (recent and normal(recent.name) == key and recent.ambiguous)
+    or (K.npcNameCounts[key] or 0) > 1
 end
 
 local function liveNpc(entity)
@@ -996,11 +1018,18 @@ local function liveNpc(entity)
     and (not tonumber(entity.hp) or tonumber(entity.hp) > 0)
 end
 
-local function combatTargetAllowed(entity)
+local function combatTargetAllowed(entity, confirmedOutgoing)
   if not liveNpc(entity) or nameHasIgnoredPhrase(entity.name) then return false end
-  -- Podczas walki/pogoni tylko juz wybrany, konkretny NPC moze przejac fokus.
-  -- Inne cele tego samego gatunku rowniez sa wtedy ignorowane.
-  if K.currentTargetName then return isCurrentTarget(entity) end
+  if K.currentTargetName then
+    if isCurrentTarget(entity) then return true end
+    -- "zabij fimira" moze wybrac innego fimira niz pierwszy wpis w GMCP.
+    -- Przyjmujemy tylko potwierdzony wlasny atak na dozwolony ten sam gatunek;
+    -- sam primary, agresja lub walka innych postaci nie zmieniaja celu.
+    return confirmedOutgoing and K.currentTargetAnimal ~= nil
+      and animalInName(entity.name) == K.currentTargetAnimal
+      and (not K.currentTargetId or liveNpc(entityIndex()[tostring(K.currentTargetId)]))
+      and not K.failedTargetIds[tostring(entity.id)]
+  end
   return not K.config.ignoreNonTargets or animalInName(entity.name) ~= nil
 end
 
@@ -1012,6 +1041,9 @@ end
 local function currentTargetEntity()
   local target = entityById(K.currentTargetId)
   if liveNpc(target) then return target end
+  -- Znane ID w tym pokoju nie moze zostac zastapione zywa kopia opisu.
+  -- Potwierdzony poscig ponownie wyszukuje nazwe dopiero po wyjsciu NPC.
+  if K.currentTargetId then return nil end
   if not K.currentTargetName then return nil end
   for _, entity in ipairs(entities()) do
     if liveNpc(entity) and normal(entity.name) == normal(K.currentTargetName) then
@@ -1027,17 +1059,23 @@ local function activeCombatTarget()
   for _, entity in ipairs(entities()) do
     if isSelf(entity) then selfId = tostring(entity.id) break end
   end
-  -- Wlasny atak na wybrany cel jest potwierdzeniem takze wtedy, gdy
-  -- primary wskazuje innego agresora. Nie ponawiamy wtedy "zabij".
-  if selfId and K.currentTargetId then
+  -- Wlasny atak ma pierwszenstwo przed primary i napastnikami. Przy kilku
+  -- relacjach zachowujemy obecny cel, potem primary, a na koncu stabilne ID.
+  local outgoing
+  if selfId then
     for _, relation in ipairs(state.relations or {}) do
-      if tostring(relation.attacker) == selfId
-          and tostring(relation.defender) == tostring(K.currentTargetId) then
-        local target = entityById(K.currentTargetId)
-        if liveNpc(target) then return target end
+      if tostring(relation.attacker) == selfId then
+        local target = entityById(relation.defender)
+        if liveNpc(target) then
+          if tostring(target.id) == tostring(K.currentTargetId) then return target, true end
+          if not outgoing or tostring(target.id) == tostring(state.primary)
+              or (tostring(outgoing.id) ~= tostring(state.primary)
+                and tostring(target.id) < tostring(outgoing.id)) then outgoing = target end
+        end
       end
     end
   end
+  if outgoing then return outgoing, true end
   local id = state.primary
   if id and id ~= "" then
     local entity = entityById(id)
@@ -1055,8 +1093,8 @@ local function activeCombatTarget()
 end
 
 local function hostileTarget()
-  local combat = activeCombatTarget()
-  if combatTargetAllowed(combat) then return combat end
+  local combat, outgoing = activeCombatTarget()
+  if combatTargetAllowed(combat, outgoing) then return combat end
   for _, entity in ipairs(entities()) do
     if entity.kind == "npc" and entity.self ~= 1 and entity.relation == "hostile"
         and combatTargetAllowed(entity) then
@@ -1106,7 +1144,7 @@ local function updateVitals()
   if K.vitalsCacheRevision == K.hpRevision then return end
   K.vitalsCacheRevision = K.hpRevision
   K.metrics.health = K.metrics.health + 1
-  local previousHp, previousMoves = K.lastHp, K.lastMoves
+  local previousMoves = K.lastMoves
   local roomHp, roomRecord
   local roomEntities = entities()
   for _, entity in ipairs(roomEntities) do
@@ -1123,9 +1161,11 @@ local function updateVitals()
   -- niedostepne; niepelny pakiet nie zmienia ostatniego poprawnego HP.
   local hp = roomHp or charHp
   local ownRecord = roomHp and roomRecord or (charHp and vitals)
+  local ownSource = roomHp and "entities" or "char"
   if K.vitalsSource == "char" then
     hp = charHp or roomHp
     ownRecord = charHp and vitals or roomRecord
+    ownSource = charHp and "char" or "entities"
   end
   if hp then K.lastHp = hp end
 
@@ -1137,6 +1177,7 @@ local function updateVitals()
   if groupOwnHp and K.sourceRevisions.group > math.max(K.sourceRevisions.entities, K.sourceRevisions.char) then
     K.lastHp = groupOwnHp
     ownRecord = ownGroup
+    ownSource = "group"
   end
   local movement, movementRevision = latestMovement(K.entitiesReady and own or nil, ownGroup)
   local charMovement
@@ -1180,16 +1221,27 @@ local function updateVitals()
       consider(entity, context.memberVitals[tostring(entity.id)], entity.id, entity.name)
     end
   end
-  local progressed = previousHp ~= K.lastHp or previousMoves ~= K.lastMoves
+  local progressed = previousMoves ~= K.lastMoves
   local ownHp, ownMax = healthPair(ownRecord)
   if ownHp then
-    progressed = progressed or ownHp ~= K.progressOwnHp or ownMax ~= K.progressOwnMax
-    K.progressOwnHp, K.progressOwnMax = ownHp, ownMax
+    local previous = K.progressOwn[ownSource]
+    if not previous or ownHp ~= previous.hp or ownMax ~= previous.maxhp then
+      progressed = true
+      K.progressOwn[ownSource] = {hp=ownHp, maxhp=ownMax}
+    end
   end
+  -- Kazdy kanal ma wlasna skale HP. Przelaczanie miedzy niezmienionymi
+  -- odczytami 1000/1000 i 10/10 nie jest postepem. Zachowujemy male,
+  -- rzeczywiste zmiany punktow, nawet gdy procent po zaokragleniu jest ten sam.
+  local progressTeam = {}
   for name, value in pairs(rawByName) do
-    local previous = K.teamVitals and K.teamVitals[name]
+    local channels = K.progressTeam[name] or {}
+    local previous = channels[value.source]
     if not previous or previous.hp ~= value.hp or previous.maxhp ~= value.maxhp then progressed = true end
+    channels[value.source] = value
+    progressTeam[name] = channels
   end
+  K.progressTeam = progressTeam
   if progressed then touchActivity() end
   K.teamSeenCount = seen
   K.teamLowestHp = seen > 0 and lowest or 100
@@ -1342,7 +1394,7 @@ local function markCurrentRoom()
   return room
 end
 
-local function clearTarget()
+local function clearTarget(keepRecent)
   cancelTimer("focusTimer")
   cancelTimer("targetLostTimer")
   cancelTimer("killConfirmTimer")
@@ -1351,6 +1403,8 @@ local function clearTarget()
   K.currentTargetId = nil
   K.currentTargetName = nil
   K.currentTargetAnimal = nil
+  K.currentTargetAmbiguous, K.pendingKill = false, nil
+  if not keepRecent then K.recentTarget = nil end
 end
 
 local function resetPursuit()
@@ -2006,6 +2060,40 @@ local function opponentOf(entity)
   end
 end
 
+local function supportEvidence(leaderId, targetId)
+  local edges, signature = {}, {}
+  for _, relation in ipairs(combatState().relations or {}) do
+    local attacker, defender = tostring(relation.attacker), tostring(relation.defender)
+    if attacker == leaderId or defender == leaderId
+        or (targetId and (attacker == targetId or defender == targetId)) then
+      edges[attacker .. ">" .. defender] = true
+    end
+  end
+  for edge in pairs(edges) do signature[#signature + 1] = edge end
+  table.sort(signature)
+  return table.concat(signature, ",")
+end
+
+local function liveSupportHint(hint, leader)
+  if not hint or hint.leaderId ~= tostring(leader.id) or hint.room ~= currentRoom() then return false end
+  for id in pairs(hint.targets or {}) do
+    if npcById(id) then return true end
+  end
+  return false
+end
+
+local function supportTarget(leader)
+  local target = opponentOf(leader)
+  local barrier = K.supportDeathBarrier
+  if barrier and target then
+    -- Przy identycznych opisach nie zawsze da sie przypisac tekst zgonu
+    -- do ID. Stary dodatni wpis i stare relacje tez nie potwierdzaja walki.
+    if K.combatRevision <= barrier.combat and K.sourceRevisions.entities <= barrier.entities then return nil end
+    K.supportDeathBarrier = nil
+  end
+  return target
+end
+
 local function inspectFollower()
   if not K.entitiesReady then return end
   local context = groupContext()
@@ -2022,12 +2110,12 @@ local function inspectFollower()
   K.supportWaitReason = nil
   if not safetyCheck() then return end
   K.leaderHp = context.leaderHp
-  local target = opponentOf(leader)
+  local target = supportTarget(leader)
   local hint = K.supportCombatHint
-  local leaderFighting = target ~= nil or (hint and hint.leaderId == tostring(leader.id))
+  local leaderFighting = target ~= nil or liveSupportHint(hint, leader)
   local selfTarget = npcById(combatState().primary) or opponentOf(context.self)
   K.mode = selfTarget and "support_combat" or "support_wait"
-  if K.config.role == "zaslony" and (leaderFighting or selfTarget) then
+  if K.config.role == "zaslony" and not K.supportDeathBarrier and (leaderFighting or selfTarget) then
     tryShield(leader, K.leaderHp, K.config.leaderShieldHp)
   end
   if not leaderFighting then K.supportAttempt = nil return end
@@ -2040,19 +2128,23 @@ local function inspectFollower()
   if attempt and attempt.leaderId == tostring(leader.id) and not attempt.targetId and target
       and now() - attempt.createdAt <= 3 then
     attempt.key, attempt.targetId = key, tostring(target.id)
+    attempt.targetName = trim(target.name)
   end
   if attempt and attempt.key == key then
     if attempt.confirmed or now() < attempt.untilTime then return end
-    if attempt.deniedEvidence == combatSnapshot().signature
+    if attempt.deniedEvidence == supportEvidence(tostring(leader.id), target and tostring(target.id))
         and attempt.deniedHint == K.supportHintSerial then return end
   end
   if K.supportTimer then return end
+  local ambiguous = target and targetNameAmbiguous(target.name) or false
   K.currentTargetId = target and target.id or nil
   K.currentTargetName = target and trim(target.name) or nil
   K.currentTargetAnimal = nil
+  K.currentTargetAmbiguous = ambiguous
   K.supportLastTarget = K.leaderName
   -- Rezerwacja przed send: odpowiedz serwera moze poprzedzic Combat.State.
   K.supportAttempt = {key=key, leaderId=tostring(leader.id), targetId=target and tostring(target.id),
+    targetName=target and trim(target.name),
     createdAt=now(), untilTime=now() + K.config.supportInterval}
   note("Wspieram prowadzacego: " .. K.leaderName .. ".", "green")
   send("wesprzyj")
@@ -2065,7 +2157,7 @@ function K.onSupportResult(alreadyFighting)
   if alreadyFighting then K.supportAttempt.confirmed = true
   else
     K.supportAttempt.confirmed = nil
-    K.supportAttempt.deniedEvidence = combatSnapshot().signature
+    K.supportAttempt.deniedEvidence = supportEvidence(K.supportAttempt.leaderId, K.supportAttempt.targetId)
     K.supportAttempt.deniedHint = K.supportHintSerial
   end
 end
@@ -2122,7 +2214,19 @@ function K.onTeamCombat(actor, defended)
   local name, form = normal(leader.name), shieldNameForm(leader.name)
   if normal(actor) ~= name and normal(defended) ~= name
       and (not form or normal(defended) ~= form) then return end
-  K.supportCombatHint = { leaderId = tostring(leader.id) }
+  local target = supportTarget(leader)
+  -- Po zgonie tekst z konczacej sie walki moze przyjsc pozniej niz GMCP.
+  -- Kolejne wsparcie wymaga wtedy zywego celu prowadzacego w danych walki.
+  if K.supportDeathBarrier and not target then return end
+  local targets = {}
+  if target then targets[tostring(target.id)] = true
+  else
+    for _, entity in ipairs(entities()) do
+      if liveNpc(entity) then targets[tostring(entity.id)] = true end
+    end
+  end
+  if not next(targets) then return end
+  K.supportCombatHint = { leaderId = tostring(leader.id), room=currentRoom(), targets=targets }
   K.supportHintSerial = K.supportHintSerial + 1
   later("supportHintTimer", 3.0, function() K.supportCombatHint = nil end)
   queueInspection(inspectRoom)
@@ -2172,10 +2276,11 @@ local function attack(entity, animal)
   local sameTarget = K.currentTargetId
     and tostring(K.currentTargetId) == tostring(entity.id)
     and K.currentTargetName and normal(K.currentTargetName) == normal(entity.name)
-  -- Niezgodne dane nie moga utrzymywac petli "zabij". Trzy proby
-  -- z odstepami 1 i 2 s, potem czekamy na rzeczywista zmiane walki.
+  -- Najwyzej trzy niepotwierdzone proby na NPC w tym pokoju. Relacje
+  -- innych uczestnikow ani przejecie NPC przez sojusznika nie odnawiaja
+  -- budzetu. Potwierdzenie wlasnego ataku lub nowy pokoj zaczyna nowy cykl.
   if sameTarget and K.focusRetryPending then return end
-  local evidence = combatSnapshot().signature
+  local evidence = currentRoom()
   if not sameTarget or K.focusEvidence ~= evidence then K.focusAttempts = 0 end
   if sameTarget and (K.focusAttempts or 0) >= 3 then return end
   cancelTimer("targetLostTimer")
@@ -2185,9 +2290,13 @@ local function attack(entity, animal)
   cancelTimer("moveTimer")
   K.patrolMovePending = false
   K.chaseMovePending = false
+  local ambiguous = targetNameAmbiguous(entity.name)
   K.currentTargetId = entity.id
   K.currentTargetName = trim(entity.name)
   K.currentTargetAnimal = animal or animalInName(entity.name)
+  K.currentTargetAmbiguous = ambiguous
+  if not sameTarget then K.pendingKill = nil end
+  K.recentTarget = nil
   if not sameTarget then
     K.herbSearchedRoom = nil
     touchActivity()
@@ -2239,17 +2348,43 @@ inspectRoom = function()
   -- celu ani aktualizacje GMCP nie moga skrocic tej pauzy.
   if K.mode == "kill_pause" then return end
 
-  local combat = activeCombatTarget()
-  if combatTargetAllowed(combat) then
+  if K.recentTarget and (K.recentTarget.room ~= currentRoom() or now() - K.recentTarget.at > 3) then
+    K.recentTarget = nil
+  end
+  local tracked = K.currentTargetId and entityById(K.currentTargetId)
+  if tracked and tracked.kind == "npc" and tonumber(tracked.hp) == 0
+      and not nameHasIgnoredPhrase(tracked.name) then
+    K.onKill(tracked.name, false)
+    return
+  end
+  local pending = K.pendingKill
+  if pending and (pending.room ~= currentRoom() or now() - pending.at > 3
+      or (tracked and tonumber(tracked.hp) and tonumber(tracked.hp) > 0
+        and K.sourceRevisions.entities > pending.entities)) then
+    K.pendingKill, pending = nil, nil
+    cancelTimer("killConfirmTimer")
+  end
+  if pending and pending.room == currentRoom() and pending.id == tostring(K.currentTargetId)
+      and now() - pending.at <= 3 and not tracked then
+    K.onKill(pending.name, false)
+    return
+  end
+  if pending then return end
+  local combat, outgoing = activeCombatTarget()
+  if combatTargetAllowed(combat, outgoing) then
     cancelTimer("focusTimer")
     K.focusRetryPending = false
     K.focusAttempts, K.focusEvidence = 0, nil
     local changedTarget = tostring(K.currentTargetId or "") ~= tostring(combat.id or "")
+    local ambiguous = targetNameAmbiguous(combat.name)
     ensurePursuitOrigin()
     K.mode = "combat"
     K.currentTargetId = combat.id
     K.currentTargetName = trim(combat.name)
     K.currentTargetAnimal = animalInName(combat.name)
+    K.currentTargetAmbiguous = ambiguous
+    if changedTarget then K.pendingKill = nil end
+    K.recentTarget = nil
     if changedTarget then
       K.route = nil
       K.herbSearchedRoom = nil
@@ -2286,7 +2421,7 @@ inspectRoom = function()
     end
   end
 
-  clearTarget()
+  clearTarget(true)
   local target, animal, reason, creatureCount = findTarget()
   if target then
     K.limitNoticeRoom = nil
@@ -2454,14 +2589,24 @@ end
 function K.onTargetLost()
   if isFollower() then return end
   if not K.enabled or (K.mode ~= "combat" and K.mode ~= "chase") then return end
+  local tracked = K.currentTargetId and entityById(K.currentTargetId)
+  if tracked and tracked.kind == "npc" and tonumber(tracked.hp) == 0
+      and not nameHasIgnoredPhrase(tracked.name) then
+    K.onKill(tracked.name, false)
+    return
+  end
   if currentTargetEntity() then
     inspectRoom()
     return
   end
   local lostName = K.currentTargetName or "nieznany cel"
   local shouldReturn = K.pursuitLeftArea and #K.pursuitTrail > 0 and K.pursuitOriginRoom
+  local recent = {id=K.currentTargetId, name=K.currentTargetName, animal=K.currentTargetAnimal,
+    room=currentRoom(), at=now(), origin=K.pursuitOriginRoom,
+    trail=copyArray(K.pursuitTrail), leftArea=K.pursuitLeftArea, ambiguous=K.currentTargetAmbiguous}
   note("Cel zniknal bez potwierdzenia smierci lub kierunku: " .. lostName .. ". Odblokowuje stan.", "yellow")
   clearTarget()
+  K.recentTarget = recent
   K.route = nil
   if shouldReturn then
     beginPursuitReturn()
@@ -2716,6 +2861,8 @@ function K.onRoomChanged(eventName)
     K.supportCombatHint = nil
     K.shieldPendingTarget = nil
     if previousRoom ~= currentRoom() then
+      K.recentTarget, K.supportDeathBarrier = nil, nil
+      K.currentTargetAmbiguous, K.pendingKill = false, nil
       K.supportAttempt = nil
       cancelTimer("supportTimer")
       K.healthHistory, K.shieldTransfers = {}, {}
@@ -2855,9 +3002,9 @@ function K.onGmcp(eventName)
   if healthEvent and not safetyCheck(true) then return end
   if K.mode == "idle_return" then return end
   if K.mode == "herb_search" then
-    local combat = activeCombatTarget()
+    local combat, outgoing = activeCombatTarget()
     local target = findTarget()
-    if combatTargetAllowed(combat) or target then
+    if combatTargetAllowed(combat, outgoing) or target then
       cancelTimer("herbTimer")
       K.herbSearchedRoom = nil
       K.mode = "patrol"
@@ -2958,6 +3105,7 @@ function K.onFlee(name, direction)
   K.chaseMovePending = true
   touchActivity()
   K.currentTargetName = name
+  K.currentTargetId, K.currentTargetAmbiguous, K.pendingKill = nil, false, nil
   cancelTimer("actionTimer")
   later("moveTimer", K.config.chaseDelay, function()
     if not K.enabled or not K.chaseMovePending or not safetyCheck() then return end
@@ -2976,6 +3124,7 @@ local function finishCurrentKill()
   K.route = nil
   K.mode = "kill_pause"
   cancelTimer("moveTimer")
+  cancelTimer("returnTimer")
   K.patrolMovePending = false
   K.chaseMovePending = false
   touchActivity()
@@ -2993,15 +3142,26 @@ local function finishCurrentKill()
 end
 
 function K.onKill(name, confirmedByServer)
+  local matchesByName, dead = {}, nil
   if K.enabled then
-    local matchesByName, dead = {}, nil
+    entityIndex()
     for _, entity in ipairs(entities()) do
       if entity.kind == "npc" and normal(entity.name) == normal(name) then
         matchesByName[#matchesByName + 1] = entity
         if tonumber(entity.hp) and tonumber(entity.hp) <= 0 then dead = entity end
       end
     end
-    if #matchesByName == 1 then dead = matchesByName[1] end
+    if #matchesByName == 1 and not dead then
+      local only = matchesByName[1]
+      -- Gdy poprzedni cel juz zniknal, jeden zywy NPC o tym samym opisie
+      -- moze byc innym egzemplarzem. Nie przypisujemy mu cudzego zgonu.
+      local expected = K.currentTargetId and {id=K.currentTargetId, name=K.currentTargetName,
+        ambiguous=K.currentTargetAmbiguous}
+        or K.recentTarget or (K.supportAttempt and {id=K.supportAttempt.targetId, name=K.supportAttempt.targetName})
+      if not (expected and expected.ambiguous and normal(expected.name) == normal(name))
+          and (not expected or not expected.id or normal(expected.name) ~= normal(name)
+            or tostring(only.id) == tostring(expected.id)) then dead = only end
+    end
     if dead then
       K.deadNpcIds[tostring(dead.id)] = {zeroSeen=tonumber(dead.hp) and tonumber(dead.hp) <= 0}
       K.combatCache = nil
@@ -3009,28 +3169,62 @@ function K.onKill(name, confirmedByServer)
   end
   if K.enabled and isFollower() then
     K.supportCombatHint = nil
+    K.supportDeathBarrier = {combat=K.combatRevision, entities=K.sourceRevisions.entities}
+    cancelTimer("supportHintTimer")
     clearTarget()
     queueInspection(inspectRoom)
     return
   end
-  if not K.enabled or K.mode == "kill_pause" or not K.currentTargetName then return end
+  if not K.enabled or K.mode == "kill_pause" then return end
   if nameHasIgnoredPhrase(name) then return end
+  local recent = K.recentTarget
+  if not K.currentTargetName and recent and recent.name and recent.room == currentRoom()
+      and now() - recent.at <= 3 and not K.roomChangePending
+      and (K.mode == "patrol" or K.mode == "returning") then
+    local exact = normal(name) == normal(recent.name)
+    local kind = confirmedByServer and selectedTargetKindInAnyForm(name)
+    local ambiguous = false
+    for _, entity in ipairs(entities()) do
+      if liveNpc(entity) and tostring(entity.id) ~= tostring(recent.id)
+          and ((exact and normal(entity.name) == normal(recent.name))
+            or (not exact and kind and animalInName(entity.name) == kind)) then ambiguous = true break end
+    end
+    local entity = recent.id and entityById(recent.id)
+    if not ambiguous and (not entity or tonumber(entity.hp) == 0)
+        and (exact or (kind and kind == recent.animal)) then
+      K.currentTargetId, K.currentTargetName, K.currentTargetAnimal = recent.id, recent.name, recent.animal
+      K.pursuitOriginRoom, K.pursuitTrail, K.pursuitLeftArea = recent.origin, recent.trail, recent.leftArea
+      finishCurrentKill()
+      return
+    end
+  end
+  if not K.currentTargetName then return end
   local currentMatch = normal(name) == normal(K.currentTargetName)
-  if currentMatch then
+  local tracked = K.currentTargetId and entityById(K.currentTargetId)
+  if currentMatch and ((tracked and tonumber(tracked.hp) == 0)
+      or (#matchesByName <= 1 and (not K.currentTargetAmbiguous or not tracked)
+        and (not dead or tostring(dead.id) == tostring(K.currentTargetId)))) then
     finishCurrentKill()
     return
   end
+  if currentMatch and dead and tostring(dead.id) ~= tostring(K.currentTargetId) then return end
 
   -- Linie z XP sa zwykle w bierniku, wiec nazwy nie da sie porownac 1:1.
   -- Sam zgodny gatunek nie wystarcza: w grupie moze wlasnie zginac drugi byk
   -- albo ork. Czekamy na znikniecie konkretnego ID aktualnego celu z GMCP.
-  if not confirmedByServer then return end
+  if not confirmedByServer and not currentMatch then return end
   local killedKind = selectedTargetKindInAnyForm(name)
-  if not K.currentTargetAnimal or killedKind ~= K.currentTargetAnimal then return end
+  if not currentMatch and (not K.currentTargetAnimal or killedKind ~= K.currentTargetAnimal) then return end
   local expectedId = tostring(K.currentTargetId or "")
   local expectedName = K.currentTargetName
+  if currentMatch and not dead then
+    K.pendingKill = {id=expectedId, name=expectedName, room=currentRoom(), at=now(),
+      entities=K.sourceRevisions.entities}
+  end
+  local pendingConfirmation = K.pendingKill
   later("killConfirmTimer", 0.35, function()
     if not K.enabled or (K.mode ~= "combat" and K.mode ~= "chase") then return end
+    if currentMatch and K.pendingKill ~= pendingConfirmation then return end
     if tostring(K.currentTargetId or "") ~= expectedId or K.currentTargetName ~= expectedName then return end
     local entity = expectedId ~= "" and entityById(expectedId) or currentTargetEntity()
     if not entity or (tonumber(entity.hp) and tonumber(entity.hp) <= 0) then
@@ -3197,6 +3391,7 @@ end
 
 function K.onSessionEvent(eventName)
   invalidateState(true)
+  K.progressOwn, K.progressTeam = {}, {}
   K.healthHistory, K.shieldTransfers = {}, {}
   K.previousIncoming, K.transferRevision = nil, nil
   K.shieldFailure = nil

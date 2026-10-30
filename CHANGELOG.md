@@ -1,5 +1,14 @@
 # Zmiany
 
+## 2.9.3
+
+- Prowadzący przyjmuje potwierdzony własny cel tego samego dozwolonego gatunku, gdy ogólne `zabij fimira` wybrało innego NPC niż pierwszy wpis w GMCP. Własny atak ma pierwszeństwo przed `primary`; lista ignorowanych i ograniczenia gatunku nadal obowiązują.
+- Najwyżej trzy niepotwierdzone próby ataku na dany cel w pokoju. Zmiany walki innych NPC i celów sojuszników nie odnawiają budżetu. Nowy pokój lub faktyczne odzyskanie i późniejsza utrata własnej walki pozwalają rozpocząć kolejny ograniczony cykl.
+- Sygnał wsparcia jest związany z pokojem i żywymi NPC. Po zgonie stary tekst i stare relacje nie wystarczają do ponowienia wsparcia; nowa walka wznawia je automatycznie. Po odmowie analizowane są relacje prowadzącego i jego przeciwnika, zamiast całej walki w pokoju.
+- Jawne `0 HP` śledzonego NPC rozpoczyna pauzę po zabiciu. Krótki kontekst zaginionego celu obsługuje opóźniony zgon bez skracania pauzy i bez przerywania nowej walki lub ruchu. Zachowany powrót po pościgu i ostrożna obsługa jednakowych opisów NPC.
+- Watchdog porównuje HP osobno dla każdego kanału GMCP. Różne, niezmienione skale nie udają postępu; rzeczywiste zmiany mniejsze od zaokrąglonego procenta nadal odświeżają aktywność. Brak dodatkowego odpytywania gry i stałych timerów.
+- 30 nowych symulacji regresji, w tym opóźnione dane, identyczne opisy, przełączanie skal HP, zachowanie pełnej pauzy, powrót po pościgu oraz ograniczenie ponowień. Dotychczasowe role, zasłony i obsługa zmęczenia pozostają objęte testami.
+
 ## 2.9.2
 
 - Obsługa rzeczywistego pola `fatigue` Chimery: 0% oznacza wypoczęcie, 100% wyczerpanie. Progi `odpoczynek` nadal określają pozostałe siły do ruchu; pełna para `moves/maxmoves` jest obsługiwana zastępczo.

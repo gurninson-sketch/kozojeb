@@ -1922,14 +1922,14 @@ test("an outgoing attack confirms the target despite a different primary aggress
   assert(count("zabij snotlinga")==1 and kozojeb.currentTargetId=="N")
 end)
 
-test("unconfirmed attacks stop after three attempts until combat evidence changes", function()
+test("unconfirmed attacks stop after three attempts despite changes to incoming relations", function()
   setupLeader();gmcp.Chimera.Combat.State={primary="",relations={}}
   kozojeb.start();advance(8)
   assert(count("zabij snotlinga")==3 and not kozojeb.focusTimer)
   gmcp.Chimera.Room.Entities.entities[4].hp=90;event()
   assert(count("zabij snotlinga")==3)
   gmcp.Chimera.Combat.State.relations={{attacker="N",defender="M"}};event("gmcp.Chimera.Combat.State")
-  assert(count("zabij snotlinga")==4)
+  assert(count("zabij snotlinga")==3)
 end)
 
 test("support prefers the leader outgoing target over an earlier incoming aggressor", function()
@@ -2311,6 +2311,333 @@ test("a disconnect during the regroup return cannot leave the leader waiting ahe
   assert(kozojeb.enabled and not kozojeb.reconnectTask and kozojeb.movementRest)
   advance(11)
   assert(count("w") == 1 and kozojeb.movementRest and #aliases == 0)
+end)
+
+test("the actual outgoing same species target replaces the intended generic command target", function()
+  setupLeader(); gmcp.Chimera.Combat.State={primary="",relations={}}
+  local e=gmcp.Chimera.Room.Entities.entities
+  e[5]={id="T",name="Drugi glupkowaty snotling",kind="npc",hp=100,maxhp=100}
+  e[6]={id="X",name="Obcy ork",kind="npc",hp=100,maxhp=100}
+  e[7]={id="Y",name="Obcy troll",kind="npc",hp=100,maxhp=100}
+  kozojeb.start()
+  assert(kozojeb.currentTargetId=="N" and count("zabij snotlinga")==1)
+  for i=1,6 do
+    gmcp.Chimera.Combat.State={primary="N",relations={{attacker="S",defender="T"},
+      {attacker="T",defender="S"},{attacker="N",defender="M"},
+      {attacker=i%2==0 and "X" or "Y",defender=i%2==0 and "Y" or "X"}}}
+    event("gmcp.Chimera.Combat.State"); advance(2.1)
+  end
+  assert(kozojeb.currentTargetId=="T" and count("zabij snotlinga")==1)
+end)
+
+test("unrelated NPC fights and ally focus changes cannot reopen the three attack budget", function()
+  setupLeader(); gmcp.Chimera.Combat.State={primary="",relations={}}
+  local e=gmcp.Chimera.Room.Entities.entities
+  e[5]={id="X",name="Obcy ork",kind="npc",hp=100,maxhp=100}
+  e[6]={id="Y",name="Obcy troll",kind="npc",hp=100,maxhp=100}
+  kozojeb.start()
+  for i=1,7 do
+    gmcp.Chimera.Combat.State.relations={{attacker="X",defender=i%2==0 and "N" or "Y"},
+      {attacker="N",defender=i%2==0 and "M" or "L"}}
+    event("gmcp.Chimera.Combat.State"); advance(2.1)
+  end
+  assert(count("zabij snotlinga")==3 and not kozojeb.focusTimer)
+end)
+
+test("a confirmed own focus followed by its real loss permits a new bounded attack cycle", function()
+  setupLeader(); gmcp.Chimera.Combat.State={primary="",relations={}}
+  kozojeb.start(); advance(3.2)
+  assert(count("zabij snotlinga")==3)
+  gmcp.Chimera.Combat.State.relations={{attacker="S",defender="N"}}
+  event("gmcp.Chimera.Combat.State")
+  gmcp.Chimera.Combat.State.relations={}
+  event("gmcp.Chimera.Combat.State"); advance(3.2)
+  assert(count("zabij snotlinga")==6 and not kozojeb.focusTimer)
+end)
+
+test("an incoming same species aggressor cannot impersonate an outgoing target", function()
+  setupLeader(); gmcp.Chimera.Combat.State={primary="",relations={}}
+  gmcp.Chimera.Room.Entities.entities[5]={id="T",name="Drugi snotling",kind="npc",hp=100,maxhp=100}
+  kozojeb.start()
+  gmcp.Chimera.Combat.State={primary="T",relations={{attacker="T",defender="S"}}}
+  event("gmcp.Chimera.Combat.State"); advance(3.2)
+  assert(kozojeb.currentTargetId=="N" and count("zabij snotlinga")==3)
+end)
+
+test("an ignored or different species outgoing NPC cannot replace the selected target", function()
+  for _, ignored in ipairs({false,true}) do
+    setupLeader(); gmcp.Chimera.Combat.State={primary="",relations={}}
+    local e=gmcp.Chimera.Room.Entities.entities
+    e[5]={id="T",name=ignored and "Silny snotling" or "Obcy ork",kind="npc",hp=100,maxhp=100}
+    if ignored then kozojeb.command("ignoruj dodaj silny") end
+    kozojeb.start()
+    gmcp.Chimera.Combat.State={primary="T",relations={{attacker="S",defender="T"}}}
+    event("gmcp.Chimera.Combat.State"); advance(3.2)
+    assert(kozojeb.currentTargetId=="N" and count("zabij snotlinga")==3)
+  end
+end)
+
+test("a late death in the same room still starts the full configured pause", function()
+  setupLeader(); kozojeb.setRooms({1322,1323}); kozojeb.command("pauza 5"); kozojeb.start()
+  local before=#sends
+  table.remove(gmcp.Chimera.Room.Entities.entities,4)
+  event(); advance(1.1)
+  assert(kozojeb.mode=="patrol" and kozojeb.recentTarget)
+  kozojeb.onKill("Maly glupkowaty snotling",false)
+  local pause=kozojeb.killTimer
+  assert(kozojeb.mode=="kill_pause" and pause and not kozojeb.moveTimer)
+  advance(2); kozojeb.onKill("malego glupkowatego snotlinga",true)
+  assert(kozojeb.killTimer==pause)
+  advance(2.9); assert(kozojeb.mode=="kill_pause" and #sends==before)
+  advance(.2); assert(kozojeb.mode=="patrol" and not kozojeb.killTimer)
+end)
+
+test("an explicit tracked zero HP snapshot pauses before adopting another outgoing NPC", function()
+  setupLeader(); gmcp.Chimera.Combat.State={primary="",relations={}}
+  kozojeb.command("pauza 5"); kozojeb.start()
+  local e=gmcp.Chimera.Room.Entities.entities
+  e[4].hp=0
+  e[5]={id="T",name="Drugi snotling",kind="npc",hp=100,maxhp=100}
+  gmcp.Chimera.Combat.State={primary="T",relations={{attacker="S",defender="T"}}}
+  event()
+  assert(kozojeb.mode=="kill_pause" and kozojeb.killTimer and count("zabij snotlinga")==1)
+  advance(5.1)
+  assert(kozojeb.mode=="combat" and kozojeb.currentTargetId=="T")
+end)
+
+test("late death from an earlier room cannot interrupt a new encounter", function()
+  setupLeader(); kozojeb.setRooms({1322,1323}); kozojeb.start()
+  table.remove(gmcp.Chimera.Room.Entities.entities,4); event(); advance(1.1)
+  room=1323; kozojeb.onRoomChanged("gmcp.Room.Info")
+  gmcp.Chimera.Room.Entities.entities[4]={id="T",name="Drugi snotling",kind="npc",hp=100,maxhp=100}
+  gmcp.Chimera.Combat.State={primary="T",relations={{attacker="S",defender="T"}}}
+  event(); kozojeb.onKill("Maly glupkowaty snotling",false)
+  assert(kozojeb.mode=="combat" and kozojeb.currentTargetId=="T" and not kozojeb.killTimer)
+end)
+
+test("a newly selected NPC invalidates the late death context in the same room", function()
+  setupLeader(); kozojeb.setRooms({1322,1323}); kozojeb.start()
+  table.remove(gmcp.Chimera.Room.Entities.entities,4); event(); advance(1.1)
+  gmcp.Chimera.Room.Entities.entities[4]={id="T",name="Drugi snotling",kind="npc",hp=100,maxhp=100}
+  event(); kozojeb.onKill("Maly glupkowaty snotling",false)
+  assert(kozojeb.currentTargetId=="T" and kozojeb.mode=="combat" and not kozojeb.killTimer)
+end)
+
+test("a duplicate description death identifies the zero HP ID without killing the living target", function()
+  setupLeader(); gmcp.Chimera.Combat.State={primary="N",relations={{attacker="S",defender="N"}}}
+  local e=gmcp.Chimera.Room.Entities.entities
+  e[5]={id="T",name="Maly glupkowaty snotling",kind="npc",hp=0,maxhp=100}
+  kozojeb.start(); kozojeb.onKill("Maly glupkowaty snotling",false); advance(.4)
+  assert(kozojeb.currentTargetId=="N" and kozojeb.mode=="combat" and not kozojeb.killTimer)
+  assert(kozojeb.deadNpcIds.T and not kozojeb.deadNpcIds.N)
+end)
+
+test("a live duplicate cannot be blacklisted by a delayed death of the lost ID", function()
+  setupLeader(); kozojeb.setRooms({1322,1323}); kozojeb.start()
+  table.remove(gmcp.Chimera.Room.Entities.entities,4); event(); advance(1.1)
+  gmcp.Chimera.Room.Entities.entities[4]={id="T",name="Maly glupkowaty snotling",kind="npc",hp=100,maxhp=100}
+  -- Pakiet dotarl, ale decyzja o nowym ataku jeszcze czeka w kolejce.
+  kozojeb.onGmcp("gmcp.Chimera.Room.Entities")
+  kozojeb.onKill("Maly glupkowaty snotling",false)
+  assert(not kozojeb.deadNpcIds.T and not kozojeb.killTimer)
+  advance(.13); assert(kozojeb.currentTargetId=="T")
+end)
+
+test("manual stop cancels a delayed death context", function()
+  setupLeader(); kozojeb.setRooms({1322,1323}); kozojeb.start()
+  table.remove(gmcp.Chimera.Room.Entities.entities,4); event(); advance(1.1)
+  kozojeb.stop(); kozojeb.onKill("Maly glupkowaty snotling",false); advance(6)
+  assert(not kozojeb.enabled and not kozojeb.killTimer and not kozojeb.recentTarget)
+end)
+
+test("a late combat hint after a death cannot support with no living NPC", function()
+  reset("wsparcie",60)
+  table.remove(gmcp.Chimera.Room.Entities.entities,4)
+  gmcp.Chimera.Combat.State={primary="",relations={}}
+  kozojeb.start(); kozojeb.onKill("Maly glupkowaty snotling",false)
+  kozojeb.onTeamCombat("Yarrim","malego glupkowatego snotlinga"); advance(.13)
+  assert(count("wesprzyj")==0 and not kozojeb.supportHintTimer); noMovement()
+end)
+
+test("a death barrier rejects stale hints even with another NPC present then resumes on live leader combat", function()
+  reset("wsparcie",60); gmcp.Chimera.Combat.State={primary="",relations={}}
+  gmcp.Chimera.Room.Entities.entities[5]={id="T",name="Drugi snotling",kind="npc",hp=100,maxhp=100}
+  kozojeb.start(); kozojeb.onKill("Maly glupkowaty snotling",false)
+  kozojeb.onTeamCombat("Yarrim","malego glupkowatego snotlinga"); advance(.13)
+  assert(count("wesprzyj")==0)
+  gmcp.Chimera.Combat.State.relations={{attacker="L",defender="T"},{attacker="T",defender="L"}}
+  event("gmcp.Chimera.Combat.State")
+  assert(count("wesprzyj")==1 and kozojeb.currentTargetId=="T" and not kozojeb.supportDeathBarrier)
+  noMovement()
+end)
+
+test("text support requires one of the NPC IDs visible when the hint arrived to remain alive", function()
+  reset("wsparcie",60); gmcp.Chimera.Combat.State={primary="",relations={}}
+  kozojeb.start(); kozojeb.onTeamCombat("Yarrim","malego glupkowatego snotlinga")
+  table.remove(gmcp.Chimera.Room.Entities.entities,4)
+  kozojeb.onGmcp("gmcp.Chimera.Room.Entities"); advance(.13)
+  assert(count("wesprzyj")==0); noMovement()
+end)
+
+test("unrelated NPC combat cannot retry a denied support command", function()
+  reset("wsparcie",60); kozojeb.start(); kozojeb.onSupportResult(false); advance(2.1)
+  local e=gmcp.Chimera.Room.Entities.entities
+  e[5]={id="X",name="Obcy ork",kind="npc",hp=100,maxhp=100}
+  e[6]={id="Y",name="Obcy troll",kind="npc",hp=100,maxhp=100}
+  event()
+  gmcp.Chimera.Combat.State.relations[3]={attacker="X",defender="Y"}
+  event("gmcp.Chimera.Combat.State")
+  assert(count("wesprzyj")==1); noMovement()
+end)
+
+test("unchanged own HP in different channel scales cannot keep the watchdog alive", function()
+  setupLeader()
+  gmcp.Chimera.Room.Entities.entities[1].hp=1000
+  gmcp.Chimera.Room.Entities.entities[1].maxhp=1000
+  gmcp.Char.Vitals.hp,gmcp.Char.Vitals.maxhp=10,10
+  kozojeb.start(); room=1323; event()
+  event("gmcp.Char.Vitals"); event("gmcp.Chimera.Room.Entities")
+  for i=1,10 do advance(3); event("gmcp.Char.Vitals"); event("gmcp.Chimera.Room.Entities") end
+  assert(kozojeb.metrics.idleResets==1 and kozojeb.mode=="idle_return")
+end)
+
+test("unchanged team HP across room and group scales cannot fake progress", function()
+  setupLeader()
+  gmcp.Chimera.Group.State.members={"S","L",{id="M",name="Morrid",hp=9000,maxhp=10000}}
+  kozojeb.start(); room=1323; event()
+  event("gmcp.Chimera.Group.State"); event("gmcp.Chimera.Room.Entities")
+  for i=1,10 do advance(3); event("gmcp.Chimera.Group.State"); event("gmcp.Chimera.Room.Entities") end
+  assert(kozojeb.metrics.idleResets==1 and kozojeb.mode=="idle_return")
+end)
+
+test("real tiny HP changes survive channel switches without recreating the watchdog", function()
+  setupLeader(); gmcp.Char.Vitals.hp,gmcp.Char.Vitals.maxhp=10000,10000
+  kozojeb.start(); room=1323; event()
+  for i=1,10 do
+    advance(3); gmcp.Char.Vitals.hp=10000-i
+    event("gmcp.Char.Vitals"); event("gmcp.Chimera.Room.Entities")
+  end
+  assert(kozojeb.metrics.idleResets==0 and kozojeb.mode=="combat")
+end)
+
+test("an unambiguous delayed XP confirmation also restores the lost target pause", function()
+  setupLeader(); kozojeb.setRooms({1322,1323}); kozojeb.start()
+  table.remove(gmcp.Chimera.Room.Entities.entities,4); event(); advance(1.1)
+  kozojeb.onKill("malego glupkowatego snotlinga",true)
+  assert(kozojeb.mode=="kill_pause" and kozojeb.killTimer and not kozojeb.moveTimer)
+end)
+
+test("an expired lost target cannot start a new pause", function()
+  setupLeader(); kozojeb.setRooms({1322,1323}); kozojeb.command("predkosc 10"); kozojeb.start()
+  table.remove(gmcp.Chimera.Room.Entities.entities,4); event(); advance(4.2)
+  kozojeb.onKill("Maly glupkowaty snotling",false)
+  assert(kozojeb.mode=="patrol" and not kozojeb.killTimer)
+end)
+
+test("a delayed death outside the patrol area pauses then resumes the saved pursuit return", function()
+  setupLeader(); kozojeb.setRooms({1322}); kozojeb.start()
+  kozojeb.onFlee("Maly glupkowaty snotling","wschod"); advance(.21)
+  room=1323; kozojeb.onRoomChanged("gmcp.Room.Info"); event()
+  table.remove(gmcp.Chimera.Room.Entities.entities,4); event(); advance(1.01)
+  assert(kozojeb.mode=="returning" and kozojeb.returnTimer and not kozojeb.roomChangePending)
+  local before=#sends
+  kozojeb.onKill("Maly glupkowaty snotling",false)
+  assert(kozojeb.mode=="kill_pause" and not kozojeb.returnTimer)
+  advance(4.9); assert(#sends==before and kozojeb.mode=="kill_pause")
+  advance(.4); assert(kozojeb.mode=="returning" and count("w")==1)
+end)
+
+test("new room data allows early text support again after a previous room death", function()
+  reset("wsparcie",60); gmcp.Chimera.Combat.State={primary="",relations={}}
+  kozojeb.start(); kozojeb.onKill("Maly glupkowaty snotling",false)
+  room=1323; kozojeb.onRoomChanged("gmcp.Room.Info")
+  gmcp.Chimera.Room.Entities.entities[4]={id="T",name="Drugi snotling",kind="npc",hp=100,maxhp=100}
+  event(); kozojeb.onTeamCombat("Yarrim","drugiego snotlinga"); advance(.13)
+  assert(count("wesprzyj")==1); noMovement()
+end)
+
+test("an ambiguous death also blocks the cached positive combat until fresh evidence", function()
+  reset("wsparcie",60)
+  gmcp.Chimera.Room.Entities.entities[5]={id="T",name="Maly glupkowaty snotling",kind="npc",hp=100,maxhp=100}
+  kozojeb.start(); kozojeb.onSupportResult(false); advance(2.1)
+  kozojeb.onKill("Maly glupkowaty snotling",false)
+  kozojeb.onTeamCombat("Yarrim","malego glupkowatego snotlinga"); advance(.13)
+  assert(count("wesprzyj")==1 and kozojeb.supportDeathBarrier)
+  gmcp.Chimera.Combat.State.relations={{attacker="L",defender="T"},{attacker="T",defender="L"}}
+  event("gmcp.Chimera.Combat.State")
+  assert(count("wesprzyj")==2 and kozojeb.currentTargetId=="T"); noMovement()
+end)
+
+test("a disappearing duplicate waits for its own death instead of adopting the living copy", function()
+  setupLeader()
+  local e=gmcp.Chimera.Room.Entities.entities
+  e[5]={id="T",name="Maly glupkowaty snotling",kind="npc",hp=100,maxhp=100}
+  gmcp.Chimera.Combat.State={primary="N",relations={{attacker="S",defender="N"}}}
+  kozojeb.start()
+  table.remove(e,4)
+  gmcp.Chimera.Combat.State={primary="T",relations={{attacker="S",defender="T"}}}
+  event()
+  assert(kozojeb.currentTargetId=="N" and kozojeb.targetLostTimer)
+  kozojeb.onKill("Maly glupkowaty snotling",false)
+  assert(kozojeb.mode=="kill_pause" and kozojeb.killTimer and not kozojeb.deadNpcIds.T)
+end)
+
+test("the survivor of an earlier identical description cannot be killed by its sibling death text", function()
+  setupLeader(); gmcp.Chimera.Combat.State={primary="",relations={}}
+  local e=gmcp.Chimera.Room.Entities.entities
+  e[5]={id="T",name="Maly glupkowaty snotling",kind="npc",hp=100,maxhp=100}
+  kozojeb.start()
+  gmcp.Chimera.Combat.State={primary="T",relations={{attacker="S",defender="T"}}}
+  event("gmcp.Chimera.Combat.State")
+  table.remove(e,4); event()
+  kozojeb.onKill("Maly glupkowaty snotling",false)
+  event(); advance(.4)
+  assert(kozojeb.mode=="combat" and kozojeb.currentTargetId=="T")
+  assert(not kozojeb.deadNpcIds.T and not kozojeb.killTimer and not kozojeb.pendingKill)
+end)
+
+test("ambiguous death text stays associated with the old ID until delayed room data confirms it", function()
+  setupLeader()
+  local e=gmcp.Chimera.Room.Entities.entities
+  e[5]={id="T",name="Maly glupkowaty snotling",kind="npc",hp=100,maxhp=100}
+  gmcp.Chimera.Combat.State={primary="N",relations={{attacker="S",defender="N"}}}
+  kozojeb.start(); kozojeb.onKill("Maly glupkowaty snotling",false); advance(.5)
+  event("gmcp.Chimera.Combat.State")
+  assert(kozojeb.pendingKill and not kozojeb.killTimer)
+  table.remove(e,4)
+  gmcp.Chimera.Combat.State={primary="T",relations={{attacker="S",defender="T"}}}
+  event()
+  assert(kozojeb.mode=="kill_pause" and not kozojeb.deadNpcIds.T)
+end)
+
+test("a confirmed pursuit can reacquire a changed NPC ID in the destination room", function()
+  setupLeader(); kozojeb.setRooms({1322,1323}); kozojeb.start()
+  kozojeb.onFlee("Maly glupkowaty snotling","wschod"); advance(.21)
+  room=1323; kozojeb.onRoomChanged("gmcp.Room.Info")
+  gmcp.Chimera.Room.Entities.entities[4].id="NEW"
+  gmcp.Chimera.Combat.State={primary="NEW",relations={{attacker="S",defender="NEW"}}}
+  event()
+  assert(kozojeb.mode=="combat" and kozojeb.currentTargetId=="NEW" and count("e")==1)
+end)
+
+test("a surviving duplicate retains ambiguity even after the lost target timeout", function()
+  setupLeader()
+  local e=gmcp.Chimera.Room.Entities.entities
+  e[5]={id="T",name="Maly glupkowaty snotling",kind="npc",hp=100,maxhp=100}
+  gmcp.Chimera.Combat.State={primary="N",relations={{attacker="S",defender="N"}}}
+  kozojeb.start(); table.remove(e,4)
+  gmcp.Chimera.Combat.State={primary="T",relations={{attacker="S",defender="T"}}}
+  event(); advance(1.1)
+  assert(kozojeb.currentTargetId=="T" and kozojeb.currentTargetAmbiguous)
+  kozojeb.onKill("Maly glupkowaty snotling",false); event(); advance(.4)
+  assert(kozojeb.mode=="combat" and not kozojeb.deadNpcIds.T and not kozojeb.killTimer)
+end)
+
+test("a newly ignored zero HP target cannot trap the leader in death processing", function()
+  setupLeader(); kozojeb.setRooms({1322,1323}); kozojeb.start()
+  kozojeb.command("ignoruj dodaj maly")
+  gmcp.Chimera.Room.Entities.entities[4].hp=0; event()
+  assert(not kozojeb.currentTargetName and not kozojeb.killTimer and kozojeb.mode=="patrol")
 end)
 
 print(string.format("%d simulations passed", total))
