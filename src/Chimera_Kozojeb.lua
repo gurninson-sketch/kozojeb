@@ -2161,7 +2161,7 @@ local function tryShield(entity, hp, threshold, plan)
   local decision = K.shieldDecision
   note(string.format(
     "Zaslaniam %s (%d%% HP, prog %d%%; moje %.0f HP / %d napastnikow, cel %.0f HP / %d; po zaslonie do %d).",
-    form:gsub("^%l", string.upper), hp, threshold,
+    form:gsub("^%l", string.upper), math.floor(hp+0.5), threshold,
     decision.ownHp, decision.ownAttackers, decision.targetHp, decision.targetAttackers, decision.maxOwnAttackers
   ), "yellow")
   -- Rezerwacja przed send chroni tez przed pakietami/odpowiedziami

@@ -5240,4 +5240,12 @@ test("duplicate empty replies do not recreate the pending pickup retry timer", f
   advance(.5);assert(count("wez pancerz")==2)
 end)
 
+test("a fractional golem HP percentage can be logged without losing its actual HP budget", function()
+  golemSetup("S");golemRelations({"L","G","M","S"})
+  local e=gmcp.Chimera.Room.Entities.entities
+  e[2].hp=749;e[1].hp=900;e[3].hp=900
+  kozojeb.start()
+  assert(#shieldCommands()==1 and kozojeb.shieldDecision.targetHp==749)
+end)
+
 print(string.format("%d simulations passed", total))
