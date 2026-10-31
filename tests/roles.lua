@@ -3483,4 +3483,311 @@ test("duplicate cover notifications share one expiry timer and never extend the 
   assert(not kozojeb.teamShieldTimer and not kozojeb.enabled and #aliases==0)
 end)
 
+local function regenerationSnapshot(ownHp, trackedHp, otherHp)
+  healingLeader()
+  local e=gmcp.Chimera.Room.Entities.entities
+  e[1].hp=ownHp*2
+  gmcp.Char.Vitals.hp=ownHp*2
+  e[3].hp,e[2].hp=trackedHp,otherHp
+  table.remove(e,4)
+  event()
+end
+
+test("full recovery of the original patient cannot abandon another teammate at 67 percent", function()
+  regenerationSnapshot(100,100,67);advance(3.1)
+  assert(kozojeb.mode=="heal_rest" and #aliases==0)
+  gmcp.Chimera.Room.Entities.entities[2].hp=95;event();advance(3.1)
+  assert(kozojeb.mode=="patrol")
+end)
+
+test("a noncritical original patient at 99 percent no longer blocks a ready party", function()
+  regenerationSnapshot(100,99,100);advance(3.1)
+  assert(kozojeb.mode=="patrol")
+end)
+
+test("the leader and every teammate may resume exactly at the configured 95 percent", function()
+  regenerationSnapshot(95,95,95);advance(3.1)
+  assert(kozojeb.enabled and kozojeb.mode=="patrol")
+end)
+
+test("different maximum HP pools meet the recovery threshold on their own scales", function()
+  regenerationSnapshot(100,100,100)
+  local e=gmcp.Chimera.Room.Entities.entities
+  e[1].hp,e[1].maxhp=1425,1500
+  gmcp.Char.Vitals.hp,gmcp.Char.Vitals.maxhp=1425,1500
+  e[3].hp,e[3].maxhp=1387,1460
+  e[2].hp,e[2].maxhp=1178,1240
+  event();advance(3.1)
+  assert(kozojeb.mode=="patrol")
+end)
+
+test("rounded own HP cannot falsely satisfy the configured recovery threshold", function()
+  regenerationSnapshot(94.6,100,100)
+  assert(kozojeb.lastHp==95)
+  advance(3.1);assert(kozojeb.mode=="heal_rest")
+end)
+
+test("rounded teammate HP cannot falsely satisfy the recovery threshold", function()
+  regenerationSnapshot(100,100,94.6)
+  assert(kozojeb.teamHealth.yarrim==95)
+  advance(3.1);assert(kozojeb.mode=="heal_rest")
+end)
+
+test("a critical patient still requires actual full HP rather than a rounded 100 percent", function()
+  regenerationSnapshot(100,40,100)
+  gmcp.Chimera.Room.Entities.entities[3].hp=99.6;event();advance(3.1)
+  assert(kozojeb.teamHealth.morrid==100 and kozojeb.mode=="heal_rest")
+  gmcp.Chimera.Room.Entities.entities[3].hp=100;event();advance(3.1)
+  assert(kozojeb.mode=="patrol")
+end)
+
+test("critical own HP also requires actual full recovery", function()
+  regenerationSnapshot(40,95,95)
+  gmcp.Chimera.Room.Entities.entities[1].hp=199.2
+  gmcp.Char.Vitals.hp=199.2;event();advance(3.1)
+  assert(kozojeb.lastHp==100 and kozojeb.mode=="heal_rest" and kozojeb.recoveryOwnCritical)
+  gmcp.Chimera.Room.Entities.entities[1].hp=200
+  gmcp.Char.Vitals.hp=200;event();advance(3.1)
+  assert(kozojeb.mode=="patrol")
+end)
+
+test("critical health during an ordinary retreat is remembered without an emergency exit", function()
+  regenerationSnapshot(100,100,40)
+  assert(not kozojeb.recoveryEmergency)
+  gmcp.Chimera.Room.Entities.entities[2].hp=95;event();advance(3.1)
+  assert(kozojeb.mode=="heal_rest" and kozojeb.recoveryCritical.yarrim)
+  gmcp.Chimera.Room.Entities.entities[2].hp=100;event();advance(3.1)
+  assert(kozojeb.mode=="patrol")
+end)
+
+test("multiple critical patients must all recover rather than overwriting the first patient", function()
+  regenerationSnapshot(100,40,40)
+  gmcp.Chimera.Room.Entities.entities[3].hp=100
+  gmcp.Chimera.Room.Entities.entities[2].hp=99;event();advance(3.1)
+  assert(kozojeb.mode=="heal_rest" and kozojeb.recoveryCritical.morrid and kozojeb.recoveryCritical.yarrim)
+  gmcp.Chimera.Room.Entities.entities[2].hp=100;event();advance(3.1)
+  assert(kozojeb.mode=="patrol")
+end)
+
+test("disabling team retreat does not disable the new whole party recovery threshold", function()
+  healingLeader();kozojeb.command("progdruzyny 0")
+  gmcp.Chimera.Room.Entities.entities[3].hp=100
+  gmcp.Chimera.Room.Entities.entities[2].hp=67;event();advance(3.1)
+  assert(kozojeb.mode=="heal_rest")
+end)
+
+test("missing own HP cannot reuse a previous complete recovery reading", function()
+  regenerationSnapshot(100,100,100)
+  gmcp.Chimera.Room.Entities.entities[1].maxhp=nil
+  gmcp.Char.Vitals.maxhp=nil;event();advance(3.1)
+  assert(kozojeb.lastHp==100 and not kozojeb.ownHealth and kozojeb.mode=="heal_rest")
+end)
+
+test("incomplete teammate health cannot confirm party recovery", function()
+  regenerationSnapshot(100,100,100)
+  gmcp.Chimera.Room.Entities.entities[2].maxhp=nil;event();advance(3.1)
+  assert(kozojeb.mode=="heal_rest" and not kozojeb.teamVitals.yarrim)
+end)
+
+test("a full remote Group State reading cannot replace a missing party member in the room", function()
+  regenerationSnapshot(100,100,100)
+  gmcp.Chimera.Group.State.members={"S","M",{id="L",name="Yarrim",hp=100,maxhp=100}}
+  table.remove(gmcp.Chimera.Room.Entities.entities,2)
+  event("gmcp.Chimera.Group.State");event();advance(3.1)
+  assert(kozojeb.mode=="heal_rest" and kozojeb.recoveryMissing=="Yarrim")
+end)
+
+test("newly joined teammates also need recovery and remain in the gathering roster", function()
+  regenerationSnapshot(100,100,100)
+  local e=gmcp.Chimera.Room.Entities.entities
+  e[#e+1]={id="G",name="Gror",kind="player",group_role="member",hp=70,maxhp=100}
+  gmcp.Chimera.Group.State.members={"S","L","M","G"}
+  event("gmcp.Chimera.Group.State");event();advance(3.1)
+  assert(kozojeb.mode=="heal_rest" and kozojeb.recoveryRoster.gror=="Gror")
+  table.remove(e,#e);event();advance(3.1)
+  assert(kozojeb.mode=="heal_rest" and kozojeb.recoveryMissing=="Gror")
+end)
+
+test("an unrelated injured player in the room does not delay party recovery", function()
+  regenerationSnapshot(95,95,95)
+  local e=gmcp.Chimera.Room.Entities.entities
+  e[#e+1]={id="X",name="Obcy",kind="player",hp=1,maxhp=100}
+  event();advance(3.1);assert(kozojeb.mode=="patrol")
+end)
+
+test("the recovery panel lists every actual HP blocker and removes the obsolete single patient line", function()
+  regenerationSnapshot(90,80,67)
+  output={};kozojeb.status()
+  local text=table.concat(output)
+  assert(text:find("Yergo: 90.0%% / 95%% HP"))
+  assert(text:find("Morrid: 80.0%% / 95%% HP"))
+  assert(text:find("Yarrim: 67.0%% / 95%% HP"))
+  assert(not text:find("Czekam na gracza",1,true))
+  gmcp.Chimera.Room.Entities.entities[3].hp=95;event()
+  output={};kozojeb.status();assert(not table.concat(output):find("Morrid:",1,true))
+end)
+
+test("the recovery setting is validated and saved without changing combat settings", function()
+  regenerationSnapshot(95,95,95)
+  local config=clone(kozojeb.config)
+  for _, value in ipairs({"0","-1","50","101","94.5","nan","95;stop"}) do
+    kozojeb.command("powrothp "..value)
+    assert(kozojeb.config.recoveryHp==95)
+  end
+  kozojeb.command("powrothp 90")
+  assert(kozojeb.config.recoveryHp==90)
+  assert(saved["/profile-under-test/chimera_kozojeb_settings.lua"].config.recoveryHp==90)
+  for key,value in pairs(config) do
+    if key~="recoveryHp" and type(value)~="table" then assert(kozojeb.config[key]==value,key) end
+  end
+  kozojeb.stop();kozojeb=nil;dofile(source)
+  assert(kozojeb.config.recoveryHp==90 and not kozojeb.enabled)
+end)
+
+test("existing profiles acquire the new default without changing their saved shielding or movement", function()
+  reset("zaslony");kozojeb.command("proglidera 90");kozojeb.command("progzaslony 80")
+  kozojeb.command("predkosc 1.5");kozojeb.command("pauza 8")
+  saved["/profile-under-test/chimera_kozojeb_settings.lua"].config.recoveryHp=nil
+  kozojeb=nil;dofile(source)
+  assert(kozojeb.config.recoveryHp==95 and kozojeb.config.role=="zaslony")
+  assert(kozojeb.config.leaderShieldHp==90 and kozojeb.config.teamShieldHp==80)
+  assert(kozojeb.config.patrolDelay==1.5 and kozojeb.config.killPause==8)
+end)
+
+test("a user configured full party recovery remains available", function()
+  regenerationSnapshot(99,99,99);kozojeb.command("powrothp 100");advance(3.1)
+  assert(kozojeb.mode=="heal_rest")
+  gmcp.Chimera.Room.Entities.entities[1].hp=200;gmcp.Char.Vitals.hp=200
+  gmcp.Chimera.Room.Entities.entities[2].hp=100;gmcp.Chimera.Room.Entities.entities[3].hp=100
+  event();advance(3.1);assert(kozojeb.mode=="patrol")
+end)
+
+test("raising retreat thresholds cannot create an immediate recovery and retreat loop", function()
+  regenerationSnapshot(100,100,95)
+  kozojeb.command("progzaslony 0");kozojeb.command("progdruzyny 95")
+  advance(3.1);assert(kozojeb.mode=="heal_rest")
+  gmcp.Chimera.Room.Entities.entities[2].hp=96;event();advance(3.1)
+  assert(kozojeb.mode=="patrol")
+end)
+
+test("damage on the return route prevents restarting patrol until the whole party recovers again", function()
+  regenerationSnapshot(95,95,95);kozojeb.refugeRoom=1323
+  room=1323;kozojeb.onRoomChanged("gmcp.Room.Info");event();event("gmcp.Chimera.Combat.State")
+  advance(3.1);assert(kozojeb.mode=="recovery_return" and aliases[#aliases]=="/idz 1322")
+  gmcp.Chimera.Room.Entities.entities[2].hp=80
+  arriveRefuge(1322)
+  assert(kozojeb.mode=="heal_rest" and not kozojeb.restartPending)
+  gmcp.Chimera.Room.Entities.entities[2].hp=95;event();advance(3.1)
+  assert(kozojeb.mode=="patrol")
+end)
+
+test("a missing member at the end of the return route prevents patrol restart", function()
+  regenerationSnapshot(95,95,95);kozojeb.refugeRoom=1323
+  room=1323;kozojeb.onRoomChanged("gmcp.Room.Info");event();event("gmcp.Chimera.Combat.State")
+  advance(3.1);assert(kozojeb.mode=="recovery_return")
+  table.remove(gmcp.Chimera.Room.Entities.entities,3)
+  arriveRefuge(1322);assert(kozojeb.mode=="heal_rest" and kozojeb.recoveryMissing=="Morrid")
+end)
+
+test("critical recovery requirements survive a reconnect without a manual command", function()
+  regenerationSnapshot(100,40,95)
+  kozojeb.onSessionEvent("sysDisconnectionEvent")
+  gmcp.Chimera.Room.Entities.entities[3].hp=99
+  kozojeb.onSessionEvent("sysConnectionEvent");reconnectPackets();advance(3.6)
+  assert(kozojeb.enabled and kozojeb.mode=="heal_rest" and kozojeb.recoveryCritical.morrid)
+  gmcp.Chimera.Room.Entities.entities[3].hp=100;event();advance(3.1)
+  assert(kozojeb.mode=="patrol")
+end)
+
+test("a hidden tired teammate cannot disappear from recovery requirements", function()
+  regenerationSnapshot(95,95,95)
+  kozojeb.recoveryTired.gror="Gror"
+  advance(3.1)
+  assert(kozojeb.mode=="heal_rest" and kozojeb.recoveryRoster.gror=="Gror")
+end)
+
+test("95 percent recovery still respects equipment and movement holds", function()
+  regenerationSnapshot(95,95,95)
+  kozojeb.config.equipmentHold="Uszkodzony ekwipunek"
+  advance(3.1);assert(kozojeb.mode=="heal_rest")
+  kozojeb.config.equipmentHold=nil
+  gmcp.Char.Vitals.moves=54;event("gmcp.Char.Vitals");advance(3.1)
+  assert(kozojeb.mode=="heal_rest")
+  gmcp.Char.Vitals.moves=55;event("gmcp.Char.Vitals");advance(3.1)
+  assert(kozojeb.mode=="patrol")
+end)
+
+test("recovery packet bursts share the existing timer without polling or extra commands", function()
+  regenerationSnapshot(100,100,67)
+  local healTimer,before=kozojeb.healTimer,serial
+  for i=1,2000 do kozojeb.onGmcp("gmcp.Chimera.Room.Entities") end
+  assert(serial-before<=1 and kozojeb.healTimer==healTimer and #sends==0 and #aliases==0)
+  advance(.13);advance(3.1)
+  assert(kozojeb.mode=="heal_rest" and #sends==0 and #aliases==0)
+end)
+
+test("stop clears the recovery roster and critical requirements without an automatic restart", function()
+  regenerationSnapshot(40,40,67);kozojeb.status();kozojeb.stop();advance(30)
+  assert(not kozojeb.enabled and kozojeb.mode=="stop" and not kozojeb.healTimer)
+  assert(not kozojeb.recoveryCritical and not kozojeb.recoveryOwnCritical and not kozojeb.recoveryWaiters)
+  assert(not kozojeb.recoveryRoster and #aliases==0)
+end)
+
+test("the new setting cannot give either supporting role its own recovery or movement", function()
+  for _, role in ipairs({"wsparcie","zaslony"}) do
+    reset(role);kozojeb.command("powrothp 95");kozojeb.start()
+    gmcp.Chimera.Room.Entities.entities[1].hp=20;gmcp.Char.Vitals.hp=20
+    event();advance(10);noMovement()
+    assert(kozojeb.mode~="heal_rest" and not kozojeb.healTimer)
+  end
+end)
+
+test("a lower configured party recovery threshold applies to every noncritical member", function()
+  regenerationSnapshot(90,90,90);kozojeb.command("powrothp 90");advance(3.1)
+  assert(kozojeb.mode=="patrol")
+end)
+
+test("recovery remains suspended while the room snapshot is unavailable", function()
+  regenerationSnapshot(95,95,95);kozojeb.entitiesReady=false
+  advance(3.1);assert(kozojeb.mode=="heal_rest" and #aliases==0)
+  event();advance(3.1);assert(kozojeb.mode=="patrol")
+end)
+
+test("lowering the recovery setting never clears an earlier critical health requirement", function()
+  regenerationSnapshot(100,40,95);kozojeb.command("powrothp 80")
+  gmcp.Chimera.Room.Entities.entities[3].hp=99;event();advance(3.1)
+  output={};kozojeb.status()
+  assert(kozojeb.mode=="heal_rest" and table.concat(output):find("Morrid: 99.0%% / 100%% HP"))
+end)
+
+test("arrival packet bursts share one short recovery check and fresh combat prevents patrol restart", function()
+  regenerationSnapshot(95,95,95);kozojeb.refugeRoom=1323
+  room=1323;kozojeb.onRoomChanged("gmcp.Room.Info");event();event("gmcp.Chimera.Combat.State")
+  advance(3.1);assert(kozojeb.mode=="recovery_return")
+  room=1322;kozojeb.onRoomChanged("gmcp.Room.Info")
+  kozojeb.onGmcp("gmcp.Chimera.Room.Entities")
+  assert(kozojeb.restartPending=="recovery")
+  local pending,before=kozojeb.recoveryTimer,serial
+  for i=1,100 do kozojeb.onGmcp("gmcp.Chimera.Room.Entities") end
+  assert(kozojeb.recoveryTimer==pending and serial==before)
+  local e=gmcp.Chimera.Room.Entities.entities
+  e[#e+1]={id="N",name="Maly snotling",kind="npc",hp=100,maxhp=100}
+  gmcp.Chimera.Combat.State={primary="N",relations={{attacker="N",defender="S"}}}
+  kozojeb.onGmcp("gmcp.Chimera.Room.Entities")
+  kozojeb.onGmcp("gmcp.Chimera.Combat.State");advance(.13)
+  assert(kozojeb.mode=="escape" and kozojeb.recoveryEmergency and count("e")==1)
+  assert(not kozojeb.restartPending)
+end)
+
+test("a critical patient's full HP requirement remains active on the return route", function()
+  regenerationSnapshot(100,40,95);kozojeb.refugeRoom=1323
+  room=1323;kozojeb.onRoomChanged("gmcp.Room.Info")
+  gmcp.Chimera.Room.Entities.entities[3].hp=100
+  event();event("gmcp.Chimera.Combat.State");advance(3.1)
+  assert(kozojeb.mode=="recovery_return" and kozojeb.recoveryCritical.morrid)
+  gmcp.Chimera.Room.Entities.entities[3].hp=99
+  arriveRefuge(1322);assert(kozojeb.mode=="heal_rest")
+  output={};kozojeb.status();assert(table.concat(output):find("Morrid: 99.0%% / 100%% HP"))
+end)
+
 print(string.format("%d simulations passed", total))

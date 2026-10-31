@@ -26,6 +26,7 @@
 --   /kozojeb imie Pandjed pandjeda   - dodaj odmiane imienia do zaslony
 --   /kozojeb druzyna auto            - wykrywaj druzyne z relacji GMCP
 --   /kozojeb odpoczynek 25 55        - pauza/wznowienie wedlug procentu ruchu
+--   /kozojeb powrothp 95             - HP calej druzyny przed powrotem z leczenia
 --
 -- Skrypt zaklada, ze istniejacy alias /idz prowadzi do pokoju mapy o podanym ID.
 
@@ -53,7 +54,7 @@ end
 K.legacyImportTried = true
 K.initialized = false
 
-K.version = "2.9.6"
+K.version = "2.9.7"
 K.config = K.config or {
   chaseDelay = 0.20,
   patrolDelay = 0.70,
@@ -71,6 +72,7 @@ K.config = K.config or {
   escapeMaxAttempts = 3,
   escapeHp = 50,
   teamEscapeHp = 50,
+  recoveryHp = 95,
   teamShieldHp = 70,
   teamShieldInterval = 2.0,
   shieldMaxAttackers = 2,
@@ -142,7 +144,7 @@ local settingTypes = {
   shieldNameForms="table", ignoreNonTargets="boolean", ignoredNames="table",
   role="string", leaderName="string", leaderShieldHp="number", shieldSelfHp="number",
   zubrTargetInitialized="boolean", szkieletTargetInitialized="boolean", introducedTargets230="table",
-  equipmentHold="string",
+  equipmentHold="string", recoveryHp="number",
   shieldMaxAttackers="number", shieldHold="number", emptyPatrolMax="number",
 }
 if not K.settingsLoaded then
@@ -194,6 +196,7 @@ K.config.startRoom = tonumber(K.config.escapeRoom) or tonumber(K.config.startRoo
 K.config.escapeRoom = nil -- od 2.4.0 baza i pokoj startowy sa jednym miejscem
 K.config.escapeHp = tonumber(K.config.escapeHp) or 50
 K.config.teamEscapeHp = tonumber(K.config.teamEscapeHp) or K.config.escapeHp
+K.config.recoveryHp = math.max(1, math.min(100, math.floor(tonumber(K.config.recoveryHp) or 95)))
 K.config.teamShieldHp = tonumber(K.config.teamShieldHp) or 70
 K.config.teamShieldInterval = tonumber(K.config.teamShieldInterval) or 2.0
 K.config.teamShieldHp = math.max(0, math.min(100, K.config.teamShieldHp))
@@ -1232,6 +1235,7 @@ local function updateVitals()
   end
   local progressed = previousMoves ~= K.lastMoves
   local ownHp, ownMax = healthPair(ownRecord)
+  K.ownHealth = ownHp and {hp=ownHp, maxhp=ownMax} or nil
   if ownHp then
     local previous = K.progressOwn[ownSource]
     if not previous or ownHp ~= previous.hp or ownMax ~= previous.maxhp then
@@ -1447,6 +1451,7 @@ end
 local patrolStep
 local inspectRoom
 local sendRecoveryReturnAttempt
+local finishEscapeTail
 
 local function restartPatrolWhenReady(kind)
   if not K.enabled or isFollower() then return end
@@ -1463,8 +1468,32 @@ local function restartPatrolWhenReady(kind)
     if not wasPending then K.metrics.restartWaits = K.metrics.restartWaits + 1 end
     return
   end
+  if kind == "recovery" then
+    local arrival = K.recoveryArrival
+    if not arrival or arrival.room ~= currentRoom() then
+      arrival = {room=currentRoom()}
+      K.recoveryArrival = arrival
+      -- Encje i relacje walki moga nadejsc w osobnych pakietach. Jeden
+      -- krotki timer zbiera ten sam pakiet przybycia przed wznowieniem.
+      later("recoveryTimer", K.config.actionDelay, function()
+        if K.recoveryArrival ~= arrival then return end
+        arrival.ready = true
+        restartPatrolWhenReady("recovery")
+      end)
+    end
+    if not arrival.ready then return end
+  end
   K.restartPending = nil
   cancelTimer("recoveryTimer")
+  if kind == "recovery" then
+    updateVitals()
+    if not K.recoveryReadiness() then
+      K.escapeTailSent = false
+      note("Po powrocie druzyna wymaga dalszego odpoczynku. Sprawdzam bezpieczenstwo miejsca.", "yellow")
+      finishEscapeTail()
+      return
+    end
+  end
   resetPursuit()
   if kind == "idle" then
     note("Dotarlem do pokoju startowego " .. K.config.startRoom .. ". Wznawiam patrol ze swiezych danych.", "green")
@@ -1507,48 +1536,11 @@ local function scheduleHealingCheck()
     updateVitals()
     if not K.enabled or isFollower() or K.mode ~= "heal_rest" then return end
     if K.checkRecoveryThreat(false) then return end
-    local currentTeamSafe = K.teamSeenCount == 0 or K.config.teamEscapeHp <= 0
-      or K.teamLowestHp > K.config.teamEscapeHp
-    local trackedReady = true
-    if K.injuredTeamMember then
-      local trackedHp = K.teamHealth[normal(K.injuredTeamMember)]
-      -- Brak gracza w aktualnym GMCP nie oznacza wyzdrowienia. Czekamy, az
-      -- ponownie go zobaczymy i serwer potwierdzi pelne 100% HP.
-      trackedReady = trackedHp ~= nil and trackedHp >= 100
-    end
-    local teamReady = currentTeamSafe and trackedReady
-    K.recoveryMissing = nil
-    for name in pairs(K.recoveryEmergency and K.recoveryEmergency.wounded or {}) do
-      if not K.teamHealth[name] or K.teamHealth[name] < 100 then
-        teamReady = false
-        K.recoveryMissing = name:gsub("^%l", string.upper) .. " (do 100% HP)"
-        break
-      end
-    end
-    local visible = {}
-    if K.entitiesReady then
-      for _, member in ipairs(groupContext().members) do visible[normal(member.name)] = true end
-    end
-    for name, displayName in pairs(K.recoveryRoster or {}) do
-      if not visible[name] or K.teamHealth[name] == nil then
-        teamReady = false
-        K.recoveryMissing = displayName
-        break
-      end
-    end
-    for name, displayName in pairs(K.recoveryTired) do
-      if K.teamMoves[name] == nil or K.teamMoves[name] < K.config.resumeAtMoves then
-        teamReady = false
-        K.recoveryMissing = displayName .. " (zmeczenie)"
-        break
-      end
-    end
-    if K.lastHp >= 100 and K.lastMoves >= K.config.resumeAtMoves and teamReady
-        and not K.config.equipmentHold and not K.movementRest then
+    if K.recoveryReadiness() then
       K.recoveryEmergency = nil
       K.mode = "recovery_return"
       K.recoveryAttempts = 0
-      note("HP wrocilo do pelni. Wracam przez /idz do startu patrolu.", "green")
+      note("Druzyna gotowa po odpoczynku. Wracam przez /idz do startu patrolu.", "green")
       sendRecoveryReturnAttempt()
     else
       -- GMCP wystarcza do biezacej kontroli. Pytamy tekstowo tylko wtedy,
@@ -1557,7 +1549,9 @@ local function scheduleHealingCheck()
         K.healingVitalsRevision, K.healPollTicks = K.vitalsRevision, 0
       end
       K.healPollTicks = (K.healPollTicks or 0) + 1
-      if K.healPollTicks >= 5 and K.lastHp < 100 then
+      local ownTarget = K.recoveryOwnCritical and 100 or K.config.recoveryHp
+      if K.healPollTicks >= 5 and (not K.ownHealth
+          or K.ownHealth.hp * 100 < K.ownHealth.maxhp * ownTarget) then
         send("kondycja", false)
         K.healPollTicks = 0
       end
@@ -1566,16 +1560,18 @@ local function scheduleHealingCheck()
   end)
 end
 
-local function finishEscapeTail()
+finishEscapeTail = function()
   if isFollower() then return end
   if K.escapeTailSent then return end
   cancelTimer("escapeWatchTimer")
   K.escapeTailSent = true
+  K.recoveryArrival = nil
   K.mode = "heal_rest"
   K.healPollTicks = 0
   updateVitals()
-  local waitingFor = K.injuredTeamMember and (" oraz na 100% HP " .. K.injuredTeamMember) or ""
-  note("Jestem w bazie. Czekam na swoje 100% HP" .. waitingFor .. ".", "yellow")
+  K.recoveryReadiness()
+  note("Jestem w miejscu leczenia. Czekam na cala druzyne: co najmniej "
+    .. K.config.recoveryHp .. "% HP; stan krytyczny wymaga 100%.", "yellow")
   if K.config.equipmentHold then
     note("Po uzupelnieniu ekwipunku wpisz /kozojeb ekwipunek gotowy.", "yellow")
   end
@@ -1622,6 +1618,8 @@ function K.escape(reason, injuredTeamMember)
     K.checkRecoveryThreat(false)
     return
   end
+  updateVitals()
+  K.recoveryCritical, K.recoveryOwnCritical, K.recoveryWaiters = {}, false, nil
   K.recoveryRoster = {}
   for name, member in pairs(K.moveSnapshot and K.moveSnapshot.roster or K.teamStep and K.teamStep.roster or {}) do
     K.recoveryRoster[name] = member.name
@@ -1648,6 +1646,7 @@ function K.escape(reason, injuredTeamMember)
   K.escapeTailSent = false
   K.escapeAttempts = 0
   K.injuredTeamMember = injuredTeamMember and trim(injuredTeamMember) or nil
+  K.rememberRecoveryWounds()
   if K.movementRest and K.armMovementRest then K.armMovementRest() end
   note((reason or "Awaryjny odwrot.") .. " Ide przez /idz " .. escapeDestination() .. ".", "red")
   if K.movementRest and K.tryResumeMovement then
@@ -2321,20 +2320,111 @@ function K.recoveryEmergencyStep()
   later("escapeWatchTimer", K.config.escapeRetryDelay, K.recoveryEmergencyStep)
 end
 
-local function rememberRecoveryWounds()
-  local emergency = K.recoveryEmergency
-  if not emergency or K.config.teamEscapeHp <= 0 then return end
-  emergency.wounded = emergency.wounded or {}
-  for name, hp in pairs(K.teamHealth) do
-    if hp < K.config.teamEscapeHp then emergency.wounded[name] = true end
+function K.rememberRecoveryWounds()
+  K.recoveryCritical = K.recoveryCritical or {}
+  if K.ownHealth and K.ownHealth.hp * 100 < K.ownHealth.maxhp * K.config.escapeHp then
+    K.recoveryOwnCritical = true
   end
+  local emergency = K.recoveryEmergency
+  if emergency then emergency.wounded = emergency.wounded or {} end
+  if K.config.teamEscapeHp > 0 then
+    for name, value in pairs(K.teamVitals) do
+      if value.hp * 100 < value.maxhp * K.config.teamEscapeHp then
+        K.recoveryCritical[name] = true
+        if emergency then emergency.wounded[name] = true end
+      end
+    end
+  end
+end
+
+function K.recoveryReadiness()
+  updateVitals()
+  local blockers = {}
+  K.recoveryMissing = nil
+  local function block(name, label)
+    blockers[#blockers + 1] = {name=name, label=label}
+  end
+  if K.sessionBlocked or not K.entitiesReady or K.roomChangePending then
+    block("", "Czekam na swieze dane pokoju i postaci")
+  else
+    K.rememberRecoveryWounds()
+    local context, visible = groupContext(), {}
+    K.recoveryRoster = K.recoveryRoster or {}
+    for _, member in ipairs(context.members) do
+      if not isSelf(member) then
+        local name = normal(member.name)
+        visible[name] = true
+        K.recoveryRoster[name] = trim(member.name)
+      end
+    end
+    if K.injuredTeamMember then
+      K.recoveryRoster[normal(K.injuredTeamMember)] = K.injuredTeamMember
+    end
+    for name, displayName in pairs(K.recoveryTired) do
+      K.recoveryRoster[name] = K.recoveryRoster[name] or displayName
+    end
+    for name in pairs(K.recoveryCritical) do
+      K.recoveryRoster[name] = K.recoveryRoster[name] or name:gsub("^%l", string.upper)
+    end
+    for name in pairs(K.recoveryEmergency and K.recoveryEmergency.wounded or {}) do
+      K.recoveryCritical[name] = true
+      K.recoveryRoster[name] = K.recoveryRoster[name] or name:gsub("^%l", string.upper)
+    end
+    local function checkHp(name, value, target, own)
+      if not value then block(name, name .. ": brak odczytu HP")
+      elseif value.hp * 100 < value.maxhp * target or (own and K.lastHp < target) then
+        block(name, string.format("%s: %.1f%% / %d%% HP", name,
+          math.min(value.hp * 100 / value.maxhp, own and K.lastHp or 100), target))
+      end
+    end
+    local ownName = context.self and trim(context.self.name) or "Moja postac"
+    local ownTarget = K.recoveryOwnCritical and 100
+      or math.max(K.config.recoveryHp, math.ceil(K.config.escapeHp))
+    checkHp(ownName, K.ownHealth, ownTarget, true)
+    local names = {}
+    for name in pairs(K.recoveryRoster) do names[#names + 1] = name end
+    table.sort(names)
+    for _, name in ipairs(names) do
+      local displayName = K.recoveryRoster[name]
+      if not visible[name] then
+        block(displayName, displayName .. ": brak w pokoju")
+        K.recoveryMissing = K.recoveryMissing or displayName
+      else
+        local target = K.recoveryCritical[name] and 100
+          or math.max(K.config.recoveryHp, K.config.teamEscapeHp > 0 and math.floor(K.config.teamEscapeHp) + 1 or 0)
+        checkHp(displayName, K.teamVitals[name], target)
+        if not K.teamVitals[name] then K.recoveryMissing = K.recoveryMissing or displayName end
+      end
+    end
+    if K.lastMoves < K.config.resumeAtMoves then
+      block(ownName, string.format("%s: ruch %d%% / %d%%", ownName, K.lastMoves, K.config.resumeAtMoves))
+    end
+    for _, name in ipairs(names) do
+      if K.recoveryTired[name] and (not K.teamMoves[name] or K.teamMoves[name] < K.config.resumeAtMoves) then
+        local label = K.teamMoves[name] and string.format("%.0f%% / %d%%", K.teamMoves[name], K.config.resumeAtMoves)
+          or "brak odczytu"
+        block(K.recoveryRoster[name], K.recoveryRoster[name] .. ": ruch " .. label)
+        K.recoveryMissing = K.recoveryMissing or K.recoveryRoster[name]
+      end
+    end
+    if context.actualLeader and not isSelf(context.actualLeader) then block("", "Prowadzenie druzyny przejal inny gracz") end
+    if recoveryThreat() then block("", "Druzyna nadal jest zaangazowana w walke") end
+    if K.config.equipmentHold then block("", K.config.equipmentHold) end
+    if K.movementRest then block("", K.movementRest.reason or "Czekam na potwierdzony odpoczynek") end
+  end
+  K.recoveryWaiters = blockers
+  -- Zachowanie pola diagnostycznego dla skryptow korzystajacych ze starszych wersji.
+  if not K.recoveryMissing and blockers[1] and blockers[1].name ~= "" then
+    K.recoveryMissing = blockers[1].name
+  end
+  return #blockers == 0, blockers
 end
 
 function K.checkRecoveryThreat(urgentOnly)
   if not K.enabled or isFollower() or K.sessionBlocked then return false end
   local recovery = K.mode == "escape" or K.mode == "heal_rest" or K.mode == "recovery_return"
   if not recovery then return false end
-  rememberRecoveryWounds()
+  K.rememberRecoveryWounds()
   if not recoveryThreat() then
     if K.mode == "escape" and K.recoveryEmergency and not K.recoveryEmergency.pending
         and K.entitiesReady and K.combatRoomReady and not K.roomChangePending then
@@ -2368,7 +2458,7 @@ function K.checkRecoveryThreat(urgentOnly)
   if not K.recoveryEmergency then
     K.recoveryEmergency = {room=currentRoom(), attempts=0, searches=0, unsafe={}}
     if K.escapeOriginRoom then K.recoveryEmergency.unsafe[K.escapeOriginRoom] = true end
-    rememberRecoveryWounds()
+    K.rememberRecoveryWounds()
   end
   if K.mode ~= "escape" then
     cancelTimer("healTimer")
@@ -3714,6 +3804,8 @@ function K.stop(reason)
   K.reconnectTask, K.reconnectWaitReason = nil, nil
   K.restartPending = nil
   K.refugeRoom, K.recoveryEmergency, K.escapeOriginRoom = nil, nil, nil
+  K.recoveryCritical, K.recoveryOwnCritical, K.recoveryWaiters, K.recoveryArrival = nil, nil, nil, nil
+  K.recoveryRoster, K.recoveryMissing, K.injuredTeamMember = nil, nil, nil
   K.movementRest, K.moveSnapshot, K.teamStep = nil, nil, nil
   K.enabled = false
   K.mode = "stop"
@@ -4192,7 +4284,8 @@ function K.start()
   K.escapeTailSent = false
   K.failedTargetIds = {}
   K.injuredTeamMember = nil
-  K.recoveryRoster, K.recoveryMissing = nil, nil
+  K.recoveryRoster, K.recoveryMissing, K.recoveryWaiters = nil, nil, nil
+  K.recoveryCritical, K.recoveryOwnCritical, K.recoveryArrival = nil, nil, nil
   K.failedExits = {}
   K.lastProgressFingerprint = progressFingerprint()
   clearTarget()
@@ -4324,7 +4417,6 @@ function K.status()
   if K.config.equipmentHold then statusRow("Ekwipunek", K.config.equipmentHold) end
   if K.refugeRoom then statusRow("Miejsce leczenia", "Awaryjne: " .. K.refugeRoom .. "; start patrolu: " .. K.config.startRoom) end
   if K.recoveryEmergency and K.recoveryEmergency.blocked then statusRow("Awaryjny odwrot", "Brak potwierdzonej drogi; nadal chronie druzyne") end
-  if K.recoveryMissing then statusRow("Brak w druzynie", K.recoveryMissing) end
   if K.updater then statusRow("Aktualizacje", K.updater.status or "gotowy") end
 
   statusPrefix("Sterowanie")
@@ -4391,8 +4483,23 @@ function K.status()
   statusLink("[ + ]", "progdruzyny " .. math.min(maxEscapeSetting, K.config.teamEscapeHp + 5), "Zwieksz prog HP druzyny", "green")
   statusEndRow()
   if isFollower() then statusRow("Odwrot druzyny", "Prog druzyny obsluguje profil prowadzacego") end
-  if K.injuredTeamMember then
-    statusRow("Czekam na gracza", K.injuredTeamMember .. " do 100% HP")
+  if not isFollower() then
+    local minimumRecovery = math.floor(escapeCeiling) + 1
+    statusPrefix("Powrot po HP")
+    if K.config.recoveryHp > minimumRecovery then
+      statusLink("[ - ]", "powrothp " .. math.max(minimumRecovery, K.config.recoveryHp - 5),
+        "Zmniejsz prog regeneracji calej druzyny", "yellow")
+    else cecho("[ - ]") end
+    cecho("  " .. K.config.recoveryHp .. "%  ")
+    if K.config.recoveryHp < 100 and minimumRecovery <= 100 then
+      statusLink("[ + ]", "powrothp " .. math.max(minimumRecovery, math.min(100, K.config.recoveryHp + 5)),
+        "Zwieksz prog regeneracji calej druzyny", "green")
+    else cecho("[ + ]") end
+    statusEndRow()
+    if K.mode == "escape" or K.mode == "heal_rest" or K.mode == "recovery_return" then
+      local _, waiters = K.recoveryReadiness()
+      for _, waiter in ipairs(waiters) do statusRow("Czekam na powrot", waiter.label) end
+    end
   end
 
   statusPrefix("Prog zaslony")
@@ -4651,6 +4758,8 @@ function K.help()
   <green>/kozojeb druzyna imie1 imie2<reset>   dodatkowe imiona do pilnowania
   <green>/kozojeb odpoczynek 25 55<reset>      przy 25% ruchu uciekaj do bazy,
                               wroc po regeneracji od 55%
+  <green>/kozojeb powrothp 95<reset>           minimum HP kazdego czlonka po leczeniu;
+                              stan krytyczny nadal wymaga 100%
 
 <white>  Zasady dzialania<reset>
   - Krowa nie jest atakowana, jezeli w pokoju stoi byk.
@@ -4660,8 +4769,10 @@ function K.help()
   - Po kazdym zabiciu czeka przez czas ustawiony komenda /kozojeb pauza.
   - Szukanie ziol odbywa sie dopiero po walce i przed kolejnym krokiem.
     Bot rusza po wyniku znalezienia/braku ziol albo po 20 s bez odpowiedzi.
-  - Przy niskim HP ucieka, leczy sie do 100%, wraca przez /idz i startuje.
-  - Gdy odwrot wywolal ranny gracz, czeka na potwierdzone 100% jego HP.
+  - Po odwrocie cala druzyna osiaga prog /kozojeb powrothp (domyslnie 95%).
+  - Stan ponizej progu odwrotu w tej ewakuacji wymaga pelnych 100% HP.
+  - Brak gracza, niepelne dane, zmeczenie i uszkodzony sprzet blokuja powrot.
+  - Po drodze powrotnej sprawdza gotowosc ponownie przed wznowieniem patrolu.
   - Zaslona wymaga NPC faktycznie atakujacego chroniona osobe w relacjach
     GMCP. Sam atak gracza na NPC nie jest powodem do zaslony.
   - Po probie bot czeka na gotowosc szyku z serwera; dodatkowy odstep
@@ -4825,6 +4936,15 @@ local function executeCommand(arguments)
   action = normal(action or "status")
   if action == "wydajnosc" then
     K.performance()
+  elseif action == "powrothp" then
+    local value = tonumber(rest)
+    if not value or value ~= value or value < 1 or value > 100 or value % 1 ~= 0
+        or value <= math.max(K.config.escapeHp, K.config.teamEscapeHp) then
+      note("Uzycie: /kozojeb powrothp <1-100>; prog musi byc wyzszy od progow odwrotu.", "red") return
+    end
+    K.config.recoveryHp = value
+    note("Powrot po leczeniu: kazdy czlonek co najmniej " .. value
+      .. "% HP; stan krytyczny nadal wymaga 100%. Decyduje profil prowadzacego.", "green")
   elseif action == "limitzaslony" or action == "stabilizacja" or action == "pustypatrol" then
     local value = tonumber(rest)
     local low = action == "limitzaslony" and 1 or (action == "stabilizacja" and 2 or 0)

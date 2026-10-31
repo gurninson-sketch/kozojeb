@@ -1,4 +1,4 @@
-# Chimera Kozojeb 2.9.6
+# Chimera Kozojeb 2.9.7
 
 [Pobierz najnowszą paczkę](https://github.com/gurninson-sketch/kozojeb/releases/latest/download/Chimera_Kozojeb.mpackage) · [Wydania](https://github.com/gurninson-sketch/kozojeb/releases)
 
@@ -112,8 +112,11 @@ Niepoprawna forma odrzucona przez grę jest blokowana do poprawienia.
 - Od 2.9.4 własna trwająca próba zasłony nie wywołuje sprzecznego odwrotu tylko z powodu zajętego szyku. Oczekiwanie na odpowiedź trwa najwyżej 2 s od komendy, a po sukcesie najwyżej 0,5 s na uzgodnienie relacji walki, w granicach pierwotnych 2 s. Dotyczy wyłącznie osłanianej osoby przy niezmienionych napastnikach i HP. Krytyczne HP, dalsza utrata zdrowia, zmiana napastników, odmowa zasłony lub zagrożenie innego członka nie korzystają z tej zwłoki. Nie zmienia to progów odwrotu.
 - Od 2.9.1 prowadzący przez 8 s pamięta największy ostatni spadek HP w bieżącym pokoju. Przy stracie co najmniej 15% maksymalnego HP i nadal atakującym NPC zachowuje rezerwę na kolejny taki cios ponad skonfigurowany próg odwrotu. Przykład: próg 50%, ostatni spadek 25 punktów procentowych, teraz 74% — możliwy wcześniejszy odwrót. Przy zagrożonym koledze bezpieczna dostępna zasłona jest rozważana przed tym dodatkowym odwrotem. `progdruzyny 0` wyłącza rezerwę drużynową. Jest to reakcja na zaobserwowane HP, a nie przewidywanie pierwszego silnego ciosu, pancerza czy umiejętności przeciwnika.
 - Śmierć własnej postaci zatrzymuje bota i anuluje oczekujące wznowienie.
-- Po odwrocie czeka na swoje pełne HP, wymagany poziom ruchu oraz obecność i znane HP wcześniej widocznych członków drużyny. Osoba, której rany wywołały odwrót, musi odzyskać 100% HP.
-- Jeśli podczas awaryjnej ewakuacji kolejny członek spadnie poniżej progu odwrotu drużyny, on również musi odzyskać 100% HP przed wznowieniem. Zagrożenie kolejnej osoby nie zastępuje wcześniejszego oczekiwania na rannych.
+- Od 2.9.7 po odwrocie każdy członek drużyny, także prowadzący, musi osiągnąć domyślnie **95% HP**. Ustawienie na prowadzącym: `/kozojeb powrothp 95`; `/kozojeb powrothp 100` wymaga pełnej regeneracji wszystkich. Próg jest zapisywany na profilu i musi być wyższy od obu progów odwrotu. Zmiana późniejszego progu odwrotu nie pozwala wznowić zadania poniżej niego. Ustawienia wspierających nie sterują wspólnym powrotem.
+- Jeśli od rozpoczęcia odwrotu postać spadnie poniżej swojego właściwego progu odwrotu (prowadzący: `prog`, pozostali: `progdruzyny` prowadzącego), wymaga rzeczywistych **100% HP** do końca tego leczenia i drogi powrotnej. Dotyczy również kolejnych rannych oraz zwykłej drogi do bazy, bez konieczności wystąpienia awaryjnego wyjścia. Pamięć obejmuje wszystkich takich członków i przeżywa rozłączenie. Obniżenie `powrothp` nie usuwa tego wymogu.
+- Warunek regeneracji używa pełnych par `hp/maxhp`, bez zaokrąglania w górę. Widoczne po zaokrągleniu 95% przy faktycznych 94,6% nie wystarcza; tak samo 99,6% nie oznacza pełnych HP po stanie krytycznym. Każda postać jest oceniana względem własnego maksimum. Osoba wskazana przy odwrocie nie ma pierwszeństwa przed innymi rannymi.
+- Przed powrotem bot nadal wymaga zebrania wcześniej obecnych i nowo dołączających członków, znanych HP, odpowiedniego ruchu, sprawnego sprzętu oraz zakończenia walki. Brak postaci lub odczytu nie oznacza wyzdrowienia. Panel pokazuje osobno wszystkich blokujących powrót, z bieżącym i wymaganym HP, zmęczeniem lub brakiem w pokoju. `progdruzyny 0` nie wyłącza regeneracji całej drużyny.
+- Po drodze powrotnej prowadzący sprawdza te same warunki ponownie, ze świeżych danych przybycia. Obrażenia lub brakujący gracz zatrzymują wznowienie patrolu i przedłużają odpoczynek; atak nadal uruchamia dotychczasową ochronę i ewakuację. Sprawdzenie korzysta z istniejącego timera leczenia co 3 s i jednorazowego krótkiego uzgodnienia pakietów przybycia. Nie dodaje stałego odpytywania ani komunikacji między profilami.
 - Od 2.9.5 leczenie nie wyłącza ochrony drużyny. Świeże dane o ataku NPC na odpoczywającą drużynę uruchamiają awaryjne wyjście prowadzącego, także zanim HP stanie się krytyczne. Bot wybiera zwykłe wyjście zapisane na mapie, preferując pokój poza obszarem patrolu i kierunek inny niż ostatnia droga przybycia. Pomija miejsca odrzucone w tej ewakuacji oraz znane miejsce rozpoczęcia odwrotu. Nie korzysta z wymyślonych kierunków ani wyjść specjalnych.
 - Po każdym kroku czeka na potwierdzenie pokoju i świeże dane walki. Jeśli atak trwa, może wykonać kolejny krok; cała ewakuacja ma najwyżej trzy próby ruchu, bez powrotu do odrzuconych miejsc. Odmowa wyjścia pozwala wybrać inne, brak potwierdzenia ma limit czasu, a odmowa z powodu zmęczenia wymaga świeżego odczytu sił i nie zużywa próby trasy. Przy braku wyjścia bot nadal może wykonywać bezpieczne zasłony i wyświetla przyczynę blokady; odczyt mapy jest ponawiany najwyżej trzy razy.
 - Nowe miejsce leczenia jest sprawdzane po przybyciu — mapa nie gwarantuje, że sąsiedni pokój będzie bezpieczny. Potwierdzone miejsce pozostaje awaryjnym celem następnych odwrotów do zatrzymania zadania. Ustawiony start patrolu nie jest zmieniany; po pełnej regeneracji i zebraniu drużyny bot wraca do niego. Panel pokazuje awaryjne miejsce leczenia. Rozłączenie zachowuje ten kontekst, ręczny stop, śmierć i zmiana roli go anulują. Wspierający nie wykonują własnej ewakuacji ani raportowania.
@@ -129,7 +132,7 @@ Niepoprawna forma odrzucona przez grę jest blokowana do poprawienia.
 
 ## Aktualizacje z GitHuba
 
-Jeśli masz już Kozojeba 2.8.1–2.9.5, wykonaj na **każdym profilu**:
+Jeśli masz już Kozojeba 2.8.1–2.9.6, wykonaj na **każdym profilu**:
 
 ```text
 /kozojeb stop
@@ -138,7 +141,7 @@ Jeśli masz już Kozojeba 2.8.1–2.9.5, wykonaj na **każdym profilu**:
 /kozojeb aktualizuj
 ```
 
-Poczekaj na zakończenie walki i ruchu oraz komunikat `Zainstalowano 2.9.6`. Sprawdź `/kozojeb status`; powinien pokazać wersję **2.9.6**. Następnie uruchom `/kozojeb start` — najpierw na wspierających, potem na prowadzącym. To jednorazowy start po aktualizacji; późniejsze rozłączenia nie wymagają ręcznego wznowienia. Nie trzeba usuwać ani ręcznie instalować paczki; ustawienia profili pozostają zachowane. Można przejść bezpośrednio z 2.9.2 do 2.9.6. Profile już ustawione na `zaslony` od razu korzystają z ochrony całej drużyny; rola `wsparcie` pozostaje drugą linią.
+Poczekaj na zakończenie walki i ruchu oraz komunikat `Zainstalowano 2.9.7`. Sprawdź `/kozojeb status`; powinien pokazać wersję **2.9.7**. Następnie uruchom `/kozojeb start` — najpierw na wspierających, potem na prowadzącym. To jednorazowy start po aktualizacji; późniejsze rozłączenia nie wymagają ręcznego wznowienia. Nie trzeba usuwać ani ręcznie instalować paczki; dotychczasowe ustawienia profili pozostają zachowane. Można przejść bezpośrednio z 2.9.2 do 2.9.7. Profile już ustawione na `zaslony` korzystają z ochrony całej drużyny; rola `wsparcie` pozostaje drugą linią. Nowy próg regeneracji wynosi domyślnie 95%; można go zmienić na prowadzącym przez `/kozojeb powrothp 95`.
 
 Przy paczce zbudowanej w tym repozytorium adres wydań jest wbudowany. W paczce przygotowanej bez adresu skonfiguruj na każdym profilu:
 

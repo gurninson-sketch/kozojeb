@@ -1,5 +1,13 @@
 # Zmiany
 
+## 2.9.7
+
+- Wspólny próg regeneracji całej drużyny, domyślnie 95% HP: `/kozojeb powrothp 95` na prowadzącym. Pełne HP pierwotnie wskazanego rannego nie pozwalają już wrócić z innym członkiem na 67%; niekrytyczne 99% jednej osoby nie blokuje gotowej drużyny. Ustawienie jest zapisywane; dotychczasowe role, zasłony, tempo i progi odwrotu pozostają zachowane.
+- Spadek poniżej właściwego progu odwrotu od rozpoczęcia ewakuacji wymaga rzeczywistych 100% HP tej postaci, także przy zwykłym odwrocie i po rozłączeniu. Kolejne osoby nie zastępują wcześniejszych. Warunek używa pełnych par HP bez zaokrąglania 94,6% do wymaganych 95% ani 99,6% do pełnych 100%.
+- Panel pokazuje wszystkich blokujących powrót wraz z wymaganym i bieżącym HP, brakującymi odczytami, obecnością oraz zmęczeniem. Obejmuje także nowych członków. Nadal obowiązują kontrola sprzętu, ruchu i zagrożenia w miejscu leczenia; wspierający nie podejmują własnego odwrotu ani nie wysyłają raportów.
+- Ponowna ocena gotowości po drodze powrotnej przed wznowieniem patrolu. Jeden krótki timer uzgadnia pakiety przybycia; obrażenia lub brak gracza przedłużają odpoczynek, a świeży atak uruchamia dotychczasową ewakuację. Brak nowej stałej pętli i dodatkowego odpytywania gry.
+- 34 nowe symulacje obejmują wspólne leczenie, różne pule HP, progi bez zaokrągleń, wielu krytycznie rannych, zapis ustawień, brakujące dane i członków, zmęczenie, rozłączenie, obrażenia i atak po powrocie oraz scalanie serii pakietów.
+
 ## 2.9.6
 
 - Rola `zaslony` chroni zagrożonych członków całej drużyny. `proglidera` zachowuje osobny próg prowadzącego, a `progzaslony` steruje pozostałymi członkami. Rola `wsparcie` pozostaje drugą linią; decyzja o wspólnym odwrocie nadal należy do prowadzącego.
