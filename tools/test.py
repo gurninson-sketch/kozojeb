@@ -23,6 +23,24 @@ for line in ("Jestes tak zmeczony, ze nie mozesz isc.",
     assert re.fullmatch(pattern, line), "Logged movement refusal did not match: " + line
 assert not re.fullmatch(pattern, "Nie widzisz zadnego wyjscia prowadzacego na zachod.")
 
+for handler, examples in (
+    ("onTeamShield", [
+        ("Gror zaslania Morrida przed ciosami orka.", ("Gror", "Morrida")),
+        ("Gror zrecznie zaslania Yarrima przed ciosami wrogow.", ("Gror", "Yarrima")),
+    ]),
+    ("onCoveredByLeader", [
+        ("Morrid zaslania cie przed ciosami orka.", ("Morrid",)),
+        ("Gror zrecznie zaslania cie przed ciosami wrogow.", ("Gror",)),
+    ]),
+):
+    registered = re.search(
+        r'tempRegexTrigger\(\s*("(?:\\.|[^"\\])*"),\s*\[\[kozojeb\.' + handler + r'\(.*?\)\]\]', source
+    )
+    assert registered, "Missing shield text trigger: " + handler
+    for line, groups in examples:
+        match = re.match(json.loads(registered.group(1)), line)
+        assert match and match.groups() == groups, "Shield text captured the wrong actor or target: " + line
+
 for test in ("roles.lua", "sha256.lua", "updater.lua"):
     subprocess.run([sys.executable, "tools/run_lua.py", f"tests/{test}"], cwd=ROOT, check=True)
 

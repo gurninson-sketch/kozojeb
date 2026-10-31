@@ -143,7 +143,7 @@ test("second line supports without own attack, shield, patrol or idle reset", fu
   noMovement()
 end)
 
-test("shielding role protects only leader below its independent threshold", function()
+test("leader threshold stays independent when another wounded teammate is not attacked", function()
   reset("zaslony", 69)
   gmcp.Chimera.Room.Entities.entities[3].hp = 5
   kozojeb.start()
@@ -1546,6 +1546,7 @@ test("recent HP loss reduces the reserve until its observation decays", function
   assert(count("zaslon yarrima") == 0)
   advance(8.1)
   event()
+  advance(.4) -- zdrowszy kolega ma pierwszenstwo w krotkiej kolejce zaslon
   assert(count("zaslon yarrima") == 1)
 end)
 
@@ -2826,7 +2827,7 @@ end)
 
 test("non-team shield text cannot defer a team rescue", function()
   secondProtector(); kozojeb.start(); kozojeb.onTeamShield("Obcy","Yarrima"); advance(.13)
-  assert(count("zaslon yarrima")==1 and not kozojeb.teamShieldNotice); noMovement()
+  assert(count("zaslon yarrima")==1 and next(kozojeb.teamShieldNotices)==nil); noMovement()
 end)
 
 test("manual stop cancels a scheduled shielding turn without restarting support", function()
@@ -2869,7 +2870,7 @@ end)
 test("moving rooms cancels a deferred shield and its previous team notice", function()
   secondProtector(); kozojeb.start(); kozojeb.onTeamShield("Yergo","Yarrima")
   room=1323; kozojeb.onRoomChanged("gmcp.Room.Info"); advance(.6)
-  assert(count("zaslon yarrima")==0 and not kozojeb.shieldTurnTimer and not kozojeb.teamShieldNotice)
+  assert(count("zaslon yarrima")==0 and not kozojeb.shieldTurnTimer and next(kozojeb.teamShieldNotices)==nil)
   noMovement()
 end)
 
@@ -3189,6 +3190,297 @@ test("late combat text after disconnection cannot keep a suspended task alive", 
   setupLeader();kozojeb.start();kozojeb.onSessionEvent("sysDisconnectionEvent")
   for i=1,30 do kozojeb.onCombatProgress() end
   advance(25);assert(not kozojeb.enabled and not kozojeb.idleTimer)
+end)
+
+local function partyProtector(role, memberHp)
+  reset(role or "zaslony",100)
+  gmcp.Chimera.Room.Entities.entities[3].hp=memberHp or 60
+  gmcp.Chimera.Combat.State={primary="N",relations={{attacker="S",defender="N"},{attacker="N",defender="M"}}}
+end
+
+test("a shielding follower rescues a wounded teammate while the leader is healthy", function()
+  partyProtector();kozojeb.start()
+  assert(count("zaslon morrida")==1 and count("zaslon yarrima")==0);noMovement()
+end)
+
+test("a shielding follower protects teammates even when only they are fighting", function()
+  partyProtector();gmcp.Chimera.Combat.State.primary=""
+  gmcp.Chimera.Combat.State.relations={{attacker="N",defender="M"}}
+  kozojeb.start();assert(count("zaslon morrida")==1 and count("wesprzyj")==0);noMovement()
+end)
+
+test("DPS only profiles still never shield another wounded teammate", function()
+  partyProtector("wsparcie",20);kozojeb.start();event();advance(10)
+  assert(count("zaslon morrida")==0 and count("zaslon yarrima")==0);noMovement()
+end)
+
+test("the teammate threshold can be disabled without disabling the leader threshold", function()
+  partyProtector();kozojeb.command("progzaslony 0")
+  kozojeb.start();assert(count("zaslon morrida")==0)
+  gmcp.Chimera.Room.Entities.entities[2].hp=60
+  gmcp.Chimera.Combat.State.relations={{attacker="N",defender="L"}}
+  event("gmcp.Chimera.Combat.State");event();advance(.4)
+  assert(count("zaslon yarrima")==1);noMovement()
+end)
+
+test("disabling the leader threshold leaves teammate protection active", function()
+  partyProtector();kozojeb.command("proglidera 0");kozojeb.start()
+  assert(count("zaslon morrida")==1 and count("zaslon yarrima")==0);noMovement()
+end)
+
+test("the configured teammate threshold remains strict at equality", function()
+  partyProtector(nil,70);kozojeb.start();assert(count("zaslon morrida")==0)
+  gmcp.Chimera.Room.Entities.entities[3].hp=69;event();advance(.4)
+  assert(count("zaslon morrida")==1)
+end)
+
+test("a more exposed teammate outranks a lower percentage leader", function()
+  partyProtector(nil,65)
+  local e=gmcp.Chimera.Room.Entities.entities
+  e[2].hp=60
+  e[5]={id="T",name="Drugi snotling",kind="npc",hp=100,maxhp=100}
+  e[6]={id="U",name="Trzeci snotling",kind="npc",hp=100,maxhp=100}
+  e[7]={id="V",name="Czwarty snotling",kind="npc",hp=100,maxhp=100}
+  gmcp.Chimera.Combat.State.relations={{attacker="S",defender="N"},
+    {attacker="N",defender="M"},{attacker="T",defender="M"},{attacker="U",defender="M"},{attacker="V",defender="L"}}
+  kozojeb.start();assert(count("zaslon morrida")==1 and count("zaslon yarrima")==0);noMovement()
+end)
+
+test("an insufficient real HP pool cannot take over a teammate's attacker", function()
+  partyProtector()
+  local e=gmcp.Chimera.Room.Entities.entities
+  e[1].hp,e[1].maxhp=120,200
+  e[3].hp,e[3].maxhp=250,1000
+  gmcp.Char.Vitals.hp,gmcp.Char.Vitals.maxhp=120,200
+  kozojeb.start();assert(count("zaslon morrida")==0);noMovement()
+end)
+
+test("a larger real HP pool may protect a teammate despite its lower percentage", function()
+  partyProtector()
+  local e=gmcp.Chimera.Room.Entities.entities
+  e[1].hp,e[1].maxhp=1000,2000
+  e[2].hp,e[2].maxhp=800,800
+  e[3].hp,e[3].maxhp=600,1000
+  gmcp.Char.Vitals.hp,gmcp.Char.Vitals.maxhp=1000,2000
+  kozojeb.start();assert(count("zaslon morrida")==1);noMovement()
+end)
+
+test("another defender's HP is not reduced using this profile's own percentage", function()
+  partyProtector()
+  local e=gmcp.Chimera.Room.Entities.entities
+  e[1].hp,e[1].maxhp=700,1000
+  e[2].hp,e[2].maxhp=1000,1000
+  e[3].hp,e[3].maxhp=550,1000
+  gmcp.Char.Vitals.hp,gmcp.Char.Vitals.maxhp=700,1000
+  kozojeb.start();assert(count("zaslon morrida")==0 and kozojeb.shieldTurnTimer)
+  gmcp.Chimera.Combat.State.relations={{attacker="N",defender="L"}}
+  event("gmcp.Chimera.Combat.State");advance(.5)
+  assert(count("zaslon morrida")==0)
+end)
+
+test("a pending turn for the most endangered member cannot shield a lower priority target instead", function()
+  partyProtector()
+  kozojeb.command("progzaslony 90")
+  local e=gmcp.Chimera.Room.Entities.entities
+  e[1].hp,e[1].maxhp=1200,1500
+  e[2].hp,e[2].maxhp=1800,2000
+  e[3].hp,e[3].maxhp=650,1000
+  e[5]={id="G",name="Gror",kind="player",group_role="member",hp=750,maxhp=1000}
+  e[6]={id="T",name="Drugi snotling",kind="npc",hp=100,maxhp=100}
+  gmcp.Char.Vitals.hp,gmcp.Char.Vitals.maxhp=1200,1500
+  gmcp.Chimera.Group.State.members={"S","L","M","G"}
+  gmcp.Chimera.Combat.State.relations={{attacker="S",defender="N"},{attacker="N",defender="M"},{attacker="T",defender="G"}}
+  kozojeb.start()
+  assert(count("zaslon morrida")==0 and count("zaslon grora")==0 and kozojeb.shieldTurn.id=="M")
+  gmcp.Chimera.Combat.State.relations={{attacker="N",defender="L"},{attacker="T",defender="G"}}
+  event("gmcp.Chimera.Combat.State");advance(.5)
+  assert(count("zaslon morrida")==0 and count("zaslon grora")==1)
+end)
+
+test("a teammate shield is blocked when it would add a third attacker", function()
+  partyProtector()
+  local e=gmcp.Chimera.Room.Entities.entities
+  e[5]={id="T",name="Drugi snotling",kind="npc",hp=100,maxhp=100}
+  e[6]={id="U",name="Trzeci snotling",kind="npc",hp=100,maxhp=100}
+  gmcp.Chimera.Combat.State.relations={{attacker="N",defender="M"},{attacker="T",defender="S"},{attacker="U",defender="S"}}
+  kozojeb.start();assert(count("zaslon morrida")==0);noMovement()
+end)
+
+test("NPC transfers between two supporters retain the stabilization hold", function()
+  partyProtector(nil,70);kozojeb.command("progzaslony 80")
+  gmcp.Chimera.Combat.State.relations={{attacker="N",defender="S"}}
+  kozojeb.start()
+  gmcp.Chimera.Combat.State.relations={{attacker="N",defender="M"}}
+  event("gmcp.Chimera.Combat.State");advance(.4)
+  assert(count("zaslon morrida")==0)
+  advance(8.1);event();advance(.4)
+  assert(count("zaslon morrida")==1);noMovement()
+end)
+
+test("an ungrouped wounded player is never added to the shield candidate list", function()
+  partyProtector(nil,100)
+  local e=gmcp.Chimera.Room.Entities.entities
+  e[5]={id="X",name="Gror",kind="player",hp=20,maxhp=100}
+  gmcp.Chimera.Combat.State.relations={{attacker="N",defender="X"}}
+  kozojeb.start();assert(count("zaslon grora")==0 and count("zaslon morrida")==0)
+end)
+
+test("a dissolved group cancels delayed teammate shields", function()
+  partyProtector()
+  gmcp.Chimera.Room.Entities.entities[2].hp=200
+  gmcp.Chimera.Room.Entities.entities[2].maxhp=200
+  kozojeb.start();assert(kozojeb.shieldTurnTimer)
+  gmcp.Chimera.Group.State={members={}}
+  event("gmcp.Chimera.Group.State");advance(.5)
+  assert(count("zaslon morrida")==0 and not kozojeb.shieldTurnTimer);noMovement()
+end)
+
+test("a leader kill barrier cannot prevent rescuing a different freshly attacked teammate", function()
+  partyProtector(nil,100);kozojeb.start()
+  kozojeb.supportDeathBarrier={room=room,combat=kozojeb.combatRevision,entities=kozojeb.sourceRevisions.entities}
+  gmcp.Chimera.Room.Entities.entities[3].hp=60
+  event();advance(.4)
+  assert(count("zaslon morrida")==1);noMovement()
+end)
+
+test("another protector's teammate shield grants a bounded incoming update window", function()
+  partyProtector()
+  gmcp.Chimera.Room.Entities.entities[2].hp=200
+  gmcp.Chimera.Room.Entities.entities[2].maxhp=200
+  kozojeb.start();kozojeb.onTeamShield("Yarrim","Morrida")
+  advance(.3);assert(count("zaslon morrida")==0 and kozojeb.teamShieldNotices.M)
+  advance(.7);assert(count("zaslon morrida")==1);noMovement()
+end)
+
+test("known transfer history from an older shield cannot hide a new teammate shield notice", function()
+  partyProtector()
+  kozojeb.enabled=true
+  kozojeb.onTeamShield("Yarrim","Morrida")
+  kozojeb.teamShieldNotices={}
+  kozojeb.shieldTransfers.N={from="M",to="L",untilTime=clock+kozojeb.config.shieldHold-1}
+  kozojeb.onTeamShield("Yarrim","Morrida")
+  assert(kozojeb.teamShieldNotices.M)
+end)
+
+test("shield notices for two different teammates do not overwrite each other", function()
+  partyProtector()
+  local e=gmcp.Chimera.Room.Entities.entities
+  e[5]={id="G",name="Gror",kind="player",group_role="member",hp=60,maxhp=100}
+  e[6]={id="T",name="Drugi snotling",kind="npc",hp=100,maxhp=100}
+  gmcp.Chimera.Group.State.members={"S","L","M","G"}
+  gmcp.Chimera.Combat.State.relations={{attacker="N",defender="M"},{attacker="T",defender="G"}}
+  kozojeb.enabled=true
+  kozojeb.onTeamShield("Yarrim","Morrida");kozojeb.onTeamShield("Yarrim","Grora")
+  assert(kozojeb.teamShieldNotices.M and kozojeb.teamShieldNotices.G)
+end)
+
+test("critical teammate protection bypasses the optional formation turn delay", function()
+  partyProtector(nil,20)
+  gmcp.Chimera.Room.Entities.entities[2].hp=200
+  gmcp.Chimera.Room.Entities.entities[2].maxhp=200
+  kozojeb.start();assert(count("zaslon morrida")==1 and not kozojeb.shieldTurnTimer);noMovement()
+end)
+
+test("teammate rescue decisions coalesce packet bursts without extra casts", function()
+  partyProtector();kozojeb.start()
+  local before=serial
+  for i=1,2000 do kozojeb.onGmcp("gmcp.Chimera.Combat.State") end
+  assert(serial-before==1);advance(.13)
+  assert(count("zaslon morrida")==1 and count("zaslon yarrima")==0);noMovement()
+end)
+
+test("a pending teammate rescue never starts movement or reports from a follower", function()
+  partyProtector(nil,20);kozojeb.start()
+  shieldReply("Probujesz zaslonic Morrida przed ciosami snotlinga, lecz nie jestes w stanie tego uczynic.")
+  event();advance(3)
+  assert(kozojeb.mode~="escape" and not kozojeb.recoveryEmergency);noMovement()
+end)
+
+test("manual stop cancels a delayed teammate rescue", function()
+  partyProtector()
+  gmcp.Chimera.Room.Entities.entities[2].hp=200
+  gmcp.Chimera.Room.Entities.entities[2].maxhp=200
+  kozojeb.start();assert(kozojeb.shieldTurnTimer)
+  kozojeb.stop();advance(3)
+  assert(not kozojeb.enabled and count("zaslon morrida")==0 and not kozojeb.shieldTurnTimer)
+end)
+
+test("a manual base command replaces a previously learned emergency refuge", function()
+  healingLeader();ambushAtRest();arriveRefuge(1323)
+  assert(kozojeb.refugeRoom==1323)
+  room=1324;kozojeb.onRoomChanged("gmcp.Room.Info");event()
+  kozojeb.command("baza")
+  assert(kozojeb.config.startRoom==1324 and not kozojeb.refugeRoom)
+  gmcp.Chimera.Room.Entities.entities[3].hp=100;event();advance(3.1)
+  assert(kozojeb.enabled and not kozojeb.recoveryEmergency)
+  room=1325;kozojeb.onRoomChanged("gmcp.Room.Info");event()
+  aliases={};kozojeb.escape("Nastepny odwrot")
+  assert(aliases[1]=="/idz 1324")
+end)
+
+test("setting a numbered base or idle base also clears the old emergency refuge", function()
+  setupLeader();kozojeb.refugeRoom=9000
+  kozojeb.command("startpokoj 1324")
+  assert(kozojeb.config.startRoom==1324 and not kozojeb.refugeRoom)
+  kozojeb.refugeRoom=9000;kozojeb.command("bezczynnosc 20 1322")
+  assert(kozojeb.config.startRoom==1322 and not kozojeb.refugeRoom)
+end)
+
+test("help shows the installed version and the complete party shielding policy", function()
+  reset("zaslony");kozojeb.help()
+  local text=table.concat(output,"\n")
+  assert(text:find("KOZOJEB "..kozojeb.version,1,true))
+  assert(text:find("na zagrozonych czlonkow druzyny",1,true))
+  assert(not text:find("tylko na prowadzacego ponizej progu",1,true))
+end)
+
+local function observedTeamRescue()
+  setupLeader()
+  gmcp.Chimera.Room.Entities.entities[3].hp=64
+  gmcp.Chimera.Combat.State={primary="N",relations={{attacker="S",defender="N"},{attacker="N",defender="M"}}}
+  room=1323;kozojeb.lastRoom=1323
+  kozojeb.enabled,kozojeb.mode,kozojeb.shieldFormationReady=true,"combat",false
+  kozojeb.onGmcp("gmcp.Chimera.Room.Entities")
+  kozojeb.onTeamShield("Yarrim","Morrida")
+end
+
+test("the leader briefly respects another member's successful rescue before declaring retreat", function()
+  observedTeamRescue();advance(.13)
+  assert(kozojeb.mode=="combat" and #aliases==0 and kozojeb.teamShieldTimer)
+  advance(.5)
+  assert(kozojeb.mode=="escape" and aliases[#aliases]=="/idz 1322")
+end)
+
+test("fresh NPC transfer data ends waiting on another member's rescue", function()
+  observedTeamRescue()
+  gmcp.Chimera.Combat.State.relations={{attacker="N",defender="L"},{attacker="S",defender="N"}}
+  event("gmcp.Chimera.Combat.State");advance(.6)
+  assert(kozojeb.mode=="combat" and #aliases==0 and not kozojeb.teamShieldTimer)
+end)
+
+test("new damage ends the leader's grace for another member's cover", function()
+  observedTeamRescue();advance(.13)
+  gmcp.Chimera.Room.Entities.entities[3].hp=62;event()
+  assert(kozojeb.mode=="escape" and aliases[#aliases]=="/idz 1322")
+end)
+
+test("critical own target or other teammate HP always bypasses observed rescue grace", function()
+  for _, index in ipairs({1,2,3}) do
+    observedTeamRescue();advance(.13)
+    gmcp.Chimera.Room.Entities.entities[index].hp=40
+    if index==1 then gmcp.Char.Vitals.hp=40 end
+    event()
+    assert(kozojeb.mode=="escape" and aliases[#aliases]=="/idz 1322")
+  end
+end)
+
+test("duplicate cover notifications share one expiry timer and never extend the first grace", function()
+  observedTeamRescue()
+  local timer,deadline,before=kozojeb.teamShieldTimer,kozojeb.teamShieldNotices.M.deadline,serial
+  for i=1,2000 do kozojeb.onTeamShield("Yarrim","Morrida") end
+  assert(serial==before and kozojeb.teamShieldTimer==timer and kozojeb.teamShieldNotices.M.deadline==deadline)
+  kozojeb.stop();advance(1)
+  assert(not kozojeb.teamShieldTimer and not kozojeb.enabled and #aliases==0)
 end)
 
 print(string.format("%d simulations passed", total))

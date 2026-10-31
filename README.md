@@ -1,4 +1,4 @@
-# Chimera Kozojeb 2.9.5
+# Chimera Kozojeb 2.9.6
 
 [Pobierz najnowszą paczkę](https://github.com/gurninson-sketch/kozojeb/releases/latest/download/Chimera_Kozojeb.mpackage) · [Wydania](https://github.com/gurninson-sketch/kozojeb/releases)
 
@@ -23,8 +23,8 @@ Najpierw utwórz drużynę w grze. Rola bota nie przekazuje faktycznego prowadze
 | Profil — przykład | Komendy konfiguracji | Zachowanie |
 | --- | --- | --- |
 | Yarrim | `/kozojeb rola prowadzacy` | Patrol, wybór celów, pościg, zasłony drużyny i wspólny odwrót |
-| Morrid | `/kozojeb rola zaslony` oraz `/kozojeb lider auto` | Wsparcie i osłanianie prowadzącego |
-| Yergo i Gror | `/kozojeb rola wsparcie` oraz `/kozojeb lider auto` | Druga linia: wsparcie i DPS, bez automatycznych zasłon |
+| Morrid, Yergo i Gror | `/kozojeb rola zaslony` oraz `/kozojeb lider auto` | Wsparcie i osłanianie zagrożonych członków całej drużyny |
+| Opcjonalny profil drugiej linii | `/kozojeb rola wsparcie` oraz `/kozojeb lider auto` | Wsparcie i DPS, bez automatycznych zasłon |
 
 Wspierający dołączają do walki przez `wesprzyj`; dalsze ataki wykonuje gra. Nie patrolują, nie ścigają przeciwników i nie wykonują własnego odwrotu, leczenia, `/idz` ani opuszczania drużyny. Nie przesyłają raportów między profilami. Ruch za prowadzącym zapewnia drużyna w grze.
 
@@ -61,16 +61,19 @@ Limit stworów dotyczy rozpoczynania nowego ataku. Agresywny NPC może rozpoczą
 
 Własne HP jest liczone z kompletnej pary `hp/maxhp` z jednego źródła GMCP. Niepełny odczyt nie łączy wartości z `Char.Vitals` i `Room.Entities`; jeśli oba źródła są niepełne, bot zachowuje ostatni poprawny wynik. Pełne, nowsze `Char.Vitals` nadal ma pierwszeństwo przed starszym odczytem encji.
 
-Na profilu osłaniającym prowadzącego:
+Na profilu z rolą `zaslony`:
 
 ```text
 /kozojeb proglidera 85
+/kozojeb progzaslony 70
 /kozojeb minhpzaslony 50
 ```
 
 Te progi dopuszczają rozważenie zasłony: HP prowadzącego musi być **poniżej 85%**, własne HP **co najmniej 50%**, żywy NPC musi faktycznie atakować prowadzącego, a szyk musi być gotowy. Sama różnica procentów nie wystarcza do wykonania osłony. Przy równych 85% zasłona nie następuje. `/kozojeb proglidera 0` wyłącza tę zasłonę.
 
-`/kozojeb progzaslony 70` ustawia zasłony wykonywane przez prowadzącego na rannych członkach drużyny. Ten próg musi być wyższy od progów odwrotu. Własne minimum `/kozojeb minhpzaslony` działa niezależnie w obu rolach wykonujących zasłony. Na wspierającym `/kozojeb prog 50` jest skrótem ustawienia własnego minimum zasłon; na prowadzącym pozostaje progiem odwrotu.
+Od 2.9.6 `/kozojeb progzaslony 70` określa także próg osłony **pozostałych członków drużyny** na profilach z rolą `zaslony`. Prowadzący używa go dla całej drużyny. Ten próg musi być wyższy od progów odwrotu. `proglidera` pozostaje osobnym progiem dla prowadzącego na profilu osłaniającym: jego wyłączenie nie wyłącza ochrony kolegów, a `progzaslony 0` nie wyłącza ochrony lidera. Rola `wsparcie` nadal nie wykonuje zasłon. Aktualizacja zachowuje istniejące role i wartości progów.
+
+Własne minimum `/kozojeb minhpzaslony` działa niezależnie w obu rolach wykonujących zasłony. Na wspierającym `/kozojeb prog 50` jest skrótem ustawienia własnego minimum zasłon; na prowadzącym pozostaje progiem odwrotu. W roli `zaslony` zagrożony kolega może być osłaniany także wtedy, gdy prowadzący sam nie walczy, ale pozostaje widocznym członkiem drużyny.
 
 Od wersji 2.9.0 decyzja uwzględnia punkty HP obu postaci, liczbę unikalnych napastników NPC oraz ostatnie spadki HP. Dla przykładu 60% z 1200 HP oznacza więcej życia niż 78% z 600 HP. Pełne pary `hp/maxhp` drużyny wybierane są według nowszego zdarzenia `Room.Entities` albo `Group.State`; starszy odczyt nie przesłania nowszego. Punkty do porównania obu graczy pochodzą ze wspólnego kanału. `Char.Vitals` nie dostarcza punktów do bezpośredniego porównywania różnych postaci.
 
@@ -87,7 +90,11 @@ Każda próba rezerwuje zmianę szyku od razu. Od 2.9.4 dotyczy to również roz
 
 Od 2.9.5 odpowiedź `Dopiero co zepchnieto cie sprzed <osoby>; ...` kończy oczekiwanie na wynik i wprowadza 10 s odstępu przed kolejną automatyczną próbą osłony tej osoby. Jest to zachowawczy odstęp skryptu, nie odczyt czasu blokady z serwera. Gotowość szyku nie usuwa tej blokady. Inne osoby można osłaniać zgodnie z pozostałymi warunkami; prowadzący uwzględnia niedostępną pozycję przy decyzji o odwrocie. Stop/start zachowuje niewygasłą blokadę, a upływ czasu nie uruchamia zatrzymanego bota.
 
-Profile z rolą `zaslony` rozkładają decyzje w czasie: kandydat z korzystniejszym przewidywanym obciążeniem względem punktów HP ma pierwszeństwo, pozostali czekają najwyżej 0,36 s. Nie zakładają, że inne profile mają włączone zasłony — po tym czasie mogą osłonić samodzielnie. Widoczna zasłona innego członka daje do 0,5 s na aktualizację relacji walki. Zmiana napastników kończy to oczekiwanie, a niskie HP prowadzącego pomija dodatkowe opóźnienie. Nie wymaga to komunikacji między profilami ani nowych progów. Notatka przy wykonanej komendzie pokazuje punkty HP i liczby napastników obu postaci, aby ułatwić analizę logów.
+Profile z rolą `zaslony` wybierają zagrożonego członka według liczby napastników oraz zapasu HP w punktach z uwzględnieniem ostatnich obrażeń. Kolega obciążony kilkoma NPC może mieć pierwszeństwo przed prowadzącym z niższym procentem HP. Brak porównywalnych danych, niekorzystna osłona lub blokada pozycji pozwala rozważyć kolejną osobę. Nie są osłaniani gracze spoza drużyny ani osoby bez napastnika NPC.
+
+Decyzje są rozłożone w czasie: obrońca z najkorzystniejszym przewidywanym ryzykiem po osłonie ma pierwszeństwo, pozostali czekają najwyżej 0,36 s. Nie zakładają, że inne profile mają włączone zasłony — po tym czasie mogą osłonić samodzielnie. Oczekiwanie na osłonę najważniejszego celu nie uruchamia zastępczo zasłony mniej zagrożonej osoby. Widoczna zasłona dowolnego członka daje do 0,5 s na aktualizację relacji walki; komunikat `zrecznie zaslania` jest również rozpoznawany. Równoczesne osłony różnych kolegów mają osobny krótki kontekst. Zmiana napastników kończy oczekiwanie, a pilne osłony pomijają dodatkowe opóźnienie. Nie wymaga to komunikacji między profilami ani nowych pętli. Notatka przy wykonanej komendzie pokazuje punkty HP i liczby napastników obu postaci, aby ułatwić analizę logów.
+
+Prowadzący również uwzględnia widoczną udaną zasłonę kolegi: przez najwyżej 0,5 s czeka na nowe relacje, zamiast uznawać własny brak gotowości za konieczność dodatkowego odwrotu. Dalsza utrata HP, krytyczny stan własny, celu lub innej osoby oraz zmiana napastników kończą to oczekiwanie. Powtórzony komunikat nie przedłuża pierwszego okna. Wszystkie krótkie potwierdzenia współdzielą jeden timer, który znika po ich wygaśnięciu i jest anulowany przy zatrzymaniu lub zmianie pokoju.
 
 Odmiany imion są zapisane dla Yarrima, Morrida, Yerga i Grora. Dla kolejnej postaci ustaw biernik, np.:
 
@@ -110,6 +117,7 @@ Niepoprawna forma odrzucona przez grę jest blokowana do poprawienia.
 - Od 2.9.5 leczenie nie wyłącza ochrony drużyny. Świeże dane o ataku NPC na odpoczywającą drużynę uruchamiają awaryjne wyjście prowadzącego, także zanim HP stanie się krytyczne. Bot wybiera zwykłe wyjście zapisane na mapie, preferując pokój poza obszarem patrolu i kierunek inny niż ostatnia droga przybycia. Pomija miejsca odrzucone w tej ewakuacji oraz znane miejsce rozpoczęcia odwrotu. Nie korzysta z wymyślonych kierunków ani wyjść specjalnych.
 - Po każdym kroku czeka na potwierdzenie pokoju i świeże dane walki. Jeśli atak trwa, może wykonać kolejny krok; cała ewakuacja ma najwyżej trzy próby ruchu, bez powrotu do odrzuconych miejsc. Odmowa wyjścia pozwala wybrać inne, brak potwierdzenia ma limit czasu, a odmowa z powodu zmęczenia wymaga świeżego odczytu sił i nie zużywa próby trasy. Przy braku wyjścia bot nadal może wykonywać bezpieczne zasłony i wyświetla przyczynę blokady; odczyt mapy jest ponawiany najwyżej trzy razy.
 - Nowe miejsce leczenia jest sprawdzane po przybyciu — mapa nie gwarantuje, że sąsiedni pokój będzie bezpieczny. Potwierdzone miejsce pozostaje awaryjnym celem następnych odwrotów do zatrzymania zadania. Ustawiony start patrolu nie jest zmieniany; po pełnej regeneracji i zebraniu drużyny bot wraca do niego. Panel pokazuje awaryjne miejsce leczenia. Rozłączenie zachowuje ten kontekst, ręczny stop, śmierć i zmiana roli go anulują. Wspierający nie wykonują własnej ewakuacji ani raportowania.
+- Ręczne `/kozojeb baza`, `startpokoj <ID>` lub `bezczynnosc <sekundy> <ID>` zastępuje wcześniejsze awaryjne miejsce odwrotu. Bot nie kieruje kolejnego odwrotu do starego schronienia po wskazaniu nowej bazy.
 - Pęknięcie własnego lub widocznego drużynowego ekwipunku uruchamia wspólny odwrót i blokuje automatyczne wznowienie. Uzupełnij sprzęt i wpisz na prowadzącym `/kozojeb ekwipunek gotowy`.
 - Rozłączenie wstrzymuje komendy i zapamiętuje aktywne zadanie. Po ponownym zalogowaniu Kozojeb **automatycznie je wznawia, bez `/kozojeb start`**. Wymaga świeżego pokoju i listy encji z własną postacią oraz kompletnym HP. Po krótkiej pauzie 0,5 s ocenia aktualny stan. Brak ponownego wysłania niezmienionych `Group.State`, `Combat.State` lub `Char.Vitals` nie blokuje wznowienia. Starsze dane walki i składu drużyny pozostają odfiltrowane; drużyna może być rozpoznana po rolach na świeżej liście encji. Ruch jest monitorowany według ostatniego znanego odczytu, aż przyjdzie jego aktualizacja.
 - Przed wznowieniem patrolu prowadzący czeka na wcześniej widocznych członków drużyny. Ich nieobecność nie blokuje pilnego odwrotu ani kontynuacji leczenia; zebranie drużyny jest wtedy sprawdzane w bazie. Wspierający wracają do swoich ról bez własnego ruchu. Panel pokazuje konkretny brakujący odczyt albo gracza, gdy wznowienie nadal oczekuje.
@@ -121,7 +129,7 @@ Niepoprawna forma odrzucona przez grę jest blokowana do poprawienia.
 
 ## Aktualizacje z GitHuba
 
-Jeśli masz już Kozojeba 2.8.1–2.9.4, wykonaj na **każdym profilu**:
+Jeśli masz już Kozojeba 2.8.1–2.9.5, wykonaj na **każdym profilu**:
 
 ```text
 /kozojeb stop
@@ -130,7 +138,7 @@ Jeśli masz już Kozojeba 2.8.1–2.9.4, wykonaj na **każdym profilu**:
 /kozojeb aktualizuj
 ```
 
-Poczekaj na zakończenie walki i ruchu oraz komunikat `Zainstalowano 2.9.5`. Sprawdź `/kozojeb status`; powinien pokazać wersję **2.9.5**. Następnie uruchom `/kozojeb start` — najpierw na wspierających, potem na prowadzącym. To jednorazowy start po aktualizacji; późniejsze rozłączenia nie wymagają ręcznego wznowienia. Nie trzeba usuwać ani ręcznie instalować paczki; ustawienia profili pozostają zachowane. Można przejść bezpośrednio z 2.9.2 do 2.9.5.
+Poczekaj na zakończenie walki i ruchu oraz komunikat `Zainstalowano 2.9.6`. Sprawdź `/kozojeb status`; powinien pokazać wersję **2.9.6**. Następnie uruchom `/kozojeb start` — najpierw na wspierających, potem na prowadzącym. To jednorazowy start po aktualizacji; późniejsze rozłączenia nie wymagają ręcznego wznowienia. Nie trzeba usuwać ani ręcznie instalować paczki; ustawienia profili pozostają zachowane. Można przejść bezpośrednio z 2.9.2 do 2.9.6. Profile już ustawione na `zaslony` od razu korzystają z ochrony całej drużyny; rola `wsparcie` pozostaje drugą linią.
 
 Przy paczce zbudowanej w tym repozytorium adres wydań jest wbudowany. W paczce przygotowanej bez adresu skonfiguruj na każdym profilu:
 

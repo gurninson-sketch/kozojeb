@@ -1,5 +1,14 @@
 # Zmiany
 
+## 2.9.6
+
+- Rola `zaslony` chroni zagrożonych członków całej drużyny. `proglidera` zachowuje osobny próg prowadzącego, a `progzaslony` steruje pozostałymi członkami. Rola `wsparcie` pozostaje drugą linią; decyzja o wspólnym odwrocie nadal należy do prowadzącego.
+- Wybór osoby do osłony według presji NPC i zapasu HP w punktach z uwzględnieniem ostatnich obrażeń. Kolejka obrońców porównuje przewidywane ryzyko po osłonie na wspólnej skali HP; własny procent nie obniża odczytu HP innego obrońcy. Zachowane minimum własnego HP, poprawa oceny bezpieczeństwa, limit napastników i stabilizacja przejęć.
+- Krótkie oczekiwanie na lepiej przygotowanego obrońcę nie uruchamia osłony mniej zagrożonego celu. Potwierdzenia zasłon kolegów obejmują całą drużynę i nie nadpisują kontekstu innej osoby. Stara historia przejęcia nie zastępuje potwierdzenia nowej próby.
+- Prowadzący uwzględnia widoczną udaną osłonę kolegi przez najwyżej 0,5 s na świeże relacje. Powtórki nie przedłużają oczekiwania; dalsze obrażenia, krytyczne HP lub inne zagrożenie zachowują pierwszeństwo. Potwierdzenia współdzielą jeden krótko działający timer.
+- Rozpoznawanie tekstu `zrecznie zaslania` z poprawnym imieniem wykonawcy. Ręczne ustawienie nowej bazy usuwa stary awaryjny cel odwrotu. Pomoc i panel opisują aktualne zachowanie i wersję.
+- 31 nowych symulacji ochrony członków drużyny, różnych pul HP, priorytetów, blokad, stabilizacji, rozdzielonych potwierdzeń i serii 2000 zdarzeń. Dodatkowe sprawdzenie zarejestrowanych wzorców na komunikatach z logów. Brak nowych stałych timerów i raportowania między profilami.
+
 ## 2.9.5
 
 - Ochrona drużyny działa również podczas leczenia: świeży atak NPC w miejscu odpoczynku uruchamia wspólne awaryjne wyjście prowadzącego. Brak wyjścia lub faktyczna odmowa ruchu nie wyłącza bezpiecznych zasłon.
