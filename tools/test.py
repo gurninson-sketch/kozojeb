@@ -51,6 +51,20 @@ own_attack = re.search(
 assert own_attack, "Missing own incoming attack trigger"
 assert re.fullmatch(json.loads(own_attack.group(1)), "Maly glupkowaty snotling ATAKUJE CIE!").groups() == ("Maly glupkowaty snotling",)
 
+golems_source = (ROOT / "src/KozojebGolems.lua").read_text()
+armor_trigger = re.search(
+    r'tempRegexTrigger\(\s*("(?:\\.|[^"\\])*"),\s*\[\[kozojeb\.G\.onText', golems_source
+)
+assert armor_trigger, "Missing armor confirmation trigger"
+armor_pattern = json.loads(armor_trigger.group(1))
+for line in ("Bierzesz powyginany pancerz plytowy.",
+             "Przestajesz przeszukiwac powyginany pancerz plytowy.",
+             "Przestajesz przeszukiwac zniszczony powyginany pancerz plytowy.",
+             "Odkladasz powyginany pancerz plytowy.", "Wez co?", "Odloz co?"):
+    assert re.fullmatch(armor_pattern, line), "Missing armor confirmation: " + line
+assert not re.fullmatch(armor_pattern, "Zniszczony powyginany pancerz plytowy rozsypuje sie w proch.")
+assert not re.fullmatch(armor_pattern, "Nie udalo ci sie znalezc niczego interesujacego.")
+
 for test in ("roles.lua", "sha256.lua", "updater.lua"):
     subprocess.run([sys.executable, "tools/run_lua.py", f"tests/{test}"], cwd=ROOT, check=True)
 
@@ -66,7 +80,8 @@ with tempfile.TemporaryDirectory() as directory:
         root = ET.fromstring(archive.read("Chimera_Kozojeb.xml"))
         scripts = root.findall(".//Script")
         assert len(scripts) == 3
-        assert scripts[0].findtext("script") == (ROOT / "src/Chimera_Kozojeb.lua").read_text()
+        assert scripts[0].findtext("script") == ((ROOT / "src/Chimera_Kozojeb.lua").read_text()
+            + "\n" + (ROOT / "src/KozojebGolems.lua").read_text())
         assert 'local releaseRepository = "example/kozojeb"' in scripts[2].findtext("script")
         assert all(script.get("isActive") == "yes" for script in scripts)
         assert b'author = "Pipek (oryginalny KozoBot)"' in archive.read("config.lua")

@@ -1,4 +1,4 @@
-# Chimera Kozojeb 2.9.8
+# Chimera Kozojeb 2.9.11
 
 [Pobierz najnowszą paczkę](https://github.com/gurninson-sketch/kozojeb/releases/latest/download/Chimera_Kozojeb.mpackage) · [Wydania](https://github.com/gurninson-sketch/kozojeb/releases)
 
@@ -113,6 +113,31 @@ Odmiany imion są zapisane dla Yarrima, Morrida, Yerga i Grora. Dla kolejnej pos
 
 Niepoprawna forma odrzucona przez grę jest blokowana do poprawienia.
 
+## Opcjonalny tryb golemów — od 2.9.11
+
+Na **każdym profilu** włącz `/kozojeb golemy on`. Domyślnie tryb jest wyłączony. Dodaje cel `golem` z odmianą `golema`, zachowując pozostałe cele, obszar, progi, tempo i pauzę po zabiciu. Wyłączenie: `/kozojeb golemy off`. Zmiana trybu podczas pracy zatrzymuje profil; po konfiguracji uruchom `/kozojeb start`.
+
+Przykład konfiguracji drużyny:
+
+| Profil | Komendy przed uruchomieniem |
+| --- | --- |
+| Yarrim, faktyczny prowadzący | `/kozojeb rola prowadzacy`, `/kozojeb golemy on` |
+| Gror, Morrid i Yergo | `/kozojeb rola zaslony`, `/kozojeb lider auto`, `/kozojeb golemy on` |
+
+1. **Wyłącz stary dodatkowy trigger zbierania pancerzy.** Nowa obsługa zbiera je do ekwipunku, bez wkładania do plecaka. Głównego modułu łupienia Chimery nie trzeba zastępować. Pancerze schowane wcześniej w plecaku obsłuż ręcznie przed pierwszym cyklem.
+2. Na prowadzącym, stojąc w bezpiecznej kozobazie, wpisz `/kozojeb baza`. Zaznacz na mapie **bazę i pokoje golemów**, następnie `/kozojeb obszar`. W analizowanym logu baza golemów to 8765; sprawdź ją na swojej mapie. Poprzedni obszar 19 pokoi i baza 1097 dotyczyły wcześniejszego patrolu.
+3. Zacznij w tej bezpiecznej bazie: `/kozojeb start` najpierw na osłaniających, potem na prowadzącym. Każdy ręczny start prowadzącego ustala bazę w bieżącym pokoju; nie uruchamiaj go po raz pierwszy w pokoju z golemami.
+
+Przy czterech golemach atakujących jednego gracza profile planują różne, **celowane zasłony**, np. `zaslon yarrima przed pierwszym golemem`, `drugim`, `trzecim` lub `czwartym`. Plan używa ID NPC i bieżącej lokalnej kolejności żywych golemów. Dąży do jednego przeciwnika na osobę już przy wysokim HP, bez czekania na zwykły próg zasłony. Czysty pokój z najwyżej czterema golemami, których nie jest więcej niż członków drużyny, może zostać przyjęty mimo zwykłego limitu celów 3. Mieszany pokój lub większa grupa przeciwników nie otrzymuje tego wyjątku.
+
+Po rozdzieleniu napastników bot może przenosić pojedynczego golema z osoby o niższym procencie HP na zdrowszego obrońcę. Domyślna różnica wynosi **10 punktów procentowych**; ustawienie `/kozojeb golemy roznicahp 10` przyjmuje wartości 5–30. Sama różnica procentów nie wystarcza: porównywalna rezerwa rzeczywistych punktów HP obrońcy musi być co najmniej o 15% większa. Zachowane są minimum własnego HP, limit napastników, gotowość szyku i stabilizacja niedawnych przejęć. Bezpieczna rotacja celowana może zastąpić zwykły wymóg poprawy presji o 15%, ponieważ jej celem jest wyrównanie HP w dalszej części walki. Brak gotowego obrońcy, opóźniony GMCP lub niejednoznaczny cel mogą opóźnić podział. To heurystyka, nie gwarancja równego HP w każdej rundzie. Rola `wsparcie` nadal nie wykonuje zasłon.
+
+Po oczyszczeniu pokoju **prowadzący** zbiera pancerze przez `wez pancerz`, czekając na potwierdzenie każdego podniesienia. Nie używa `wez pancerz z ciala`. Następnie prowadzi całą drużynę przez dotychczasowe `/idz` do kozobazy. Tylko w bazie wykonuje kolejno `przeszukaj pancerz` → potwierdzenie `Przestajesz przeszukiwac ...` → `odloz pancerz` → potwierdzenie odłożenia. Niepowodzenie znalezienia kamienia nie kończy samo przeszukiwania. Rozpad pancerza leżącego na ziemi nie zmienia tego cyklu i nie pomija odłożenia pancerza z ekwipunku.
+
+Wznowienie patrolu wymaga obsłużenia pancerzy, obecności całej zapamiętanej drużyny i **rzeczywistych 100% HP wszystkich postaci**; zaokrąglone 100% nie wystarcza. Kontrola ruchu i ekwipunku nadal obowiązuje. Dzieje się to automatycznie. Rozłączenie zachowuje etap cyklu; po niepewnym odłożeniu bot najpierw ponownie przeszukuje kolejny pancerz, zanim go odłoży. Brak potwierdzenia przeszukiwania przez 45 s lub odłożenia przez 4 s wyświetla przyczynę i pozostawia cykl w oczekiwaniu, bez kolejnych komend. Spóźniona odpowiedź jest nadal przyjmowana. Zadanie pozostaje aktywne, także gdy Mudlet dopiero później wykryje rozłączenie; po zalogowaniu wznowienie jest automatyczne. Jeżeli połączenie działa, a odpowiedź nie przychodzi, sprawdź ekwipunek i komunikaty gry. Ręczny stop, śmierć, zmiana roli lub wyłączenie trybu anuluje cykl.
+
+`/kozojeb golemy status` i panel pokazują etap. Plan zasłon jest buforowany, zdarzenia korzystają z istniejącej kolejki decyzji. Timery działają tylko dla oczekującej operacji lub krótkiego zastępstwa obrońcy. Nie ma komunikacji między profilami, nowego stałego odpytywania ani analizy każdej linii obrażeń.
+
 ## Odwrót, sprzęt i ponowne logowanie
 
 - Prowadzący decyduje o odwrocie według własnego HP, HP drużyny i własnego zmęczenia.
@@ -140,7 +165,7 @@ Niepoprawna forma odrzucona przez grę jest blokowana do poprawienia.
 
 ## Aktualizacje z GitHuba
 
-Jeśli masz już Kozojeba 2.8.1–2.9.9, wykonaj na **każdym profilu**:
+Jeśli masz już Kozojeba 2.8.1–2.9.10, wykonaj na **każdym profilu**:
 
 ```text
 /kozojeb stop
@@ -149,7 +174,7 @@ Jeśli masz już Kozojeba 2.8.1–2.9.9, wykonaj na **każdym profilu**:
 /kozojeb aktualizuj
 ```
 
-Poczekaj na zakończenie walki i ruchu oraz komunikat `Zainstalowano 2.9.10`. Sprawdź `/kozojeb status`; powinien pokazać wersję **2.9.10**. Następnie uruchom `/kozojeb start` — najpierw na wspierających, potem na prowadzącym. To jednorazowy start po aktualizacji; późniejsze rozłączenia nie wymagają ręcznego wznowienia. Nie trzeba usuwać ani ręcznie instalować paczki; dotychczasowe ustawienia profili pozostają zachowane. Można przejść bezpośrednio z 2.9.2 do 2.9.10. Profile już ustawione na `zaslony` korzystają z ochrony całej drużyny; rola `wsparcie` pozostaje drugą linią. Próg regeneracji wynosi domyślnie 95%; można go zmienić na prowadzącym przez `/kozojeb powrothp 95`. Poprawka pomijania zatłoczonych pokoi korzysta z aktualnego limitu `maxstworow` i nie wymaga nowej komendy.
+Poczekaj na zakończenie walki i ruchu oraz komunikat `Zainstalowano 2.9.11`. Sprawdź `/kozojeb status`; powinien pokazać wersję **2.9.11**. Następnie uruchom `/kozojeb start` — najpierw na wspierających, potem na prowadzącym. To jednorazowy start po aktualizacji; późniejsze rozłączenia nie wymagają ręcznego wznowienia. Nie trzeba usuwać ani ręcznie instalować paczki; dotychczasowe ustawienia profili pozostają zachowane. Można przejść bezpośrednio z 2.9.2 do 2.9.11. Profile już ustawione na `zaslony` korzystają z ochrony całej drużyny; rola `wsparcie` pozostaje drugą linią. Zwykły próg regeneracji wynosi domyślnie 95%; można go zmienić na prowadzącym przez `/kozojeb powrothp 95`. Tryb golemów wymaga osobnego włączenia i w swoim cyklu czeka na 100% całej drużyny.
 
 Przy paczce zbudowanej w tym repozytorium adres wydań jest wbudowany. W paczce przygotowanej bez adresu skonfiguruj na każdym profilu:
 

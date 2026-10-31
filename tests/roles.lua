@@ -1,5 +1,12 @@
 local source = "src/Chimera_Kozojeb.lua"
 local compile = loadstring or load
+local function loadCore()
+  local main=assert(io.open(source,"r"))
+  local module=assert(io.open("src/KozojebGolems.lua","r"))
+  local combined=main:read("*a") .. "\n" .. module:read("*a")
+  main:close();module:close()
+  assert(compile(combined, "@" .. source))()
+end
 local clock, serial, timers, sends, aliases, output, saved, room, triggers, sendHandlers
 local function clone(value)
   if type(value) ~= "table" then return value end
@@ -87,7 +94,7 @@ local function reset(role, leaderHp)
       Combat = {State = {primary="", relations={{attacker="L", defender="N"}, {attacker="N", defender="L"}}}},
     },
   }
-  dofile(source)
+  loadCore()
   if role then kozojeb.command("rola " .. role) end
   sends, aliases = {}, {}
 end
@@ -340,7 +347,7 @@ test("role, leader, threshold and custom declension survive new Lua session", fu
   kozojeb.command("proglidera 65")
   kozojeb.command("minhpzaslony 55")
   kozojeb = nil
-  dofile(source)
+  loadCore()
   assert(kozojeb.config.role == "zaslony")
   assert(kozojeb.config.leaderName == "pandjed")
   assert(kozojeb.config.leaderShieldHp == 65)
@@ -1326,7 +1333,7 @@ test("full profile settings survive a fresh core session", function()
   kozojeb.command("maxstworow 4")
   kozojeb.setRooms({1322,1323})
   kozojeb = nil
-  dofile(source)
+  loadCore()
   assert(kozojeb.config.role == "zaslony" and kozojeb.config.shieldSelfHp == 75)
   assert(kozojeb.config.patrolDelay == 0.4 and kozojeb.config.killPause == 1)
   assert(kozojeb.config.targets.snotling and not kozojeb.config.targets.koza)
@@ -1375,7 +1382,7 @@ test("KozoBot profile settings migrate to the new project without losing the are
   saved["/profile-under-test/chimera_kozobot_settings.lua"] = saved["/profile-under-test/chimera_kozojeb_settings.lua"]
   saved["/profile-under-test/chimera_kozojeb_settings.lua"] = nil
   kozojeb = nil
-  dofile(source)
+  loadCore()
   assert(kozojeb.config.role == "zaslony" and kozojeb.config.leaderShieldHp == 85)
   assert(kozojeb.config.targets.snotling and not kozojeb.config.targets.koza and #kozojeb.rooms == 2)
   kozojeb.command("minhpzaslony 75")
@@ -1388,7 +1395,7 @@ test("in-memory KozoBot settings are copied and the former bot is stopped", func
   previous.command("cele snotling")
   saved = {}
   kozobot, kozojeb = previous, nil
-  dofile(source)
+  loadCore()
   assert(kozojeb.config.targets.snotling and not kozojeb.config.targets.koza)
   assert(kozojeb.config ~= previous.config and not previous.enabled)
   kozobot = nil
@@ -1712,7 +1719,7 @@ test("new safety and empty patrol settings persist and reject invalid values", f
   kozojeb.command("stabilizacja 100")
   kozojeb.command("pustypatrol -1")
   kozojeb=nil
-  dofile(source)
+  loadCore()
   assert(kozojeb.config.shieldMaxAttackers==1 and kozojeb.config.shieldHold==12 and kozojeb.config.emptyPatrolMax==5)
   sends,aliases={},{}
   kozojeb.command("wydajnosc")
@@ -3646,7 +3653,7 @@ test("the recovery setting is validated and saved without changing combat settin
   for key,value in pairs(config) do
     if key~="recoveryHp" and type(value)~="table" then assert(kozojeb.config[key]==value,key) end
   end
-  kozojeb.stop();kozojeb=nil;dofile(source)
+  kozojeb.stop();kozojeb=nil;loadCore()
   assert(kozojeb.config.recoveryHp==90 and not kozojeb.enabled)
 end)
 
@@ -3654,7 +3661,7 @@ test("existing profiles acquire the new default without changing their saved shi
   reset("zaslony");kozojeb.command("proglidera 90");kozojeb.command("progzaslony 80")
   kozojeb.command("predkosc 1.5");kozojeb.command("pauza 8")
   saved["/profile-under-test/chimera_kozojeb_settings.lua"].config.recoveryHp=nil
-  kozojeb=nil;dofile(source)
+  kozojeb=nil;loadCore()
   assert(kozojeb.config.recoveryHp==95 and kozojeb.config.role=="zaslony")
   assert(kozojeb.config.leaderShieldHp==90 and kozojeb.config.teamShieldHp==80)
   assert(kozojeb.config.patrolDelay==1.5 and kozojeb.config.killPause==8)
@@ -4578,6 +4585,284 @@ test("the DPS only role keeps its movement and shield restrictions with text evi
   gmcp.Chimera.Room.Entities.entities[2].hp=40;event()
   kozojeb.onTeamCombat("Maly glupkowaty snotling","Yarrima",true);advance(.13)
   assert(count("zaslon yarrima")==0 and kozojeb.enabled);noMovement()
+end)
+
+local function golemSetup(selfId, role, number)
+  reset(role or "zaslony")
+  local list={}
+  for _, item in ipairs({{"G","Gror"},{"L","Yarrim"},{"M","Morrid"},{"S","Yergo"}}) do
+    list[#list+1]={id=item[1],name=item[2],kind="player",hp=1000,maxhp=1000,
+      self=item[1]==selfId and 1 or nil,group_role=item[1]=="L" and "leader" or "member"}
+  end
+  local relations={{attacker="L",defender="N1"}}
+  for i=1,(number or 4) do
+    list[#list+1]={id="N"..i,name="Kamienny golem",kind="npc",hp=100,maxhp=100}
+    relations[#relations+1]={attacker="N"..i,defender="L"}
+  end
+  gmcp.Char.Vitals={hp=1000,maxhp=1000,moves=100,maxmoves=100}
+  gmcp.Chimera.Room.Entities.entities=list
+  gmcp.Chimera.Group.State={leader="L",members={"G","L","M","S"}}
+  gmcp.Chimera.Combat.State={primary=selfId=="L" and "N1" or "",relations=relations}
+  kozojeb.command("golemy on")
+  kozojeb.setRooms({1322,1323})
+end
+local function shieldCommands()
+  local result={}
+  for _, command in ipairs(sends) do if command:match("^zaslon ") then result[#result+1]=command end end
+  return result
+end
+local function golemRelations(owners)
+  local relations={{attacker="L",defender="N1"}}
+  for i, id in ipairs(owners) do relations[#relations+1]={attacker="N"..i,defender=id} end
+  gmcp.Chimera.Combat.State.relations=relations
+end
+local function golemCycle()
+  golemSetup("L","prowadzacy")
+  local list=gmcp.Chimera.Room.Entities.entities
+  local enemies={list[5],list[6],list[7],list[8]}
+  for i=8,5,-1 do table.remove(list,i) end
+  gmcp.Chimera.Combat.State={primary="",relations={}}
+  kozojeb.start()
+  room=1323;kozojeb.onRoomChanged("gmcp.Room.Info")
+  for _, npc in ipairs(enemies) do list[#list+1]=npc end
+  golemRelations({"L","L","L","L"})
+  gmcp.Chimera.Combat.State.primary="N1"
+  event();event("gmcp.Chimera.Combat.State")
+  assert(kozojeb.G.job and kozojeb.G.job.hadCombat)
+  for _, npc in ipairs(enemies) do npc.hp=0 end
+  gmcp.Chimera.Combat.State={primary="",relations={}}
+  event();event("gmcp.Chimera.Combat.State");advance(.6)
+  assert(count("wez pancerz")==1 and kozojeb.G.job.phase=="pickup")
+end
+local function pickup()
+  kozojeb.G.onText("Bierzesz powyginany pancerz plytowy.");advance(.13)
+end
+local function cargoAtBase()
+  golemCycle()
+  for i=1,4 do pickup() end
+  assert(kozojeb.mode=="escape" and aliases[#aliases]=="/idz 1322")
+  room=1322;kozojeb.onRoomChanged("gmcp.Room.Info")
+  event();event("gmcp.Chimera.Combat.State");advance(.3)
+  assert(kozojeb.mode=="heal_rest" and count("przeszukaj pancerz")==1)
+end
+local function finishArmor()
+  kozojeb.G.onText("Przestajesz przeszukiwac powyginany pancerz plytowy.");advance(.13)
+  kozojeb.G.onText("Odkladasz powyginany pancerz plytowy.");advance(.13)
+end
+
+test("golem mode is opt in and its bounded settings persist", function()
+  reset("zaslony");assert(not kozojeb.config.golemsEnabled)
+  kozojeb.command("golemy roznicahp 12");kozojeb.command("golemy roznicahp 4")
+  assert(kozojeb.config.golemHpGap==12)
+  kozojeb.command("golemy on");assert(kozojeb.config.targets.golem and kozojeb.config.attackForms.golem=="golema")
+  loadCore();assert(kozojeb.config.golemsEnabled and kozojeb.config.golemHpGap==12)
+end)
+test("four full HP golems get three distinct immediate targeted shields", function()
+  local chosen={}
+  for _, id in ipairs({"G","M","S"}) do
+    golemSetup(id);kozojeb.start()
+    local commands=shieldCommands();assert(#commands==1)
+    assert(commands[1]:match("^zaslon yarrima przed %a+ golemem$"))
+    assert(not chosen[commands[1]],"duplicate assigned golem")
+    chosen[commands[1]]=true;assert(#aliases==0)
+  end
+  golemSetup("L","prowadzacy");kozojeb.start();assert(#shieldCommands()==0)
+end)
+test("the golem room exception does not raise the ordinary creature limit", function()
+  golemSetup("L","prowadzacy");kozojeb.command("maxstworow 3");kozojeb.start()
+  assert(kozojeb.G.allowRoom(4) and not kozojeb.limitRoom and kozojeb.config.maxCreatures==3)
+  gmcp.Chimera.Room.Entities.entities[8].name="Ork";event()
+  assert(not kozojeb.G.allowRoom(4))
+end)
+test("a fifth golem or too small a party does not bypass the room limit", function()
+  golemSetup("S",nil,5);kozojeb.start();assert(not kozojeb.G.allowRoom(5))
+  golemSetup("S");gmcp.Chimera.Group.State.members={"L","S"};kozojeb.start()
+  assert(not kozojeb.G.allowRoom(4))
+end)
+test("DPS role cannot shield or handle golem armor even with mode enabled", function()
+  golemSetup("S","wsparcie");kozojeb.start()
+  kozojeb.G.onText("Bierzesz powyginany pancerz plytowy.");advance(3)
+  assert(#shieldCommands()==0 and count("wez pancerz")==0 and #aliases==0 and not kozojeb.G.job)
+end)
+test("the targeted shield still respects formation and own minimum HP", function()
+  golemSetup("S");kozojeb.shieldFormationReady=false;kozojeb.start();assert(#shieldCommands()==0)
+  golemSetup("S");gmcp.Chimera.Room.Entities.entities[4].hp=400;gmcp.Char.Vitals.hp=400
+  kozojeb.start();assert(#shieldCommands()==0 and #aliases==0)
+end)
+test("unknown or ambiguous NPC ownership never produces a targeted shield", function()
+  golemSetup("S");gmcp.Chimera.Combat.State.relations={{attacker="L",defender="N1"}}
+  kozojeb.start();assert(#shieldCommands()==0)
+  golemSetup("S")
+  for i=1,4 do gmcp.Chimera.Combat.State.relations[#gmcp.Chimera.Combat.State.relations+1]={attacker="N"..i,defender="M"} end
+  kozojeb.start();assert(#shieldCommands()==0)
+end)
+test("targeted ordinals follow the local current live NPC order", function()
+  golemSetup("G")
+  local e=gmcp.Chimera.Room.Entities.entities
+  e[5],e[8]=e[8],e[5]
+  kozojeb.start();assert(count("zaslon yarrima przed czwartym golemem")==1)
+end)
+test("balanced golems rotate toward a healthier party member", function()
+  golemSetup("S");golemRelations({"L","G","M","S"})
+  gmcp.Chimera.Room.Entities.entities[2].hp=750
+  gmcp.Chimera.Room.Entities.entities[4].hp=1000
+  gmcp.Chimera.Room.Entities.entities[1].hp=900
+  gmcp.Chimera.Room.Entities.entities[3].hp=900
+  kozojeb.start();assert(count("zaslon yarrima przed pierwszym golemem")==1)
+  assert(kozojeb.shieldDecision.maxOwnAttackers==2)
+end)
+test("HP rotation waits below its configured percentage gap", function()
+  golemSetup("S");golemRelations({"L","G","M","S"})
+  gmcp.Chimera.Room.Entities.entities[2].hp=950;kozojeb.start()
+  assert(#shieldCommands()==0)
+end)
+test("a high percentage cannot hide a smaller actual HP pool in rotation", function()
+  golemSetup("S");golemRelations({"L","G","M","S"})
+  local e=gmcp.Chimera.Room.Entities.entities
+  e[2].hp=750;e[4].hp=400;e[4].maxhp=400;gmcp.Char.Vitals.hp=400;gmcp.Char.Vitals.maxhp=400
+  kozojeb.start();assert(#shieldCommands()==0)
+end)
+test("manual targeted shield commands also reserve formation readiness", function()
+  golemSetup("S");send("zaslon yarrima przed pierwszym golemem")
+  kozojeb.start();assert(#shieldCommands()==1 and not kozojeb.shieldFormationReady)
+end)
+test("a targeted syntax refusal does not poison the player's name form", function()
+  golemSetup("S");kozojeb.start();kozojeb.onShieldRejected()
+  assert(kozojeb.shieldRejectedForms.yarrim==nil)
+end)
+test("a full golem room collects four armors serially then returns to base", function()
+  golemCycle()
+  for i=1,4 do
+    assert(count("wez pancerz")==i)
+    pickup()
+  end
+  assert(count("wez pancerz")==4 and count("wez pancerz z ciala")==0)
+  assert(count("przeszukaj pancerz")==0 and kozojeb.mode=="escape" and aliases[#aliases]=="/idz 1322")
+end)
+test("a missing armor has a bounded pickup retry without corpse commands", function()
+  golemCycle();kozojeb.G.onText("Wez co?");advance(4)
+  assert(count("wez pancerz")<=2 and kozojeb.mode=="escape")
+end)
+test("armor search waits for completion and ignores ground armor disintegration", function()
+  cargoAtBase()
+  kozojeb.G.onText("Zniszczony powyginany pancerz plytowy rozsypuje sie w proch.")
+  kozojeb.G.onText("Nie udalo ci sie znalezc niczego interesujacego.");advance(.3)
+  assert(count("odloz pancerz")==0)
+  kozojeb.G.onText("Przestajesz przeszukiwac powyginany pancerz plytowy.");advance(.13)
+  assert(count("odloz pancerz")==1 and count("przeszukaj pancerz")==1)
+end)
+test("the next armor is searched only after the drop is confirmed", function()
+  cargoAtBase()
+  kozojeb.G.onText("Przestajesz przeszukiwac powyginany pancerz plytowy.");advance(1)
+  assert(count("odloz pancerz")==1 and count("przeszukaj pancerz")==1)
+  kozojeb.G.onText("Odkladasz powyginany pancerz plytowy.");advance(.13)
+  assert(count("przeszukaj pancerz")==2)
+end)
+test("golem recovery waits for actual 100 percent of every party member", function()
+  cargoAtBase()
+  local e=gmcp.Chimera.Room.Entities.entities
+  e[1].hp=999;e[1].maxhp=1000;event()
+  for i=1,4 do finishArmor() end
+  advance(4)
+  assert(kozojeb.mode=="heal_rest" and not kozojeb.G.busy())
+  e[1].hp=1000;event();advance(4)
+  assert(kozojeb.mode~="heal_rest" and not kozojeb.G.job)
+end)
+test("full HP does not start patrol while carried armor is still being processed", function()
+  cargoAtBase();advance(4)
+  assert(kozojeb.mode=="heal_rest" and count("odloz pancerz")==0 and kozojeb.G.busy())
+end)
+test("unconfirmed search and drop preserve the task without issuing another drop", function()
+  cargoAtBase();advance(46)
+  assert(kozojeb.enabled and kozojeb.G.job.phase=="search_uncertain" and count("odloz pancerz")==0)
+  cargoAtBase();kozojeb.G.onText("Przestajesz przeszukiwac powyginany pancerz plytowy.");advance(5)
+  assert(kozojeb.enabled and kozojeb.G.job.phase=="drop_uncertain" and count("odloz pancerz")==1)
+  kozojeb.G.onText("Odkladasz powyginany pancerz plytowy.");advance(.13)
+  assert(count("przeszukaj pancerz")==2)
+end)
+test("manual stop cancels all golem actions and late confirmations", function()
+  cargoAtBase();kozojeb.stop();local before=#sends
+  kozojeb.G.onText("Przestajesz przeszukiwac powyginany pancerz plytowy.");advance(50)
+  assert(#sends==before and not kozojeb.G.job and not kozojeb.G.timer)
+end)
+test("mode off restores ordinary recovery thresholds and cancels the cycle", function()
+  cargoAtBase();kozojeb.command("golemy off")
+  assert(not kozojeb.enabled and not kozojeb.G.fullHp() and not kozojeb.G.job and kozojeb.config.recoveryHp==95)
+end)
+test("disconnect in search resumes automatically from fresh packets at base", function()
+  cargoAtBase();kozojeb.onSessionEvent("sysDisconnectionEvent");advance(2)
+  assert(count("przeszukaj pancerz")==1 and count("odloz pancerz")==0)
+  reconnectPackets();advance(1)
+  assert(kozojeb.enabled and count("przeszukaj pancerz")==2 and kozojeb.mode=="heal_rest")
+  finishArmor();assert(count("odloz pancerz")==1)
+end)
+test("disconnect after uncertain drop searches again before issuing any further drop", function()
+  cargoAtBase();kozojeb.G.onText("Przestajesz przeszukiwac powyginany pancerz plytowy.");advance(.13)
+  kozojeb.onSessionEvent("sysDisconnectionEvent");reconnectPackets();advance(1)
+  assert(count("odloz pancerz")==1 and count("przeszukaj pancerz")==2)
+end)
+test("golem actions remain coalesced under a burst of two thousand packets", function()
+  golemSetup("S");kozojeb.start()
+  for i=1,2000 do kozojeb.onGmcp("gmcp.Chimera.Combat.State") end
+  advance(.13)
+  assert(#shieldCommands()==1 and not kozojeb.G.timer and #aliases==0)
+end)
+
+test("golem recovery without a repeated unchanged combat packet still resumes armor work", function()
+  cargoAtBase();kozojeb.onSessionEvent("sysDisconnectionEvent")
+  kozojeb.onRoomChanged("gmcp.Room.Info");event();advance(1)
+  assert(kozojeb.enabled and not kozojeb.sessionFresh.combat and count("przeszukaj pancerz")==2)
+end)
+test("reconnect during armor collection preserves a possibly received extra armor", function()
+  golemCycle();kozojeb.onSessionEvent("sysDisconnectionEvent");reconnectPackets();advance(1)
+  assert(kozojeb.enabled and kozojeb.G.job.uncertainPickup==1)
+  for i=1,3 do pickup() end
+  kozojeb.G.onText("Wez co?");advance(4)
+  room=1322;kozojeb.onRoomChanged("gmcp.Room.Info");event();event("gmcp.Chimera.Combat.State");advance(.3)
+  assert(kozojeb.G.job.remaining==4 and count("przeszukaj pancerz")==1)
+end)
+test("a missing remembered party member blocks restart after reconnect at base", function()
+  cargoAtBase();kozojeb.onSessionEvent("sysDisconnectionEvent")
+  table.remove(gmcp.Chimera.Room.Entities.entities,1)
+  reconnectPackets();advance(1)
+  for i=1,4 do finishArmor() end
+  advance(4)
+  assert(kozojeb.mode=="heal_rest" and kozojeb.recoveryRoster.gror and not kozojeb.recoveryReadiness())
+end)
+test("manual start cannot change the base during armor collection", function()
+  golemCycle();kozojeb.start()
+  assert(kozojeb.config.startRoom==1322 and kozojeb.G.timer and kozojeb.G.job.phase=="pickup")
+end)
+test("death cancels pending armor work without a later drop", function()
+  cargoAtBase();kozojeb.onDeath();advance(50)
+  assert(not kozojeb.enabled and not kozojeb.G.job and count("odloz pancerz")==0)
+end)
+test("a fresh ambush at the base takes precedence over armor processing", function()
+  cargoAtBase()
+  gmcp.Chimera.Room.Entities.entities[#gmcp.Chimera.Room.Entities.entities+1]=
+    {id="A",name="Zlosliwy ork",kind="npc",hp=100,maxhp=100}
+  gmcp.Chimera.Combat.State.relations={{attacker="A",defender="L"}}
+  event();event("gmcp.Chimera.Combat.State")
+  kozojeb.G.onText("Przestajesz przeszukiwac powyginany pancerz plytowy.");advance(.3)
+  assert(kozojeb.mode=="escape" and count("odloz pancerz")==0)
+end)
+test("two thousand base packets do not duplicate a pending armor search", function()
+  cargoAtBase()
+  for i=1,2000 do kozojeb.onGmcp("gmcp.Chimera.Room.Entities") end
+  advance(.13)
+  assert(count("przeszukaj pancerz")==1 and count("odloz pancerz")==0 and kozojeb.G.timer)
+end)
+
+test("a disconnect detected after a missing drop reply still resumes automatically", function()
+  cargoAtBase();kozojeb.G.onText("Przestajesz przeszukiwac powyginany pancerz plytowy.");advance(6)
+  kozojeb.onSessionEvent("sysDisconnectionEvent");reconnectPackets();advance(1)
+  assert(kozojeb.enabled and count("odloz pancerz")==1 and count("przeszukaj pancerz")==2)
+end)
+
+test("timed out search accepts its late completion without an unsafe retry", function()
+  cargoAtBase();advance(46)
+  kozojeb.G.onText("Przestajesz przeszukiwac powyginany pancerz plytowy.");advance(.13)
+  assert(count("przeszukaj pancerz")==1 and count("odloz pancerz")==1)
 end)
 
 print(string.format("%d simulations passed", total))
