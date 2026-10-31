@@ -30,6 +30,8 @@ Wspierający dołączają do walki przez `wesprzyj`; dalsze ataki wykonuje gra. 
 
 Zmiana roli zatrzymuje bota. Po skonfigurowaniu uruchom go przez `/kozojeb start` na każdym profilu. Wspierających można uruchomić przed prowadzącym. Bez widocznego, faktycznego prowadzącego czekają.
 
+Od 2.9.9 start prowadzącego w spokojnym pokoju sprawdza HP całej widocznej drużyny według `powrothp` (domyślnie 95%). Brak odczytu lub ranny kolega wstrzymuje rozpoczęcie patrolu, także po aktualizacji. Stan poniżej progu odwrotu wymaga 100% tej postaci. Po regeneracji bot rusza automatycznie; atak podczas oczekiwania uruchamia dotychczasową ewakuację. Start podczas trwającej walki zachowuje decyzje bojowe i progi odwrotu. Ponowny `start` podczas leczenia lub powrotu nie kasuje wymagań regeneracji; wznowienie jest automatyczne.
+
 Możesz wskazać konkretnego prowadzącego zamiast automatycznego wykrywania:
 
 ```text
@@ -98,7 +100,7 @@ Od 2.9.5 odpowiedź `Dopiero co zepchnieto cie sprzed <osoby>; ...` kończy ocze
 
 Profile z rolą `zaslony` wybierają zagrożonego członka według liczby napastników oraz zapasu HP w punktach z uwzględnieniem ostatnich obrażeń. Kolega obciążony kilkoma NPC może mieć pierwszeństwo przed prowadzącym z niższym procentem HP. Brak porównywalnych danych, niekorzystna osłona lub blokada pozycji pozwala rozważyć kolejną osobę. Nie są osłaniani gracze spoza drużyny ani osoby bez napastnika NPC.
 
-Decyzje są rozłożone w czasie: obrońca z najkorzystniejszym przewidywanym ryzykiem po osłonie ma pierwszeństwo, pozostali czekają najwyżej 0,36 s. Nie zakładają, że inne profile mają włączone zasłony — po tym czasie mogą osłonić samodzielnie. Oczekiwanie na osłonę najważniejszego celu nie uruchamia zastępczo zasłony mniej zagrożonej osoby. Widoczna zasłona dowolnego członka daje do 0,5 s na aktualizację relacji walki; komunikat `zrecznie zaslania` jest również rozpoznawany. Równoczesne osłony różnych kolegów mają osobny krótki kontekst. Zmiana napastników kończy oczekiwanie, a pilne osłony pomijają dodatkowe opóźnienie. Nie wymaga to komunikacji między profilami ani nowych pętli. Notatka przy wykonanej komendzie pokazuje punkty HP i liczby napastników obu postaci, aby ułatwić analizę logów.
+Od 2.9.9 prowadzący i profile `zaslony` używają wspólnej kolejności: obrońca z najkorzystniejszym przewidywanym ryzykiem po osłonie ma pierwszeństwo, pozostali czekają po 0,45 s na kolejne miejsce, najwyżej 1,35 s. Nie zakładają, że inne profile mają włączone zasłony — po tym czasie mogą osłonić samodzielnie. Oczekiwanie na osłonę najważniejszego celu nie uruchamia zastępczo zasłony mniej zagrożonej osoby. Widoczna zasłona dowolnego członka daje do 0,5 s na aktualizację relacji walki; komunikat `zrecznie zaslania` jest również rozpoznawany. Równoczesne osłony różnych kolegów mają osobny krótki kontekst. Zmiana napastników wymaga ponownej oceny. Dalsza utrata rzeczywistego HP celu, także niewidoczna po zaokrągleniu procentu, kończy dodatkowe oczekiwanie; pilne osłony również je pomijają. Nie wymaga to komunikacji między profilami ani nowych pętli. Notatka przy wykonanej komendzie pokazuje punkty HP i liczby napastników obu postaci, aby ułatwić analizę logów.
 
 Prowadzący również uwzględnia widoczną udaną zasłonę kolegi: przez najwyżej 0,5 s czeka na nowe relacje, zamiast uznawać własny brak gotowości za konieczność dodatkowego odwrotu. Dalsza utrata HP, krytyczny stan własny, celu lub innej osoby oraz zmiana napastników kończą to oczekiwanie. Powtórzony komunikat nie przedłuża pierwszego okna. Wszystkie krótkie potwierdzenia współdzielą jeden timer, który znika po ich wygaśnięciu i jest anulowany przy zatrzymaniu lub zmianie pokoju.
 
@@ -138,7 +140,7 @@ Niepoprawna forma odrzucona przez grę jest blokowana do poprawienia.
 
 ## Aktualizacje z GitHuba
 
-Jeśli masz już Kozojeba 2.8.1–2.9.7, wykonaj na **każdym profilu**:
+Jeśli masz już Kozojeba 2.8.1–2.9.8, wykonaj na **każdym profilu**:
 
 ```text
 /kozojeb stop
@@ -147,7 +149,7 @@ Jeśli masz już Kozojeba 2.8.1–2.9.7, wykonaj na **każdym profilu**:
 /kozojeb aktualizuj
 ```
 
-Poczekaj na zakończenie walki i ruchu oraz komunikat `Zainstalowano 2.9.8`. Sprawdź `/kozojeb status`; powinien pokazać wersję **2.9.8**. Następnie uruchom `/kozojeb start` — najpierw na wspierających, potem na prowadzącym. To jednorazowy start po aktualizacji; późniejsze rozłączenia nie wymagają ręcznego wznowienia. Nie trzeba usuwać ani ręcznie instalować paczki; dotychczasowe ustawienia profili pozostają zachowane. Można przejść bezpośrednio z 2.9.2 do 2.9.8. Profile już ustawione na `zaslony` korzystają z ochrony całej drużyny; rola `wsparcie` pozostaje drugą linią. Próg regeneracji wynosi domyślnie 95%; można go zmienić na prowadzącym przez `/kozojeb powrothp 95`. Poprawka pomijania zatłoczonych pokoi korzysta z aktualnego limitu `maxstworow` i nie wymaga nowej komendy.
+Poczekaj na zakończenie walki i ruchu oraz komunikat `Zainstalowano 2.9.9`. Sprawdź `/kozojeb status`; powinien pokazać wersję **2.9.9**. Następnie uruchom `/kozojeb start` — najpierw na wspierających, potem na prowadzącym. To jednorazowy start po aktualizacji; późniejsze rozłączenia nie wymagają ręcznego wznowienia. Nie trzeba usuwać ani ręcznie instalować paczki; dotychczasowe ustawienia profili pozostają zachowane. Można przejść bezpośrednio z 2.9.2 do 2.9.9. Profile już ustawione na `zaslony` korzystają z ochrony całej drużyny; rola `wsparcie` pozostaje drugą linią. Próg regeneracji wynosi domyślnie 95%; można go zmienić na prowadzącym przez `/kozojeb powrothp 95`. Poprawka pomijania zatłoczonych pokoi korzysta z aktualnego limitu `maxstworow` i nie wymaga nowej komendy.
 
 Przy paczce zbudowanej w tym repozytorium adres wydań jest wbudowany. W paczce przygotowanej bez adresu skonfiguruj na każdym profilu:
 
@@ -181,7 +183,7 @@ Watchdog uwzględnia zmiany pełnych HP z `Char.Vitals`, `Group.State` i `Room.E
 
 Od 2.9.5 własne ciosy podczas trwającej walki lub pościgu odświeżają aktywność także przy opóźnionej liście encji. Nie odblokowują przy tym ataków ani ruchu na podstawie starych danych. Tekst po rozłączeniu jest ignorowany, a rzeczywisty zastój nadal uruchamia watchdog. Ewakuacja wykorzystuje dotychczasowy timer odwrotu; blokady pozycji współdzielą jeden dodatkowy timer działający tylko do ich wygaśnięcia.
 
-Potwierdzenie własnej walki, w tym odpowiedź `Juz walczysz`, powstrzymuje kolejne `wesprzyj` dla tego samego starcia. Krótkie przejście od tekstowej informacji o walce do konkretnego ID przeciwnika zachowuje potwierdzenie. Sygnał tekstowy jest powiązany z pokojem i widocznymi żywymi NPC. Po śmierci przeciwnika stary komunikat nie uruchamia kolejnego wsparcia; dalsza walka prowadzącego musi mieć potwierdzenie w świeżych danych. Po odmowie wsparcia wymagane są nowe relacje dotyczące prowadzącego lub jego przeciwnika albo nowy poprawny komunikat walki. Walka innych NPC, identyczne pakiety, kolejność i duplikaty relacji nie odnawiają próby.
+Potwierdzenie własnej walki, w tym odpowiedź `Juz walczysz`, powstrzymuje kolejne `wesprzyj` dla tego samego starcia. Od 2.9.9 późniejsza sprzeczna odmowa nie usuwa tego potwierdzenia. Zniknięcie wcześniej widocznej własnej walki w nowym stanie GMCP pozwala ponownie dołączyć; zmiana celu prowadzącego również pozostaje obsługiwana. Krótkie przejście od tekstowej informacji o walce do konkretnego ID przeciwnika zachowuje potwierdzenie. Sygnał tekstowy jest powiązany z pokojem i widocznymi żywymi NPC. Po śmierci przeciwnika stary komunikat nie uruchamia kolejnego wsparcia; dalsza walka prowadzącego musi mieć potwierdzenie w świeżych danych. Po odmowie wsparcia wymagane są nowe relacje dotyczące prowadzącego lub jego przeciwnika albo nowy poprawny komunikat walki. Walka innych NPC, identyczne pakiety, kolejność i duplikaty relacji nie odnawiają próby.
 
 Własna relacja ataku ma pierwszeństwo przed `primary`. Jeżeli ogólne `zabij fimira` wybrało innego dozwolonego fimira, bot przyjmuje jego potwierdzone ID i nie ponawia komendy, próbując wymusić pierwszy wpis z listy. Inny gatunek, ignorowany NPC i sam napastnik nie zastępują wybranego celu. Przy braku potwierdzenia bot wysyła najwyżej trzy próby na konkretny cel w danym pokoju, z odstępami 1 i 2 s. Nowy cel, nowy pokój lub rzeczywiste odzyskanie i późniejsza utrata własnej walki pozwalają rozpocząć nowy cykl; zmiany pobocznych relacji nie wystarczają. To ogranicza komendy Kozojeba; inne skrypty i ręczne aliasy mogą nadal wysyłać własne polecenia.
 
@@ -196,6 +198,8 @@ Po pustych pełnych okrążeniach patrol stopniowo zwalnia. Domyślny maksymalny
 ```
 
 `0` wyłącza zwalnianie. `wydajnosc` wypisuje liczniki zdarzeń, decyzji, przeliczeń, ataków i ich ponowień, powrotów watchdogu oraz oczekiwań na restart od załadowania skryptu; nie jest pomiarem całkowitego CPU Mudleta. Nie uruchamia nagrywania pakietów, pętli odpytywania, testów sieciowych ani zapisu logu na dysk. Dane obserwacji są ograniczone do widocznych członków drużyny i NPC bieżącego pokoju.
+
+`/kozojeb diagnostyka` pokazuje te liczniki oraz bieżący tryb, rolę, pokój, ID celu, gotowość danych i oczekujący ruch. Podaje czas od ostatniego odebranego GMCP, własnego ciosu, postępu bota i decyzji. Watchdog zapisuje ten sam krótki stan przed rozpoczęciem powrotu. Identyczny pakiet GMCP aktualizuje czas odbioru, lecz nie udaje postępu. Diagnostyka działa na żądanie lub przy faktycznym zastoju; nie dodaje timera, odpytywania ani rejestratora pakietów. Sam taki zapis nie rozstrzyga przyczyny zerwania TCP.
 
 ## Zmęczenie i odmowa ruchu
 

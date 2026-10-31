@@ -54,7 +54,7 @@ end
 K.legacyImportTried = true
 K.initialized = false
 
-K.version = "2.9.8"
+K.version = "2.9.9"
 K.config = K.config or {
   chaseDelay = 0.20,
   patrolDelay = 0.70,
@@ -393,6 +393,8 @@ K.healthHistory, K.shieldTransfers = {}, {}
 K.previousIncoming = nil
 K.transferRevision, K.lastHealthObservationRevision = nil, nil
 K.lastActivityAt = nil
+K.lastGmcpAt, K.lastGmcpEvent, K.lastOwnCombatAt, K.lastDecisionAt = nil, nil, nil, nil
+K.lastIdleDiagnostic = nil
 K.shieldFailure, K.shieldBlockedReason = nil, nil
 K.supportAttempt = nil
 K.supportHintSerial = 0
@@ -1510,7 +1512,7 @@ local function restartPatrolWhenReady(kind)
   if kind == "idle" then
     note("Dotarlem do pokoju startowego " .. K.config.startRoom .. ". Wznawiam patrol ze swiezych danych.", "green")
   end
-  K.start()
+  K.start(kind == "recovery")
 end
 
 local function finishRecoveryReturn()
@@ -1985,7 +1987,7 @@ local function deferShield(entity, kind, deadline)
   end
   clearShieldTurn()
   local incoming = combatSnapshot().incoming[tostring(entity.id)]
-  turn = {id=tostring(entity.id), room=currentRoom(), kind=kind, deadline=deadline,
+  turn = {id=tostring(entity.id), room=currentRoom(), kind=kind, deadline=deadline, ratio=shieldTargetRatio(entity),
     count=incoming and incoming.count or 0, npcs=incoming and incoming.npcs or {}}
   K.shieldTurn = turn
   later("shieldTurnTimer", math.max(0, deadline - now()), function()
@@ -2018,7 +2020,8 @@ local function shieldTurnRank(entity, percent)
       end
     end
   end
-  -- Nie zakladamy, ze inne profile maja role zaslon. Po krotkiej kolejce
+  -- Prowadzacy i wspierajacy korzystaja z tej samej oceny. Nie zakladamy,
+  -- ze inne profile maja role zaslon. Po ograniczonej kolejce
   -- ten profil moze dzialac sam, jesli nikt wczesniej nie przejal NPC.
   return math.min(3, rank)
 end
@@ -2103,8 +2106,13 @@ local function tryShield(entity, hp, threshold)
     K.shieldBlockedReason = "Odzyskiwanie pozycji przed " .. form
     return
   end
-  if K.config.role == "zaslony" and hp > K.config.escapeHp then
-    local notice = K.teamShieldNotices[tostring(entity.id)]
+  local notice = K.teamShieldNotices[tostring(entity.id)]
+  local turn = K.shieldTurn
+  local ratio = shieldTargetRatio(entity)
+  local loss = ratio and ((turn and turn.id == tostring(entity.id) and turn.ratio and ratio < turn.ratio - 0.000000001)
+    or (notice and notice.ratio and ratio < notice.ratio - 0.000000001))
+  local urgentHp = isFollower() and K.config.escapeHp or K.config.teamEscapeHp
+  if hp > urgentHp and not loss then
     if notice and notice.id == tostring(entity.id) and notice.room == currentRoom()
         and now() < notice.deadline and sameShieldIncoming(notice) then
       if deferShield(entity, "notice", notice.deadline) then return false, true end
@@ -2114,7 +2122,7 @@ local function tryShield(entity, hp, threshold)
     end
     local rank = shieldTurnRank(entity, hp)
     if rank > 0 then
-      if deferShield(entity, "rank", now() + rank * 0.12) then return false, true end
+      if deferShield(entity, "rank", now() + rank * 0.45) then return false, true end
     else clearShieldTurn() end
   else clearShieldTurn() end
   K.shieldLastTarget = target
@@ -2691,11 +2699,20 @@ local function inspectFollower()
   else clearShieldTurn() end
   if not leaderFighting then K.supportAttempt = nil return end
   if selfTarget then
-    if K.supportAttempt then K.supportAttempt.confirmed = true end
+    if K.supportAttempt then
+      K.supportAttempt.confirmed = true
+      K.supportAttempt.selfCombatRevision = K.combatRevision
+    end
     return
   end
   local key = tostring(leader.id) .. ":" .. tostring(target and target.id or "hint")
   local attempt = K.supportAttempt
+  if attempt and attempt.selfCombatRevision and K.combatRevision > attempt.selfCombatRevision then
+    -- Wlasna walka byla widoczna i rzeczywiscie zniknela w nowym stanie.
+    -- To pozwala ponownie dolaczyc; sprzeczny tekst odpowiedzi nie wystarcza.
+    attempt.confirmed, attempt.selfCombatRevision = nil, nil
+    attempt.deniedEvidence, attempt.deniedHint = nil, nil
+  end
   if attempt and attempt.leaderId == tostring(leader.id) and not attempt.targetId and target
       and now() - attempt.createdAt <= 3 then
     attempt.key, attempt.targetId = key, tostring(target.id)
@@ -2726,8 +2743,7 @@ end
 function K.onSupportResult(alreadyFighting)
   if not K.enabled or not isFollower() or not K.supportAttempt then return end
   if alreadyFighting then K.supportAttempt.confirmed = true
-  else
-    K.supportAttempt.confirmed = nil
+  elseif not K.supportAttempt.confirmed then
     K.supportAttempt.deniedEvidence = supportEvidence(K.supportAttempt.leaderId, K.supportAttempt.targetId)
     K.supportAttempt.deniedHint = K.supportHintSerial
   end
@@ -2889,6 +2905,7 @@ end
 inspectRoom = function()
   if not K.enabled then return end
   K.metrics.actions = K.metrics.actions + 1
+  K.lastDecisionAt = now()
   if K.entitiesReady and K.sessionFresh.combat then combatSnapshot() end
   if isFollower() then inspectFollower() return end
   local fingerprint = progressFingerprint()
@@ -3319,6 +3336,7 @@ function K.onIdleTimeout()
     if K.enabled then touchActivity() end
     return
   end
+  K.lastIdleDiagnostic = K.diagnostics("watchdog")
   K.generation = K.generation + 1
   cancelAllTimers()
   clearTarget()
@@ -3338,8 +3356,9 @@ function K.onIdleTimeout()
 end
 
 function K.onCombatProgress()
-  if K.enabled and not isFollower() and not K.sessionBlocked and K.sessionFresh.room
-      and (K.mode == "combat" or K.mode == "chase") then touchActivity() end
+  if not K.enabled or K.sessionBlocked or not K.sessionFresh.room then return end
+  K.lastOwnCombatAt = now()
+  if not isFollower() and (K.mode == "combat" or K.mode == "chase") then touchActivity() end
 end
 
 local panicInspect
@@ -3461,6 +3480,7 @@ function K.onPanicLanded()
 end
 
 function K.onRoomChanged(eventName)
+  if eventName == "gmcp.Room.Info" then K.lastGmcpAt, K.lastGmcpEvent = now(), eventName end
   invalidateState(true)
   local previousRoom = K.lastRoom
   if eventName == "gmcp.Room.Info" then
@@ -3579,6 +3599,7 @@ function K.onRoomChanged(eventName)
 end
 
 function K.onGmcp(eventName)
+  K.lastGmcpAt, K.lastGmcpEvent = now(), eventName
   K.metrics.events = K.metrics.events + 1
   local healthEvent = eventName == "gmcp.Chimera.Room.Entities"
     or eventName == "gmcp.Char.Vitals" or eventName == "gmcp.Chimera.Group.State"
@@ -4299,7 +4320,7 @@ function K.tryResumeMovement()
   else queueInspection(inspectRoom) end
 end
 
-function K.start()
+function K.start(recovered)
   invalidateState(true)
   K.emptyRounds, K.patrolRoundKills, K.emptyPatrolDelay = 0, 0, 0
   if K.sessionBlocked or not K.entitiesReady or K.roomChangePending then
@@ -4308,6 +4329,10 @@ function K.start()
   end
   if K.reconnectTask then
     note("Czekam na swieze dane i druzyne; zadanie wznowi sie automatycznie.", "yellow")
+    return
+  end
+  if not recovered and K.enabled and (K.mode == "heal_rest" or K.mode == "escape" or K.mode == "recovery_return") then
+    note("Trwa wspolny odpoczynek lub powrot. Patrol wznowi sie automatycznie po sprawdzeniu calej druzyny.", "yellow")
     return
   end
   K.restartPending = nil
@@ -4380,6 +4405,18 @@ function K.start()
     K.config.startRoom, #K.rooms, K.config.patrolDelay, K.config.chaseDelay
   ), "green")
   touchActivity()
+  -- W trwajacej walce najpierw obowiazuja dotychczasowe decyzje bojowe.
+  -- Spokojny start nie moze ominac wspolnego progu regeneracji po aktualizacji.
+  updateVitals()
+  if K.lastHp <= 0 then safetyCheck() return end
+  local actualLeader = groupContext().actualLeader
+  if (not actualLeader or isSelf(actualLeader)) and not recoveryThreat() and not K.recoveryReadiness() then
+    note("Start patrolu czeka na gotowosc calej druzyny.", "yellow")
+    finishEscapeTail()
+    return
+  end
+  K.recoveryRoster, K.recoveryMissing, K.recoveryWaiters = nil, nil, nil
+  K.recoveryCritical, K.recoveryOwnCritical = nil, nil
   inspectRoom()
 end
 
@@ -4766,6 +4803,7 @@ function K.help()
   <green>/kozojeb pustypatrol 3<reset>         pusty patrol zwalnia do 3 s/krok;
                               0 wylacza spowalnianie (zakres 0-10)
   <green>/kozojeb wydajnosc<reset>             liczniki GMCP, decyzji i komend
+  <green>/kozojeb diagnostyka<reset>           stan i czas od GMCP, ciosu i postepu
   - Role, wybor lidera, oba progi zaslony i odmiany sa zapisywane na profilu.
   - Zmiana roli zatrzymuje bota. Po zmianie wpisz /kozojeb start.
   - Wsparcie dziala tylko przy widocznym prowadzacym nalezacym do druzyny.
@@ -5016,12 +5054,32 @@ function K.performance()
     m.movementRests, m.regroups))
 end
 
+function K.diagnostics(reason)
+  local stamp = now()
+  local function age(at) return at and string.format("%.1f s", math.max(0, stamp - at)) or "brak" end
+  local record = {at=stamp, mode=K.mode, room=currentRoom(), target=K.currentTargetId,
+    gmcpAge=K.lastGmcpAt and stamp-K.lastGmcpAt, combatAge=K.lastOwnCombatAt and stamp-K.lastOwnCombatAt,
+    activityAge=K.lastActivityAt and stamp-K.lastActivityAt, decisionAge=K.lastDecisionAt and stamp-K.lastDecisionAt}
+  note(string.format("Diagnostyka [%s]: wersja %s; tryb=%s; rola=%s; pokoj=%s; cel=%s; encje=%s; ruch=%s; sesja=%s.",
+    reason or "recznie", K.version, K.mode, K.config.role, tostring(record.room or "?"),
+    tostring(K.currentTargetId or "brak"), tostring(K.entitiesReady), tostring(K.sentDirection or "brak"),
+    K.sessionBlocked and "zablokowana" or "aktywna"))
+  note(string.format("Czas od: GMCP %s (%s); wlasny cios %s; postep %s; decyzja %s. Pokoj swiezy=%s; walka swieza=%s; ruch oczekuje=%s.",
+    age(K.lastGmcpAt), tostring(K.lastGmcpEvent or "brak"), age(K.lastOwnCombatAt),
+    age(K.lastActivityAt), age(K.lastDecisionAt), tostring(K.sessionFresh.room),
+    tostring(K.sessionFresh.combat and K.combatRoomReady), tostring(K.roomChangePending)))
+  return record
+end
+
 local function executeCommand(arguments)
   local input = trim(arguments)
   local action, rest = input:match("^(%S+)%s*(.-)$")
   action = normal(action or "status")
   if action == "wydajnosc" then
     K.performance()
+  elseif action == "diagnostyka" then
+    K.performance()
+    K.diagnostics()
   elseif action == "powrothp" then
     local value = tonumber(rest)
     if not value or value ~= value or value < 1 or value > 100 or value % 1 ~= 0
@@ -5349,7 +5407,7 @@ function K.command(arguments)
   executeCommand(arguments)
   invalidateState(true)
   local action = normal(arguments):match("^(%S+)") or "status"
-  if action ~= "status" and action ~= "help" and action ~= "wydajnosc" then K.saveSettings() end
+  if action ~= "status" and action ~= "help" and action ~= "wydajnosc" and action ~= "diagnostyka" then K.saveSettings() end
 end
 
 function K.statusAction(action)

@@ -1,5 +1,14 @@
 # Zmiany
 
+## 2.9.9
+
+- Prowadzący dołącza do kolejności obrońców używanej przez profile `zaslony`. Odstęp kolejnych miejsc wynosi 0,45 s, najwyżej 1,35 s, zamiast 0,12 s / 0,36 s. Pozostaje ograniczone oczekiwanie na rzeczywisty wynik i świeże relacje GMCP, bez założenia, że pozostałe profile mają włączone zasłony. Dalsza utrata rzeczywistego HP i stan pilny pomijają dodatkowe oczekiwanie. Zachowane porównywalne pule HP, ocena presji, limit napastników i stabilizacja przejęć.
+- Sprzeczna późniejsza odmowa `wesprzyj` nie kasuje wcześniejszego potwierdzenia własnej walki dla tej samej próby. Nowy, rzeczywisty zanik wcześniej widocznej własnej walki pozwala ponownie dołączyć; nowy cel prowadzącego oraz śmierć przeciwnika nadal zmieniają kontekst. Bez zgadywania składni celowanego wsparcia i bez komunikacji między profilami.
+- Start prowadzącego w spokojnym pokoju sprawdza gotowość całej widocznej drużyny według `powrothp`, domyślnie 95%. Niepełny odczyt HP blokuje patrol. Krytyczny stan wymaga 100%, odpoczynek wznawia się po rozłączeniu, atak uruchamia istniejącą ewakuację. Ponowny start w trakcie leczenia lub powrotu nie usuwa krytycznych wymagań. Wspierający zachowują swoje role i brak własnego ruchu; start w trwającej walce zachowuje dotychczasowe decyzje bojowe.
+- `/kozojeb diagnostyka` pokazuje liczniki, stan bota i czas od GMCP, własnego ciosu, postępu oraz decyzji. Watchdog wypisuje taki stan przed skasowaniem celu i rozpoczęciem powrotu. Stała liczba znaczników czasu, bez nowych timerów, rejestratora pakietów czy zapytań do gry. Nie jest to rozpoznanie przyczyny rozłączenia TCP.
+- 27 nowych symulacji: wspólna kolejność prowadzącego i obrońców, odczyty HP z logu, opóźnione potwierdzenia, dalsze obrażenia, serie 2000 pakietów, sprzeczne odpowiedzi wsparcia, rzeczywisty powrót do walki, gotowość przy starcie, atak podczas odpoczynku, rozłączenie i diagnostyka przed resetem. Łącznie 389 symulacji bota i 30 aktualizatora, dodatkowo wektory SHA-256 i kontrola paczki.
+- Zapisane role, tempo patrolu, pauza po zabiciu i progi pozostają zachowane. Moduł zbierania łupów głównych skryptów Chimery jest poza tym repozytorium; nie został zmieniony.
+
 ## 2.9.8
 
 - Nowe spotkanie podczas patrolu ponad limitem celów jest pomijane także po automatycznej agresji NPC. Przyjęcie walki nie anuluje kroku wyjścia; dotyczy również ataku wyłącznie na kolegę i automatycznej odpowiedzi prowadzącego.
