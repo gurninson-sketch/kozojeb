@@ -58,6 +58,9 @@ armor_trigger = re.search(
 assert armor_trigger, "Missing armor confirmation trigger"
 armor_pattern = json.loads(armor_trigger.group(1))
 for line in ("Bierzesz powyginany pancerz plytowy.",
+             "Bierzesz cztery powyginane pancerze plytowe.",
+             "Bierzesz trzy powyginane pancerze plytowe z otwartego skorzanego plecaka.",
+             "Wkladasz powyginany pancerz plytowy do otwartego skorzanego plecaka.",
              "Przestajesz przeszukiwac powyginany pancerz plytowy.",
              "Przestajesz przeszukiwac zniszczony powyginany pancerz plytowy.",
              "Odkladasz powyginany pancerz plytowy.", "Wez co?", "Odloz co?"):

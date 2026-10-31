@@ -54,7 +54,7 @@ end
 K.legacyImportTried = true
 K.initialized = false
 
-K.version = "2.9.11"
+K.version = "2.9.12"
 K.config = K.config or {
   chaseDelay = 0.20,
   patrolDelay = 0.70,

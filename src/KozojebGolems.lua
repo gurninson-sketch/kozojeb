@@ -206,6 +206,23 @@ local function finishCargo(job)
   job.phase = "done"
   A.note("Golemy: pancerze obsluzone. Czekam na 100% HP calej druzyny.", "green")
 end
+local amounts = {jeden=1,jedna=1,dwa=2,dwie=2,trzy=3,cztery=4,piec=5,szesc=6,
+  siedem=7,osiem=8,dziewiec=9,dziesiec=10,jedenascie=11,dwanascie=12,trzynascie=13,
+  czternascie=14,pietnascie=15,szesnascie=16,siedemnascie=17,osiemnascie=18,
+  dziewietnascie=19,dwadziescia=20,trzydziesci=30,czterdziesci=40,piecdziesiat=50}
+local function armorAmount(text)
+  if not text:find("powyginan",1,true) then return nil end
+  if text:find("pancerz plytowy",1,true) then return 1 end
+  local first,second=text:match("^%S+%s+(%S+)%s+(%S+)")
+  local amount=tonumber(first) or amounts[first]
+  if amount and amount >= 20 and amounts[second] and amounts[second] < 10 then amount=amount+amounts[second] end
+  if amount and amount >= 1 and amount <= 64 and amount == math.floor(amount) then return amount end
+end
+local function cargoWait(job, message)
+  cancel("timer")
+  job.phase="cargo_uncertain"
+  A.note("Golemy: " .. message .. " Czekam z pancerzami; patrol pozostaje wstrzymany.","yellow")
+end
 local function returnHome(job)
   cancel("timer")
   job.phase = "return"
@@ -221,7 +238,8 @@ function G.inspect()
   local job = G.job
   if not job and #list > 0 and #list <= 4 and others == 0
       and K.mode ~= "escape" and K.mode ~= "heal_rest" and K.mode ~= "recovery_return" then
-    job = {room=A.room(), expected=#list, picked=0, remaining=0, attempts=0, phase="battle"}
+    job = {room=A.room(), expected=#list, picked=0, remaining=0, bagged=0,
+      extraCargo=0, attempts=0, phase="battle"}
     G.job = job
   end
   if not job or job.phase == "done" then return false end
@@ -233,6 +251,7 @@ function G.inspect()
       and (recovery or A.room() ~= job.room) then returnHome(job) end
   if (job.phase == "pickup" or job.phase == "settle") and not G.timer then job.phase="collect" end
   if (job.phase == "search_wait" or job.phase == "drop_wait") and not G.timer then job.phase="search" end
+  if (job.phase == "bag_open" or job.phase == "bag_wait") and not G.timer then job.phase="search" end
   if job.phase == "battle" then
     if recovery or A.room() ~= job.room then returnHome(job)
     elseif job.hadCombat and #list == 0 and not A.threat() then
@@ -269,9 +288,25 @@ function G.inspect()
       if not recovery then K.escape("Golemy: obsluga pancerzy i wspolny odpoczynek w kozobazie.") end
       return false
     end
-    job.remaining, job.phase = math.min(job.expected, job.picked + (job.uncertainPickup or 0)), "search"
+    job.remaining, job.phase = job.picked + (job.uncertainPickup or 0) + (job.extraCargo or 0), "search"
+    job.cargoReady=true
+  end
+  if atBase and job.cargoReady and not recovery then
+    K.escape("Golemy: wracam do obslugi pozostalych pancerzy przed wznowieniem patrolu.")
+    return true
   end
   if not atBase or K.mode ~= "heal_rest" then return false end
+  if (job.phase == "search" or job.phase == "drop") and (job.bagged or 0) > 0 then
+    job.phase="bag_open"
+    later(0.3,function(j) j.phase="bag_take" end)
+    send("otworz swoj plecak")
+    return true
+  elseif job.phase == "bag_take" then
+    job.phase="bag_wait"
+    later(3,function(j) cargoWait(j,"Brak potwierdzenia wyjecia pancerzy z plecaka.") end)
+    send("wez pancerze z plecaka")
+    return true
+  end
   if job.phase == "search" then
     if job.remaining <= 0 then finishCargo(job); return false end
     job.phase = "search_wait"
@@ -294,19 +329,45 @@ function G.onText(line)
   local job = G.job
   if not enabled() or not K.enabled or K.sessionBlocked or A.isFollower() or not job then return end
   local text = A.normal(line)
-  local armor = text:find("pancerz", 1, true) ~= nil
-  if armor and text:match("^bierzesz ") and A.room() == job.room
-      and (job.phase == "battle" or job.phase == "pickup" or job.phase == "collect") then
-    job.picked = math.min(job.expected, job.picked + 1)
+  local armor = text:find("pancerz", 1, true) ~= nil and text:find("powyginan",1,true) ~= nil
+  local amount=armor and armorAmount(text)
+  local fromBag=armor and text:match("^bierzesz ") and text:find("plecaka",1,true)
+  if fromBag then
+    if not amount then cargoWait(job,"Nieznana liczba pancerzy wyjmowanych z plecaka."); return end
+    local known=math.min(job.bagged or 0,amount)
+    job.bagged=math.max(0,(job.bagged or 0)-amount)
+    local extra=amount-known
+    if job.cargoReady then job.remaining=job.remaining+extra
+    else job.extraCargo=(job.extraCargo or 0)+extra end
+    if job.phase=="bag_open" or job.phase=="bag_take" or job.phase=="bag_wait"
+        or job.phase=="cargo_uncertain" or job.phase=="done" then
+      cancel("timer"); job.phase="search"
+    end
+  elseif armor and text:match("^wkladasz ") and text:find("plecaka",1,true) then
+    if not amount then cargoWait(job,"Nieznana liczba pancerzy wkladanych do plecaka."); return end
+    job.bagged=(job.bagged or 0)+amount
+    if job.cargoReady and job.remaining < job.bagged then job.remaining=job.bagged end
+    if job.phase=="done" then job.phase="search" end
+  elseif armor and amount and text:match("^bierzesz ")
+      and (A.room() == job.room or (job.cargoReady and A.room() == tonumber(K.config.startRoom))) then
+    job.picked = job.picked + amount
+    if job.cargoReady then job.remaining=job.remaining+amount end
     if job.phase == "pickup" then cancel("timer"); job.phase="collect"; job.retried=nil end
+    if job.phase == "done" or job.phase == "cargo_uncertain" then job.phase="search" end
   elseif text == "wez co?" and job.phase == "pickup" then job.empty=true
   elseif (job.phase == "search_wait" or job.phase == "search_uncertain") and armor and text:match("^przestajesz przeszukiwac ") then
     cancel("timer"); job.phase="drop"
   elseif (job.phase == "search_wait" or job.phase == "search_uncertain") and text == "przeszukaj co?" then
-    finishCargo(job)
+    if (job.bagged or 0)>0 then cancel("timer"); job.phase="search"
+    elseif job.remaining>0 then cargoWait(job,"Brakuje pancerza, ktory nadal jest zapisany w ladunku.")
+    else finishCargo(job) end
   elseif (job.phase == "drop_wait" or job.phase == "drop_uncertain")
       and ((armor and text:match("^odkladasz ")) or text == "odloz co?") then
-    cancel("timer"); job.remaining, job.phase=job.remaining-1, "search"
+    if text=="odloz co?" then
+      if (job.bagged or 0)>0 then cancel("timer"); job.phase="search"
+      else cargoWait(job,"Brak potwierdzenia odlozenia pancerza.") end
+    elseif amount then cancel("timer"); job.remaining,job.phase=math.max(0,job.remaining-amount),"search"
+    else cargoWait(job,"Nieznana liczba odlozonych pancerzy.") end
   else return end
   A.queue()
 end
@@ -320,6 +381,9 @@ function G.resume()
       or job.phase == "search_uncertain" or job.phase == "drop_uncertain" then
     -- Nie powtarzamy niepotwierdzonego odlozenia: kolejny pancerz musi
     -- przejsc nowe przeszukanie nawet po zerwaniu polaczenia.
+    job.phase="search"
+  elseif job.phase == "bag_open" or job.phase == "bag_take" or job.phase == "bag_wait"
+      or job.phase == "cargo_uncertain" then
     job.phase="search"
   end
   if A.room() == tonumber(K.config.startRoom) and job.phase ~= "battle" then
@@ -337,14 +401,20 @@ function G.status()
   local labels={battle="walka",settle="zbieranie",collect="zbieranie",pickup="zbieranie",
     return_requested="powrot",["return"]="powrot",search="przeszukiwanie",search_wait="przeszukiwanie",
     drop="odkladanie",drop_wait="odkladanie",done="odpoczynek",
+    bag_open="otwieranie plecaka",bag_take="wyjmowanie pancerzy",bag_wait="wyjmowanie pancerzy",
+    cargo_uncertain="brak potwierdzenia pancerzy",
     search_uncertain="brak potwierdzenia przeszukania",drop_uncertain="brak potwierdzenia odlozenia"}
   return string.format("roznica HP %d pp; %s", K.config.golemHpGap,
-    G.job and ((labels[G.job.phase] or "oczekiwanie") .. ", pancerze " .. G.job.picked) or "gotowy")
+    G.job and ((labels[G.job.phase] or "oczekiwanie") .. ", pozostalo " .. G.job.remaining
+      .. ", w plecaku " .. (G.job.bagged or 0)) or "gotowy")
 end
 function G.command(rest)
   local action, value = A.normal(rest):match("^(%S*)%s*(.-)$")
   if action == "on" or action == "off" then
     local wanted = action == "on"
+    if K.config.golemsEnabled == wanted then
+      A.note("Golemy: " .. (wanted and G.status() or "wylaczone"),"cyan"); return
+    end
     if K.config.golemsEnabled ~= wanted and K.enabled then K.stop("Zmiana trybu golemow. Uruchom ponownie /kozojeb start.") end
     G.reset()
     K.config.golemsEnabled=wanted
@@ -363,6 +433,6 @@ function G.command(rest)
   else A.note("Uzycie: /kozojeb golemy on|off|status|roznicahp <5-30>.", "yellow") end
 end
 K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
-  "^(?:Bierzesz .*pancerz.*|Wez co\\?|Przestajesz przeszukiwac .*pancerz.*|Przeszukaj co\\?|Odkladasz .*pancerz.*|Odloz co\\?)$",
+  "^(?:Bierzesz .*pancerz.*|Wkladasz .*pancerz.*plecaka\\.|Wez co\\?|Przestajesz przeszukiwac .*pancerz.*|Przeszukaj co\\?|Odkladasz .*pancerz.*|Odloz co\\?)$",
   [[kozojeb.G.onText(matches[1])]])
 end

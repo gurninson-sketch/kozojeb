@@ -1,5 +1,13 @@
 # Zmiany
 
+## 2.9.12
+
+- Hotfix „podniesione cztery, przeszukane trzy”: potwierdzenie podniesienia jest liczone również w krótkiej fazie po ostatnim zabiciu i podczas powrotu. Licznik zebranego ładunku nie jest już obcinany do początkowej liczby NPC. Późniejszy odbiór pancerza w bazie rozszerza trwający cykl.
+- Rozpoznawanie liczby sztuk w odpowiedziach podniesienia, wyjęcia z plecaka i odłożenia. Przenoszenie znanych pancerzy między plecakiem i ekwipunkiem nie podwaja ładunku. Nieznana liczba nie jest zgadywana jako jedna sztuka.
+- Potwierdzone wkładanie pancerzy do plecaka jest zapamiętywane. Prowadzący w bazie otwiera plecak i wyjmuje pancerze przed kolejnym przeszukaniem. Brak potwierdzenia blokuje patrol z podaną przyczyną, bez powtarzania komend. Rozłączenie zachowuje ten etap. Dodatkowy stary trigger nadal zaleca się wyłączyć.
+- Ujemna odpowiedź przeszukiwania przy niepustym liczniku oraz `Odloz co?` nie zmniejszają ładunku ani nie oznaczają jego zakończenia. Powrót po ewakuacji zachowuje nieobsłużone pancerze. Panel pokazuje liczbę pozostałą i schowaną w plecaku; ponowne `golemy on` nie kasuje aktywnego cyklu.
+- 14 nowych symulacji obejmuje czwarty pancerz w fazie kończenia walki, opóźnione podniesienie, podniesienie wielu sztuk, trzy pancerze w plecaku, większy ładunek, brakujące potwierdzenia, rozłączenie podczas wyjmowania, powtórne włączenie trybu i zachowanie ładunku po leczeniu. Łącznie 467 symulacji bota i 30 aktualizatora, wzorce rzeczywistych odpowiedzi, SHA-256 oraz integralność i powtarzalność paczki.
+
 ## 2.9.11
 
 - Opcjonalny tryb `/kozojeb golemy on|off|status`, domyślnie wyłączony. Celowane zasłony `zaslon <osobe> przed pierwszym|drugim|trzecim|czwartym golemem` rozdzielają różne NPC między obrońców już na początku walki. Plan opiera się na bieżących ID i lokalnej kolejności żywych golemów, bez komunikacji między profilami. Czysty pokój z najwyżej czterema golemami i wystarczającą drużyną otrzymuje lokalny wyjątek od zwykłego limitu celów; globalny limit pozostaje zapisany bez zmian.

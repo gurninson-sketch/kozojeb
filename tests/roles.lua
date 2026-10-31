@@ -4616,7 +4616,7 @@ local function golemRelations(owners)
   for i, id in ipairs(owners) do relations[#relations+1]={attacker="N"..i,defender=id} end
   gmcp.Chimera.Combat.State.relations=relations
 end
-local function golemCycle()
+local function golemCycle(beforeClear,afterClear)
   golemSetup("L","prowadzacy")
   local list=gmcp.Chimera.Room.Entities.entities
   local enemies={list[5],list[6],list[7],list[8]}
@@ -4629,20 +4629,26 @@ local function golemCycle()
   gmcp.Chimera.Combat.State.primary="N1"
   event();event("gmcp.Chimera.Combat.State")
   assert(kozojeb.G.job and kozojeb.G.job.hadCombat)
+  if beforeClear then beforeClear() end
   for _, npc in ipairs(enemies) do npc.hp=0 end
   gmcp.Chimera.Combat.State={primary="",relations={}}
-  event();event("gmcp.Chimera.Combat.State");advance(.6)
-  assert(count("wez pancerz")==1 and kozojeb.G.job.phase=="pickup")
+  event()
+  if afterClear then afterClear() end
+  event("gmcp.Chimera.Combat.State");advance(.6)
+  if not afterClear then assert(count("wez pancerz")==1 and kozojeb.G.job.phase=="pickup") end
 end
 local function pickup()
   kozojeb.G.onText("Bierzesz powyginany pancerz plytowy.");advance(.13)
 end
-local function cargoAtBase()
-  golemCycle()
-  for i=1,4 do pickup() end
+local function arriveWithCargo()
   assert(kozojeb.mode=="escape" and aliases[#aliases]=="/idz 1322")
   room=1322;kozojeb.onRoomChanged("gmcp.Room.Info")
   event();event("gmcp.Chimera.Combat.State");advance(.3)
+end
+local function cargoAtBase()
+  golemCycle()
+  for i=1,4 do pickup() end
+  arriveWithCargo()
   assert(kozojeb.mode=="heal_rest" and count("przeszukaj pancerz")==1)
 end
 local function finishArmor()
@@ -4863,6 +4869,101 @@ test("timed out search accepts its late completion without an unsafe retry", fun
   cargoAtBase();advance(46)
   kozojeb.G.onText("Przestajesz przeszukiwac powyginany pancerz plytowy.");advance(.13)
   assert(count("przeszukaj pancerz")==1 and count("odloz pancerz")==1)
+end)
+
+test("the fourth armor arriving in the post kill settle phase is counted and processed", function()
+  golemCycle(function()
+    for i=1,3 do pickup() end
+  end,function()
+    assert(kozojeb.G.job.phase=="settle")
+    kozojeb.G.onText("Bierzesz powyginany pancerz plytowy.")
+  end)
+  assert(kozojeb.G.job.picked==4 and count("wez pancerz")==0)
+  arriveWithCargo()
+  assert(kozojeb.G.job.remaining==4)
+  for i=1,3 do finishArmor() end
+  assert(kozojeb.G.busy() and kozojeb.G.job.remaining==1 and count("odloz pancerz")==3)
+  finishArmor()
+  assert(count("przeszukaj pancerz")==4 and count("odloz pancerz")==4 and not kozojeb.G.busy())
+end)
+test("a late fourth pickup during the return extends cargo without an initial count cap", function()
+  golemCycle();for i=1,4 do pickup() end
+  kozojeb.G.job.expected=3
+  kozojeb.G.onText("Bierzesz powyginany pancerz plytowy.")
+  arriveWithCargo()
+  assert(kozojeb.G.job.remaining==5)
+end)
+test("a plural ground pickup records the actual number of armors", function()
+  golemCycle();kozojeb.G.onText("Bierzesz cztery powyginane pancerze plytowe.");advance(.13)
+  arriveWithCargo()
+  assert(kozojeb.G.job.remaining==4 and count("wez pancerz")==1)
+end)
+test("the logged three stashed armors are retrieved before all four are searched", function()
+  golemCycle(function()
+    for i=1,3 do
+      pickup();kozojeb.G.onText("Wkladasz powyginany pancerz plytowy do otwartego skorzanego plecaka.")
+    end
+  end,function() kozojeb.G.onText("Bierzesz powyginany pancerz plytowy.") end)
+  arriveWithCargo()
+  assert(count("otworz swoj plecak")==1 and count("przeszukaj pancerz")==0)
+  advance(.5)
+  assert(count("wez pancerze z plecaka")==1 and count("przeszukaj pancerz")==0)
+  kozojeb.G.onText("Bierzesz trzy powyginane pancerze plytowe z otwartego skorzanego plecaka.");advance(.13)
+  assert(kozojeb.G.job.remaining==4 and kozojeb.G.job.bagged==0)
+  for i=1,4 do finishArmor() end
+  assert(count("przeszukaj pancerz")==4 and count("odloz pancerz")==4 and not kozojeb.G.busy())
+end)
+test("previously untracked plural cargo extends the active base cycle past four", function()
+  cargoAtBase()
+  kozojeb.G.onText("Bierzesz trzy powyginane pancerze plytowe z otwartego skorzanego plecaka.");advance(.13)
+  assert(kozojeb.G.job.remaining==7)
+  for i=1,7 do finishArmor() end
+  assert(count("przeszukaj pancerz")==7 and count("odloz pancerz")==7 and not kozojeb.G.busy())
+end)
+test("an empty search cannot finish the cycle while confirmed armors remain in the backpack", function()
+  cargoAtBase();kozojeb.G.onText("Wkladasz trzy powyginane pancerze plytowe do otwartego skorzanego plecaka.")
+  kozojeb.G.onText("Przeszukaj co?");advance(.6)
+  assert(kozojeb.G.busy() and count("wez pancerze z plecaka")==1 and count("odloz pancerz")==0)
+end)
+test("a failed backpack retrieval holds the cargo without resuming patrol or command spam", function()
+  cargoAtBase();kozojeb.G.onText("Wkladasz trzy powyginane pancerze plytowe do otwartego skorzanego plecaka.")
+  kozojeb.G.onText("Przeszukaj co?");advance(20)
+  assert(kozojeb.enabled and kozojeb.mode=="heal_rest" and kozojeb.G.busy())
+  assert(count("wez pancerze z plecaka")==1 and count("odloz pancerz")==0)
+end)
+test("disconnect during backpack retrieval resumes it automatically at base", function()
+  cargoAtBase();kozojeb.G.onText("Wkladasz trzy powyginane pancerze plytowe do otwartego skorzanego plecaka.")
+  kozojeb.G.onText("Przeszukaj co?");advance(.6)
+  kozojeb.onSessionEvent("sysDisconnectionEvent");reconnectPackets();advance(1)
+  assert(kozojeb.enabled and count("wez pancerze z plecaka")==2 and kozojeb.G.busy())
+end)
+test("repeating mode on preserves the in progress armor counter and pending operation", function()
+  cargoAtBase();local job,timer=kozojeb.G.job,kozojeb.G.timer
+  kozojeb.command("golemy on")
+  assert(kozojeb.G.job==job and kozojeb.G.timer==timer and job.remaining==4 and kozojeb.G.busy())
+end)
+test("unrelated armor storage cannot alter the golem cargo", function()
+  cargoAtBase();kozojeb.G.onText("Wkladasz stalowy pancerz do otwartego skorzanego plecaka.")
+  assert(kozojeb.G.job.remaining==4 and kozojeb.G.job.bagged==0 and kozojeb.G.job.phase=="search_wait")
+end)
+test("unknown plural cargo is held for confirmation without guessing a single armor", function()
+  cargoAtBase();kozojeb.G.onText("Bierzesz wiele powyginanych pancerzy plytowych z otwartego skorzanego plecaka.")
+  advance(4)
+  assert(kozojeb.G.busy() and kozojeb.G.job.phase=="cargo_uncertain" and count("odloz pancerz")==0)
+end)
+
+test("an empty drop response never decrements the confirmed armor cargo", function()
+  cargoAtBase();kozojeb.G.onText("Przestajesz przeszukiwac powyginany pancerz plytowy.");advance(.13)
+  kozojeb.G.onText("Odloz co?");advance(4)
+  assert(kozojeb.G.job.remaining==4 and kozojeb.G.busy() and count("odloz pancerz")==1)
+end)
+test("a missing armor response cannot silently complete a nonempty cargo counter", function()
+  cargoAtBase();kozojeb.G.onText("Przeszukaj co?");advance(4)
+  assert(kozojeb.G.job.remaining==4 and kozojeb.G.busy() and kozojeb.mode=="heal_rest")
+end)
+test("a recovery restart at base retains unfinished cargo before allowing patrol", function()
+  cargoAtBase();kozojeb.start(true);advance(4)
+  assert(kozojeb.G.job.remaining==4 and kozojeb.G.busy() and kozojeb.mode=="heal_rest")
 end)
 
 print(string.format("%d simulations passed", total))
