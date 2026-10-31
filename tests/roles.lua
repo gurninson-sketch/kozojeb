@@ -3790,4 +3790,279 @@ test("a critical patient's full HP requirement remains active on the return rout
   output={};kozojeb.status();assert(table.concat(output):find("Morrid: 99.0%% / 100%% HP"))
 end)
 
+local function crowdedPatrol(countNpc, aggression, startNow)
+  setupLeader()
+  local e=gmcp.Chimera.Room.Entities.entities
+  e[4]=nil
+  for i=1,countNpc do
+    e[#e+1]={id=i==1 and "N" or "N"..i,name="Maly snotling",kind="npc",hp=100,maxhp=100}
+  end
+  gmcp.Chimera.Combat.State={primary=aggression==true and "N" or "",relations={}}
+  if aggression then gmcp.Chimera.Combat.State.relations={{attacker="N",defender=aggression=="team" and "M" or "S"}} end
+  kozojeb.command("maxstworow 3");kozojeb.command("pustypatrol 0")
+  kozojeb.setRooms({1322,1323,1324,1325,1326})
+  if startNow~=false then kozojeb.start() end
+end
+
+test("a crowded room is skipped even when its NPC attacks before the first inspection", function()
+  crowdedPatrol(7,true);assert(kozojeb.limitRoom and kozojeb.mode=="patrol")
+  advance(.21)
+  assert(count("e")==1 and count("zabij snotlinga")==0 and not kozojeb.currentTargetName)
+end)
+
+test("late aggression cannot cancel an already scheduled crowded room exit", function()
+  crowdedPatrol(7,false)
+  local timer=kozojeb.moveTimer
+  gmcp.Chimera.Combat.State={primary="N",relations={{attacker="N",defender="S"}}}
+  event("gmcp.Chimera.Combat.State")
+  assert(kozojeb.moveTimer==timer and kozojeb.mode=="patrol")
+  advance(.09);assert(count("e")==1 and count("zabij snotlinga")==0)
+end)
+
+test("NPC aggression against only a teammate still cannot stop a crowded room exit", function()
+  crowdedPatrol(7,"team");advance(.21)
+  assert(count("e")==1 and kozojeb.limitRoom and #aliases==0)
+end)
+
+test("automatic outgoing retaliation does not override the crowded room limit", function()
+  crowdedPatrol(7,true,false)
+  table.insert(gmcp.Chimera.Combat.State.relations,{attacker="S",defender="N"})
+  kozojeb.start();advance(.21)
+  assert(count("e")==1 and count("zabij snotlinga")==0)
+end)
+
+test("a late crowded snapshot replaces a slow patrol step with the short exit delay", function()
+  crowdedPatrol(0,false);kozojeb.command("predkosc 1.5")
+  for i=1,7 do table.insert(gmcp.Chimera.Room.Entities.entities,
+    {id="Z"..i,name="Maly snotling",kind="npc",hp=100,maxhp=100}) end
+  event();advance(.21)
+  assert(count("e")==1 and kozojeb.limitRoom)
+end)
+
+test("a decrease below the limit does not reverse a pending decision to skip the room", function()
+  crowdedPatrol(7,true)
+  local e=gmcp.Chimera.Room.Entities.entities
+  while #e>4 do table.remove(e) end
+  event();advance(.09)
+  assert(count("e")==1 and count("zabij snotlinga")==0 and kozojeb.limitRoom)
+end)
+
+test("flee announcements and directions cannot turn a skipped room into a pursuit", function()
+  crowdedPatrol(7,true)
+  kozojeb.onFleeAnnounced("Maly snotling");kozojeb.onFleeDirection("north")
+  kozojeb.onFlee("Maly snotling","north");advance(.21)
+  assert(count("e")==1 and count("n")==0 and not kozojeb.pendingFleeTimer and not kozojeb.pursuitOriginRoom)
+end)
+
+test("a fleeing NPC before the queued room inspection cannot bypass the limit", function()
+  crowdedPatrol(0,false)
+  local e=gmcp.Chimera.Room.Entities.entities
+  for i=1,7 do e[#e+1]={id="N"..i,name="Maly snotling",kind="npc",hp=100,maxhp=100} end
+  kozojeb.onGmcp("gmcp.Chimera.Room.Entities")
+  kozojeb.onFleeAnnounced("Maly snotling");kozojeb.onFleeDirection("north")
+  assert(kozojeb.mode=="patrol" and not kozojeb.pursuitOriginRoom)
+  advance(.34);assert(count("e")==1 and count("n")==0)
+end)
+
+test("a death notification cannot replace a crowded room exit with a kill pause", function()
+  crowdedPatrol(7,true);kozojeb.onKill("Maly snotling",true);advance(.21)
+  assert(count("e")==1 and kozojeb.mode=="patrol" and not kozojeb.killTimer)
+end)
+
+test("a pending crowded room step cannot be repeated by bursts of combat packets", function()
+  crowdedPatrol(7,true);advance(.21)
+  local pending=kozojeb.moveTimer
+  for i=1,2000 do kozojeb.onGmcp("gmcp.Chimera.Combat.State") end
+  advance(.13)
+  assert(count("e")==1 and kozojeb.moveTimer==pending and kozojeb.roomChangePending)
+end)
+
+test("the same room info is not an acknowledgement permitting a second crowded room step", function()
+  crowdedPatrol(7,true);advance(.21)
+  local pending=kozojeb.moveTimer
+  kozojeb.onRoomChanged("gmcp.Room.Info");event();advance(.3)
+  assert(count("e")==1 and kozojeb.roomChangePending and kozojeb.moveTimer==pending)
+end)
+
+test("a confirmed new room clears the skip and waits for its fresh entities", function()
+  crowdedPatrol(7,true);advance(.21)
+  room=1323;kozojeb.onRoomChanged("gmcp.Room.Info");advance(.13)
+  assert(not kozojeb.limitRoom and not kozojeb.entitiesReady and count("zabij snotlinga")==0)
+  local e=gmcp.Chimera.Room.Entities.entities
+  while #e>3 do table.remove(e) end
+  e[4]={id="Z",name="Samotny snotling",kind="npc",hp=100,maxhp=100}
+  gmcp.Chimera.Combat.State={primary="",relations={}}
+  event();assert(kozojeb.mode=="combat" and kozojeb.currentTargetId=="Z" and count("zabij snotlinga")==1)
+end)
+
+test("an unacknowledged crowded room step triggers the existing collective retreat only once", function()
+  crowdedPatrol(7,true);kozojeb.command("startpokoj 1324")
+  advance(.21);advance(12.01)
+  assert(count("e")==1 and #aliases==1 and aliases[1]=="/idz 1324")
+  assert(kozojeb.mode=="escape" and not kozojeb.limitRoom)
+end)
+
+test("a late movement acknowledgement after the timeout cannot restart the old patrol exit", function()
+  crowdedPatrol(7,true);kozojeb.command("startpokoj 1324")
+  advance(12.3);room=1323;kozojeb.onRoomChanged("gmcp.Room.Info");event();advance(.3)
+  assert(kozojeb.mode=="escape" and count("e")==1 and count("zabij snotlinga")==0)
+end)
+
+test("a rejected crowded room exit is excluded and an alternative mapped exit is tried", function()
+  local original=getRoomExits
+  getRoomExits=function(id) return id==1322 and {east=1323,north=1324} or {west=1322} end
+  crowdedPatrol(7,true);advance(.21)
+  local first=sends[#sends]
+  kozojeb.onMoveRejected();advance(.34)
+  assert(#sends==2 and sends[2]~=first and kozojeb.limitRoom.attempts==2)
+  assert(kozojeb.failedExits[1322][first]);getRoomExits=original
+end)
+
+test("three rejected crowded room exits hand control to collective retreat", function()
+  local original=getRoomExits
+  getRoomExits=function(id) return id==1322 and {east=1323,north=1324,south=1325,west=1326} or {west=1322} end
+  crowdedPatrol(7,true);kozojeb.command("startpokoj 1326");advance(.21)
+  for i=1,3 do kozojeb.onMoveRejected();advance(.34) end
+  assert(#sends==3 and #aliases==1 and aliases[1]=="/idz 1326")
+  assert(kozojeb.mode=="escape" and not kozojeb.limitRoom);getRoomExits=original
+end)
+
+test("an attacked crowded room without a patrol route uses the existing emergency protection", function()
+  local original=getRoomExits
+  getRoomExits=function() return {} end
+  crowdedPatrol(7,true,false);kozojeb.setRooms({1322});kozojeb.start();advance(10)
+  assert(kozojeb.mode=="escape" and kozojeb.recoveryEmergency.blocked and #sends==0 and not kozojeb.limitRoom)
+  getRoomExits=original
+end)
+
+test("a peaceful crowded single room waits without direction spam or a fast polling loop", function()
+  local original=getRoomExits
+  getRoomExits=function() return {} end
+  crowdedPatrol(7,false,false);kozojeb.setRooms({1322});kozojeb.start()
+  local before=serial;advance(5)
+  assert(#sends==0 and #aliases==0 and serial-before<=6 and kozojeb.mode=="patrol")
+  getRoomExits=original
+end)
+
+test("a fatigue refusal does not consume the crowded room direction budget or mark the exit invalid", function()
+  crowdedPatrol(7,false);advance(.21);kozojeb.onMovementExhausted()
+  assert(kozojeb.movementRest and kozojeb.limitRoom.attempts==0 and not kozojeb.failedExits[1322])
+  advance(1);assert(count("e")==1 and not kozojeb.moveTimer)
+  gmcp.Char.Vitals.fatigue=45;event("gmcp.Char.Vitals");advance(10.3)
+  assert(count("e")==2 and kozojeb.limitRoom.attempts==1)
+end)
+
+test("critical own HP overrides a pending crowded room exit", function()
+  crowdedPatrol(7,true);kozojeb.command("startpokoj 1324")
+  gmcp.Char.Vitals.hp=40;gmcp.Chimera.Room.Entities.entities[1].hp=40
+  event("gmcp.Char.Vitals");advance(.3)
+  assert(kozojeb.mode=="escape" and not kozojeb.limitRoom and count("e")==0 and aliases[1]=="/idz 1324")
+end)
+
+test("critical teammate HP overrides a pending crowded room exit", function()
+  crowdedPatrol(7,"team");kozojeb.command("startpokoj 1324")
+  gmcp.Chimera.Room.Entities.entities[3].hp=40;event();advance(.3)
+  assert(kozojeb.mode=="escape" and not kozojeb.limitRoom and count("e")==0 and aliases[1]=="/idz 1324")
+end)
+
+test("safe shielding remains available while the leader prepares the crowded room exit", function()
+  crowdedPatrol(7,"team",false)
+  gmcp.Chimera.Room.Entities.entities[3].hp=69
+  kozojeb.start();advance(.21)
+  assert(count("zaslon morrida")==1 and count("e")==1 and #aliases==0)
+end)
+
+test("reaching exactly the target limit still permits normal combat", function()
+  crowdedPatrol(3,true);advance(.3)
+  assert(kozojeb.mode=="combat" and not kozojeb.limitRoom and count("e")==0)
+end)
+
+test("disabled creature limits retain ordinary combat despite a large crowd", function()
+  crowdedPatrol(7,true,false);kozojeb.command("maxstworow 0");kozojeb.start();advance(.3)
+  assert(kozojeb.mode=="combat" and not kozojeb.limitRoom and count("e")==0)
+end)
+
+test("a deliberate limit change before sending the exit triggers a fresh decision", function()
+  crowdedPatrol(7,true);kozojeb.command("maxstworow 0");advance(.4)
+  assert(kozojeb.mode=="combat" and not kozojeb.limitRoom and count("e")==0)
+end)
+
+test("a limit change cannot cancel a direction already awaiting acknowledgement", function()
+  crowdedPatrol(7,true);advance(.21);kozojeb.command("maxstworow 0");event();advance(.3)
+  assert(count("e")==1 and kozojeb.limitRoom and kozojeb.roomChangePending)
+end)
+
+test("the existing chosen fight and pursuit remain independent of the patrol limit", function()
+  crowdedPatrol(1,true)
+  local e=gmcp.Chimera.Room.Entities.entities
+  for i=2,7 do e[#e+1]={id="N"..i,name="Drugi snotling",kind="npc",hp=100,maxhp=100} end
+  event();assert(kozojeb.mode=="combat" and not kozojeb.limitRoom)
+  kozojeb.onFlee("Maly snotling","east");advance(.21)
+  assert(kozojeb.mode=="chase" and count("e")==1 and not kozojeb.limitRoom)
+end)
+
+test("the complete configured kill pause is retained before skipping a remaining crowd", function()
+  crowdedPatrol(1,true);kozojeb.onKill("Maly snotling",true)
+  local e=gmcp.Chimera.Room.Entities.entities
+  for i=2,7 do e[#e+1]={id="N"..i,name="Drugi snotling",kind="npc",hp=100,maxhp=100} end
+  event();advance(.3)
+  assert(kozojeb.mode=="kill_pause" and not kozojeb.limitRoom and count("e")==0)
+  advance(5);assert(kozojeb.limitRoom and count("e")==1)
+end)
+
+test("unselected NPCs are excluded from the configured selected target limit", function()
+  crowdedPatrol(3,true,false)
+  table.insert(gmcp.Chimera.Room.Entities.entities,{id="W",name="Maly wilk",kind="npc",hp=100,maxhp=100})
+  kozojeb.start();assert(kozojeb.mode=="combat" and not kozojeb.limitRoom)
+end)
+
+test("including other NPCs in the limit also applies when they attack automatically", function()
+  crowdedPatrol(3,true,false);kozojeb.command("ignoruj pozostale off")
+  table.insert(gmcp.Chimera.Room.Entities.entities,{id="W",name="Maly wilk",kind="npc",hp=100,maxhp=100})
+  kozojeb.start();advance(.21);assert(count("e")==1 and kozojeb.limitRoom)
+end)
+
+test("dead NPCs players and ignored names cannot falsely raise the creature count", function()
+  crowdedPatrol(3,true,false)
+  local e=gmcp.Chimera.Room.Entities.entities
+  e[#e+1]={id="D",name="Martwy snotling",kind="npc",hp=0,maxhp=100}
+  e[#e+1]={id="P",name="Snotling",kind="player",hp=100,maxhp=100}
+  e[#e+1]={id="I",name="Stary szaman snotling",kind="npc",hp=100,maxhp=100}
+  kozojeb.command("ignoruj dodaj szaman");kozojeb.start()
+  assert(kozojeb.mode=="combat" and not kozojeb.limitRoom and kozojeb.creatureCountCache.count==3)
+end)
+
+test("combat packet bursts reuse the creature count and one scheduled exit", function()
+  crowdedPatrol(7,true)
+  local cached,pending,before=kozojeb.creatureCountCache,kozojeb.moveTimer,serial
+  for i=1,2000 do kozojeb.onGmcp("gmcp.Chimera.Combat.State") end
+  advance(.13)
+  assert(kozojeb.creatureCountCache==cached and kozojeb.moveTimer==pending and serial-before<=1)
+end)
+
+test("manual stop role change and death cancel the skip and its movement timeout", function()
+  for _, action in ipairs({"stop","rola wsparcie","death"}) do
+    crowdedPatrol(7,true);advance(.21)
+    if action=="death" then kozojeb.onDeath() else kozojeb.command(action) end
+    advance(30);assert(not kozojeb.enabled and not kozojeb.limitRoom and count("e")==1 and #aliases==0)
+  end
+end)
+
+test("a disconnect cancels the skip and fresh login resumes without stale movement", function()
+  crowdedPatrol(7,true);kozojeb.onSessionEvent("sysDisconnectionEvent");advance(20)
+  assert(count("e")==0 and not kozojeb.limitRoom)
+  kozojeb.onSessionEvent("sysConnectionEvent");reconnectPackets();advance(.8)
+  assert(kozojeb.enabled and kozojeb.limitRoom and count("e")==1 and count("zabij snotlinga")==0)
+end)
+
+test("neither supporting role starts its own crowded room exit or retreat", function()
+  for _, role in ipairs({"wsparcie","zaslony"}) do
+    reset(role)
+    local e=gmcp.Chimera.Room.Entities.entities
+    for i=2,7 do e[#e+1]={id="N"..i,name="Drugi snotling",kind="npc",hp=100,maxhp=100} end
+    kozojeb.command("maxstworow 3");kozojeb.start();event();advance(15)
+    noMovement();assert(not kozojeb.limitRoom and #aliases==0)
+  end
+end)
+
 print(string.format("%d simulations passed", total))

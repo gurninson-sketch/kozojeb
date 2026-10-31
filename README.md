@@ -1,4 +1,4 @@
-# Chimera Kozojeb 2.9.7
+# Chimera Kozojeb 2.9.8
 
 [Pobierz najnowszą paczkę](https://github.com/gurninson-sketch/kozojeb/releases/latest/download/Chimera_Kozojeb.mpackage) · [Wydania](https://github.com/gurninson-sketch/kozojeb/releases)
 
@@ -55,7 +55,13 @@ Przykładowe ustawienia:
 /kozojeb odpoczynek 25 55
 ```
 
-Limit stworów dotyczy rozpoczynania nowego ataku. Agresywny NPC może rozpocząć walkę niezależnie od tego limitu. `/kozojeb baza` zmienia bazę na bieżący pokój, ale kolejne `/kozojeb start` ponownie ustawia ją w miejscu uruchomienia.
+Limit stworów dotyczy nowych spotkań podczas patrolu. Od **2.9.8** przekroczenie limitu zachowuje decyzję o szybkim wyjściu również wtedy, gdy NPC sam zaatakuje prowadzącego lub kolegę, zanim drużyna zdąży odejść. Przykład: przy `/kozojeb maxstworow 3` pokój z 7 liczonymi NPC jest pomijany mimo ich agresji. Sam limit nie zapobiega atakom gry ani obrażeniom podczas wychodzenia. Zero wyłącza limit; dokładnie 3 cele przy limicie 3 dopuszczają normalną walkę.
+
+Do limitu wliczani są żywi NPC zgodnie z listą celów i ustawieniem `ignoruj pozostale`. Gracze, martwi NPC i nazwy z listy ignorowanych nie zawyżają licznika. Decyzja o opuszczeniu pokoju obowiązuje do potwierdzenia przejścia, nawet jeśli część NPC ucieknie lub zginie. W tym czasie bot nie rozpoczyna nowego ataku, pościgu ani pauzy po przypadkowej śmierci przeciwnika. Zasłony, pilny odwrót z powodu HP, kontrola ruchu oraz zbieranie drużyny pozostają aktywne. Wspierający nadal poruszają się wyłącznie za prowadzącym.
+
+Wyjście korzysta z istniejącej trasy patrolu i krótkiego odstępu, domyślnie najwyżej 0,2 s. Jeden krok czeka na potwierdzenie zmiany pokoju; kolejny atak lub powtórzony opis tego samego pokoju nie zwalnia tego oczekiwania. Po rzeczywistym przejściu nowa walka wymaga świeżej listy encji. Odrzucony kierunek jest pomijany, odmowa z powodu zmęczenia wymaga odpoczynku i nie oznacza błędu wyjścia. Przy trwającym ataku brak drogi lub wyczerpanie trzech domyślnych prób przekazuje sterowanie wspólnemu odwrotowi; brak potwierdzenia kroku przez domyślne 12 s również uruchamia procedurę odwrotu. Czasy i budżet korzystają z dotychczasowych ustawień. Nie są wysyłane serie kierunków bez oczekiwania na wynik.
+
+Limit nie przerywa wcześniej wybranej walki, trwającego pościgu ani pełnej skonfigurowanej pauzy po zabiciu. Ręczna zmiana limitu przed wysłaniem ruchu powoduje ponowną ocenę; nie anuluje już wysłanego kierunku. `/kozojeb baza` zmienia bazę na bieżący pokój, ale kolejne `/kozojeb start` ponownie ustawia ją w miejscu uruchomienia.
 
 ## Zasłony i HP
 
@@ -132,7 +138,7 @@ Niepoprawna forma odrzucona przez grę jest blokowana do poprawienia.
 
 ## Aktualizacje z GitHuba
 
-Jeśli masz już Kozojeba 2.8.1–2.9.6, wykonaj na **każdym profilu**:
+Jeśli masz już Kozojeba 2.8.1–2.9.7, wykonaj na **każdym profilu**:
 
 ```text
 /kozojeb stop
@@ -141,7 +147,7 @@ Jeśli masz już Kozojeba 2.8.1–2.9.6, wykonaj na **każdym profilu**:
 /kozojeb aktualizuj
 ```
 
-Poczekaj na zakończenie walki i ruchu oraz komunikat `Zainstalowano 2.9.7`. Sprawdź `/kozojeb status`; powinien pokazać wersję **2.9.7**. Następnie uruchom `/kozojeb start` — najpierw na wspierających, potem na prowadzącym. To jednorazowy start po aktualizacji; późniejsze rozłączenia nie wymagają ręcznego wznowienia. Nie trzeba usuwać ani ręcznie instalować paczki; dotychczasowe ustawienia profili pozostają zachowane. Można przejść bezpośrednio z 2.9.2 do 2.9.7. Profile już ustawione na `zaslony` korzystają z ochrony całej drużyny; rola `wsparcie` pozostaje drugą linią. Nowy próg regeneracji wynosi domyślnie 95%; można go zmienić na prowadzącym przez `/kozojeb powrothp 95`.
+Poczekaj na zakończenie walki i ruchu oraz komunikat `Zainstalowano 2.9.8`. Sprawdź `/kozojeb status`; powinien pokazać wersję **2.9.8**. Następnie uruchom `/kozojeb start` — najpierw na wspierających, potem na prowadzącym. To jednorazowy start po aktualizacji; późniejsze rozłączenia nie wymagają ręcznego wznowienia. Nie trzeba usuwać ani ręcznie instalować paczki; dotychczasowe ustawienia profili pozostają zachowane. Można przejść bezpośrednio z 2.9.2 do 2.9.8. Profile już ustawione na `zaslony` korzystają z ochrony całej drużyny; rola `wsparcie` pozostaje drugą linią. Próg regeneracji wynosi domyślnie 95%; można go zmienić na prowadzącym przez `/kozojeb powrothp 95`. Poprawka pomijania zatłoczonych pokoi korzysta z aktualnego limitu `maxstworow` i nie wymaga nowej komendy.
 
 Przy paczce zbudowanej w tym repozytorium adres wydań jest wbudowany. W paczce przygotowanej bez adresu skonfiguruj na każdym profilu:
 
@@ -166,6 +172,8 @@ Konfiguracja — w tym obszar, cele, prędkości, progi, role i odmiany — pozo
 ## Wydajność i powtarzane komendy
 
 Kolejne zdarzenia GMCP współdzielą jeden oczekujący timer decyzji (zwykle 0,12 s). Krytyczny odczyt HP prowadzącego lub drużyny jest sprawdzany od razu, bez oczekiwania na tę kolejkę. Dane HP, indeks encji oraz relacje walki są obliczane raz dla aktualnego stanu i wykorzystywane ponownie. Aktualizacje walki i własnych parametrów nie przebudowują indeksu niezmienionej listy encji.
+
+Od 2.9.8 licznik NPC jest współdzielony między kontrolą limitu i wyborem celu. Aktualizacje walki bez zmiany encji nie przeliczają go ponownie. Pomijanie pokoju używa istniejącego timera ruchu do kroku i ograniczonego oczekiwania na jego wynik, bez nowej stałej pętli lub odpytywania gry. Przy spokojnym pokoju bez drogi ponowne sprawdzenie nie następuje częściej niż co sekundę.
 
 Kolejka zasłony ma jeden dodatkowy timer tylko podczas krótkiego oczekiwania, a ponowienia aktualizacji jeden tylko po błędzie pobierania. Nie dodają stałego odpytywania gry. Obserwacja wysyłania poleceń odrzuca inne komendy bez zapisywania ich treści; rozszerzona notatka pojawia się tylko przy rzeczywistym poleceniu zasłony.
 

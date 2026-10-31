@@ -1,5 +1,13 @@
 # Zmiany
 
+## 2.9.8
+
+- Nowe spotkanie podczas patrolu ponad limitem celów jest pomijane także po automatycznej agresji NPC. Przyjęcie walki nie anuluje kroku wyjścia; dotyczy również ataku wyłącznie na kolegę i automatycznej odpowiedzi prowadzącego.
+- Decyzja o pominięciu pozostaje do potwierdzenia zmiany pokoju. Ucieczka lub przypadkowa śmierć NPC nie uruchamia pościgu ani pauzy zatrzymującej wyjście. Zmniejszenie liczby przeciwników nie rozpoczyna nowego ataku w trakcie odchodzenia. Wcześniej wybrana walka, pościg i pełna pauza po zabiciu pozostają zachowane.
+- Jeden oczekujący krok, ponowione opisy tego samego pokoju nie odblokowują następnego. Obsługa odrzuconych wyjść, odmowy z powodu zmęczenia i ograniczonego oczekiwania na potwierdzenie. Brak trasy podczas ataku, wyczerpanie budżetu prób lub przekroczenie czasu przekazuje sterowanie dotychczasowej procedurze odwrotu. Zachowane pilne HP, zasłony, zbieranie drużyny, brak własnego ruchu wspierających i automatyczne wznowienie po rozłączeniu.
+- Licznik NPC jest buforowany dla niezmienionej listy encji i ustawień. Wyjście i jego potwierdzenie współdzielą istniejący timer ruchu; brak nowej stałej pętli, dodatkowych zapytań lub komunikacji między profilami. Panel i pomoc opisują pomijanie pokoju mimo agresji.
+- 35 nowych symulacji odtwarza 7 NPC przy limicie 3, atak przed oceną i przed ruchem, panikę NPC, spóźnione pakiety, odrzucone wyjścia, brak mapy i potwierdzenia, zmęczenie, krytyczne HP, zasłony, zachowanie pościgu i pauzy, filtry licznika, rozłączenie oraz serie 2000 zdarzeń.
+
 ## 2.9.7
 
 - Wspólny próg regeneracji całej drużyny, domyślnie 95% HP: `/kozojeb powrothp 95` na prowadzącym. Pełne HP pierwotnie wskazanego rannego nie pozwalają już wrócić z innym członkiem na 67%; niekrytyczne 99% jednej osoby nie blokuje gotowej drużyny. Ustawienie jest zapisywane; dotychczasowe role, zasłony, tempo i progi odwrotu pozostają zachowane.

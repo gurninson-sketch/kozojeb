@@ -15,7 +15,7 @@
 --   /kozojeb predkosc 0.7            - opoznienie ruchu podczas patrolu
 --   /kozojeb bezczynnosc 20 1322     - reset po zastoju do podanego pokoju
 --   /kozojeb cele snotling ork waz    - wybierz dowolne gatunki NPC do ataku
---   /kozojeb maxstworow 3             - nie zaczynaj ataku przy wiecej niz 3 NPC
+--   /kozojeb maxstworow 3             - pomijaj nowe pokoje patrolu z ponad 3 celami
 --   /kozojeb ignoruj wszystko         - ignoruj wszystkie NPC poza wybranymi celami
 --   /kozojeb ignoruj dodaj szaman     - zawsze ignoruj NPC z podana nazwa
 --   /kozojeb baza                    - ustaw baze/start w obecnym pokoju
@@ -54,7 +54,7 @@ end
 K.legacyImportTried = true
 K.initialized = false
 
-K.version = "2.9.7"
+K.version = "2.9.8"
 K.config = K.config or {
   chaseDelay = 0.20,
   patrolDelay = 0.70,
@@ -357,6 +357,7 @@ K.panicIndex = 1
 K.panicPhase = nil
 K.idleSteps = 0
 K.limitNoticeRoom = nil
+K.limitRoom, K.creatureCountCache = nil, nil
 K.focusRetryPending = false
 K.pendingFleeName = nil
 K.failedTargetIds = {}
@@ -515,6 +516,7 @@ local function invalidateState(health, eventName)
   K.dataRevision = K.dataRevision + 1
   if not eventName or eventName == "gmcp.Chimera.Room.Entities" then
     K.groupContextCache, K.entityIndexCache, K.combatCache = nil, nil, nil
+    K.creatureCountCache = nil
   elseif eventName == "gmcp.Chimera.Group.State" then
     K.groupContextCache = nil
   elseif eventName == "gmcp.Chimera.Combat.State" then
@@ -651,6 +653,7 @@ local function cancelAllTimers()
   K.supportLastTarget = nil
   K.shieldTurn, K.teamShieldNotices = nil, {}
   K.supportAttempt = nil
+  K.limitRoom = nil
   -- Gotowosc szyku opisuje stan w grze; stop/start lub zmiana roli jej
   -- nie odnawia. Osobny formationTimer dziala tez podczas pauzy bota.
 end
@@ -664,6 +667,7 @@ local function sendDirection(command, regroup)
   K.entitiesReady = false
   K.sentDirection = command
   send(command)
+  return true
 end
 
 local function later(name, seconds, callback)
@@ -1116,7 +1120,9 @@ local function hostileTarget()
   return nil
 end
 
-local function findTarget()
+local function roomCreatureCount()
+  local cached = K.creatureCountCache
+  if cached then return cached.count, cached.bull, cached.maleGoat end
   local bullPresent = false
   local maleGoatPresent = false
   local creatureCount = 0
@@ -1131,6 +1137,12 @@ local function findTarget()
       end
     end
   end
+  K.creatureCountCache = {count=creatureCount, bull=bullPresent, maleGoat=maleGoatPresent}
+  return creatureCount, bullPresent, maleGoatPresent
+end
+
+local function findTarget()
+  local creatureCount, bullPresent, maleGoatPresent = roomCreatureCount()
   for _, animal in ipairs(animalOrder) do
     if K.config.animals[animal] then
       for _, entity in ipairs(entities()) do
@@ -2908,6 +2920,29 @@ inspectRoom = function()
   -- celu ani aktualizacje GMCP nie moga skrocic tej pauzy.
   if K.mode == "kill_pause" then return end
 
+  -- Limit jest decyzja patrolu o opuszczeniu pokoju. Agresja serwera nie
+  -- moze jej zastapic przyjeciem walki ani anulowac oczekujacego kroku.
+  if K.mode == "patrol" and not K.currentTargetName and not K.pursuitOriginRoom then
+    local count = K.config.maxCreatures > 0 and roomCreatureCount() or 0
+    if K.limitRoom or (K.config.maxCreatures > 0 and count > K.config.maxCreatures) then
+      if not K.limitRoom then
+        K.limitRoom = {room=currentRoom(), count=count, attempts=0}
+        K.limitNoticeRoom = currentRoom()
+        clearTarget()
+        cancelTimer("pendingFleeTimer")
+        K.pendingFleeName = nil
+        -- Szybsze ominiecie ma pierwszenstwo przed wczesniej zaplanowanym
+        -- wolnym krokiem, takze po opoznionym pojawieniu sie listy NPC.
+        cancelTimer("moveTimer")
+        K.patrolMovePending = false
+        note(string.format("Pomijam pokoj: %d liczonych celow, limit %d. Agresja nie zatrzyma wyjscia.",
+          count, K.config.maxCreatures), "yellow")
+      end
+      patrolStep(math.min(K.config.patrolDelay, K.config.limitExitDelay))
+      return
+    end
+  end
+
   if K.recentTarget and (K.recentTarget.room ~= currentRoom() or now() - K.recentTarget.at > 3) then
     K.recentTarget = nil
   end
@@ -3009,6 +3044,11 @@ patrolStep = function(delayOverride)
   -- dopoki Chimera.Room.Entities nie potwierdzi, ze pokoj zostal sprawdzony.
   if not K.entitiesReady then return end
   if K.patrolMovePending then return end
+  local skipped = K.limitRoom
+  if skipped and skipped.attempts >= K.config.escapeMaxAttempts and recoveryThreat() then
+    K.escape("Nie udalo sie opuscic zatloczonego pokoju po " .. K.config.escapeMaxAttempts .. " probach.")
+    return
+  end
   local room = markCurrentRoom()
   if not room then
     K.stop("Nie potrafie odczytac biezacego pokoju mapy.")
@@ -3031,8 +3071,14 @@ patrolStep = function(delayOverride)
     K.routeIndex = 1
   end
   if not K.route or not K.route[K.routeIndex] then
+    if skipped and recoveryThreat() then
+      K.escape("Brak drogi patrolu z zatloczonego pokoju podczas ataku.")
+      return
+    end
     if #K.rooms == 1 and K.rooms[1] == room then
-      later("moveTimer", delayOverride or math.max(K.config.patrolDelay, K.emptyPatrolDelay), function()
+      local retryDelay = skipped and math.max(1, K.config.patrolDelay)
+        or delayOverride or math.max(K.config.patrolDelay, K.emptyPatrolDelay)
+      later("moveTimer", retryDelay, function()
         if K.enabled and K.mode == "patrol" then inspectRoom() end
       end)
       return
@@ -3066,7 +3112,23 @@ patrolStep = function(delayOverride)
   local delay = delayOverride or math.max(K.config.patrolDelay, K.emptyPatrolDelay)
   later("moveTimer", delay, function()
     if K.enabled and K.mode == "patrol" then
-      sendDirection(command)
+      if skipped then
+        if K.limitRoom ~= skipped or currentRoom() ~= room or not K.entitiesReady or K.roomChangePending then
+          K.patrolMovePending = false
+          return
+        end
+        if not safetyCheck() then K.patrolMovePending = false return end
+      end
+      if sendDirection(command) and skipped then
+        skipped.attempts = skipped.attempts + 1
+        -- Jeden oczekujacy krok. Brak potwierdzenia nie generuje kolejnych
+        -- kierunkow; po czasie przekazujemy ruch procedurze odwrotu /idz.
+        later("moveTimer", K.config.escapeRetryDelay, function()
+          if K.enabled and K.mode == "patrol" and K.limitRoom == skipped and K.roomChangePending then
+            K.escape("Brak potwierdzenia wyjscia z zatloczonego pokoju.")
+          end
+        end)
+      elseif skipped then K.patrolMovePending = false end
     else
       K.patrolMovePending = false
     end
@@ -3402,7 +3464,17 @@ function K.onRoomChanged(eventName)
   invalidateState(true)
   local previousRoom = K.lastRoom
   if eventName == "gmcp.Room.Info" then
+    if K.limitRoom and K.limitRoom.room == currentRoom() and K.roomChangePending then
+      -- Powtorzony opis tego samego pokoju nie potwierdza przejscia i nie
+      -- moze odblokowac drugiego kierunku przed wynikiem pierwszego.
+      K.sessionFresh.room = true
+      return
+    end
     local step = K.moveSnapshot
+    if K.limitRoom and K.limitRoom.room ~= currentRoom() then
+      cancelTimer("moveTimer")
+      K.limitRoom, K.limitNoticeRoom = nil, nil
+    end
     if step and step.from ~= currentRoom() then
       if not step.regroup and next(step.roster)
           and (step.mode == "patrol" or step.mode == "combat" or step.mode == "chase") then
@@ -3593,7 +3665,7 @@ function K.onGmcp(eventName)
 end
 
 function K.onFleeAnnounced(name)
-  if not K.enabled or isFollower() or K.mode == "leader_wait" then return end
+  if not K.enabled or isFollower() or K.mode == "leader_wait" or K.limitRoom then return end
   cancelTimer("targetLostTimer")
   K.pendingFleeName = trim(name)
   later("pendingFleeTimer", 3.0, function()
@@ -3603,7 +3675,7 @@ function K.onFleeAnnounced(name)
 end
 
 function K.onFleeDirection(direction)
-  if not K.enabled or isFollower() or K.mode == "leader_wait" then return end
+  if not K.enabled or isFollower() or K.mode == "leader_wait" or K.limitRoom then return end
   local name = K.pendingFleeName or K.currentTargetName
   cancelTimer("pendingFleeTimer")
   K.pendingFleeName = nil
@@ -3615,8 +3687,14 @@ function K.onFleeDirection(direction)
 end
 
 function K.onFlee(name, direction)
-  if isFollower() or K.mode == "leader_wait" then return end
+  if isFollower() or K.mode == "leader_wait" or K.limitRoom then return end
   if not K.enabled then return end
+  if K.mode == "patrol" and not K.currentTargetName and not K.pursuitOriginRoom
+      and K.config.maxCreatures > 0
+      and (not K.entitiesReady or roomCreatureCount() > K.config.maxCreatures) then
+    queueInspection(inspectRoom)
+    return
+  end
   name, direction = trim(name), normal(direction)
   local selectedKind = animalInName(name)
   local protectedMode = K.mode == "escape" or K.mode == "heal_rest" or K.mode == "recovery_return"
@@ -3731,6 +3809,7 @@ function K.onKill(name, confirmedByServer)
     if dead then
       K.deadNpcIds[tostring(dead.id)] = {zeroSeen=tonumber(dead.hp) and tonumber(dead.hp) <= 0}
       K.combatCache = nil
+      K.creatureCountCache = nil
     end
   end
   if K.enabled and isFollower() then
@@ -3742,6 +3821,7 @@ function K.onKill(name, confirmedByServer)
     return
   end
   if not K.enabled or K.mode == "kill_pause" then return end
+  if K.limitRoom then return end
   if nameHasIgnoredPhrase(name) then return end
   local recent = K.recentTarget
   if not K.currentTargetName and recent and recent.name and recent.room == currentRoom()
@@ -4028,6 +4108,7 @@ function K.onMoveRejected()
   K.patrolMovePending, K.chaseMovePending = false, false
   K.route = nil
   K.moveSnapshot = nil
+  if K.limitRoom then cancelTimer("moveTimer") end
   if K.recoveryEmergency then
     K.recoveryEmergency.pending = nil
     cancelTimer("escapeWatchTimer")
@@ -4126,6 +4207,7 @@ function K.onMovementExhausted()
     K.roomChangePending, K.sentDirection = false, nil
     K.entitiesReady = true
     K.moveSnapshot = nil
+    if K.limitRoom then K.limitRoom.attempts = math.max(0, K.limitRoom.attempts - 1) end
     invalidateState(true)
     if K.recoveryEmergency and K.recoveryEmergency.pending then
       K.recoveryEmergency.pending = nil
@@ -4417,6 +4499,7 @@ function K.status()
   if K.config.equipmentHold then statusRow("Ekwipunek", K.config.equipmentHold) end
   if K.refugeRoom then statusRow("Miejsce leczenia", "Awaryjne: " .. K.refugeRoom .. "; start patrolu: " .. K.config.startRoom) end
   if K.recoveryEmergency and K.recoveryEmergency.blocked then statusRow("Awaryjny odwrot", "Brak potwierdzonej drogi; nadal chronie druzyne") end
+  if K.limitRoom then statusRow("Pomijany pokoj", "Limit celow przekroczony; wyprowadzam druzyne mimo agresji") end
   if K.updater then statusRow("Aktualizacje", K.updater.status or "gotowy") end
 
   statusPrefix("Sterowanie")
@@ -4721,7 +4804,8 @@ function K.help()
   <green>/kozojeb usuncel troll<reset>          wylacz wybrany cel
   <green>/kozojeb maxstworow 3<reset>           nie zaczynaj nowej walki, gdy
                               w pokoju sa ponad 3 wybrane cele
-                              (0 = bez limitu; wychodzi szybciej)
+                              podczas patrolu wyjdz takze po agresji NPC;
+                              0 wylacza limit
   <green>/kozojeb pauza 5<reset>               czekaj 5 sekund po zabiciu
                               (zakres 0-60 sekund)
   <green>/kozojeb ziola on<reset>              po sprawdzeniu bezpiecznego pokoju
@@ -4788,8 +4872,10 @@ function K.help()
   - Po bezczynnosci wraca do wspolnej bazy/startu i wykonuje pelny reset.
   - Gdy mapa nie zna powrotu po pogoni, uzywa odwrotnych komend pogoni.
   - Znikniecie celu bez komunikatu odblokowuje bota po krotkim oczekiwaniu.
-  - Limit stworow dotyc tylko nowej walki; po przekroczeniu bot wychodzi
-    z pokoju szybciej, ale nie przerywa trwajacej pogoni.
+  - Limit stworow dotyc nowych pokoi podczas patrolu. Przekroczenie limitu
+    zachowuje decyzje o wyjsciu takze po samoczynnym ataku NPC.
+  - W pomijanym pokoju nie zaczyna pogoni ani pauzy po przypadkowym zgonie.
+    Wybrana wczesniej walka, pogon i pelna pauza po zabiciu pozostaja bez zmian.
   - Brak trasy do reszty nie zatrzymuje bota: rozpoczyna nowe okrazenie,
     a przy braku wyjsc ponawia odczyt mapy.
   - Po rozlaczeniu aktywne zadanie wznawia sie automatycznie po zalogowaniu,
@@ -5134,7 +5220,12 @@ local function executeCommand(arguments)
       return
     end
     K.config.maxCreatures = value
-    note(value == 0 and "Limit stworow wylaczony." or ("Maksymalnie wybranych celow przy rozpoczeciu ataku: " .. value .. "."), "green")
+    if K.limitRoom and not K.roomChangePending then
+      cancelTimer("moveTimer")
+      K.limitRoom, K.patrolMovePending = nil, false
+      if K.enabled then queueInspection(inspectRoom) end
+    end
+    note(value == 0 and "Limit stworow wylaczony." or ("Maksymalnie liczonych celow w nowym pokoju patrolu: " .. value .. "."), "green")
   elseif action == "progdruzyny" or action == "grupa" then
     local value = tonumber(rest)
     if not value or value < 0 or value > 100 then
