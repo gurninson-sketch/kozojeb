@@ -1,5 +1,14 @@
 # Zmiany
 
+## 2.9.5
+
+- Ochrona drużyny działa również podczas leczenia: świeży atak NPC w miejscu odpoczynku uruchamia wspólne awaryjne wyjście prowadzącego. Brak wyjścia lub faktyczna odmowa ruchu nie wyłącza bezpiecznych zasłon.
+- Ewakuacja korzysta ze zwykłych wyjść mapy, sprawdza sytuację po każdym potwierdzonym kroku i ma najwyżej trzy próby ruchu. Pomija odrzucone miejsca i wyjścia; obsługuje brak potwierdzenia oraz zmęczenie bez pętli komend. Nie nadaje sąsiednim pokojom gwarancji bezpieczeństwa.
+- Potwierdzone awaryjne miejsce leczenia pozostaje celem kolejnych odwrotów w tym zadaniu. Oryginalny start patrolu, wymagane pełne HP i oczekiwanie na drużynę pozostają zachowane. Rozłączenie w trakcie kroku wznawia ewakuację albo rozpoznaje osiągnięte miejsce; stop, śmierć i zmiana roli ją anulują.
+- Rozpoznawanie odpowiedzi o zepchnięciu sprzed osłanianej osoby. Dziesięciosekundowy odstęp dotyczy tylko tej osoby i jest niezależny od gotowości szyku. Prowadzący uwzględnia tę blokadę przy ocenie dostępności zasłony; zatrzymany bot nie wznawia się po wygaśnięciu ograniczenia.
+- Własne ciosy odświeżają watchdog podczas opóźnienia listy encji, bez znoszenia wymogu świeżych danych dla komend. Zachowane wykrywanie rzeczywistego zastoju i ignorowanie tekstu po rozłączeniu.
+- 34 nowe symulacje odtwarzają atak w bazie, krytyczne HP kolejnych członków i wymagane pełne leczenie, zablokowane wyjścia, limit kroków zachowany także po chwilowej ciszy, zmęczenie, powrót po leczeniu, rozłączenia, blokady pozycji, serię 2000 zdarzeń oraz watchdog.
+
 ## 2.9.4
 
 - Prowadzący nie wycofuje drużyny tylko dlatego, że własna zasłona czeka jeszcze na odpowiedź lub świeże relacje walki. Oczekiwanie ograniczone do 2 s od komendy i do 0,5 s po sukcesie; krytyczne HP, dalsza utrata zdrowia i zagrożenie innego członka zachowują pierwszeństwo.

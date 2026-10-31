@@ -53,7 +53,7 @@ end
 K.legacyImportTried = true
 K.initialized = false
 
-K.version = "2.9.4"
+K.version = "2.9.5"
 K.config = K.config or {
   chaseDelay = 0.20,
   patrolDelay = 0.70,
@@ -336,6 +336,8 @@ K.teamSeenCount = 1
 K.teamHealth = {}
 K.injuredTeamMember = nil
 K.escapeTailSent = false
+K.refugeRoom, K.recoveryEmergency, K.previousRoom = nil, nil, nil
+K.combatRoomReady = true
 K.lastRoom = nil
 K.pursuitOriginRoom = nil
 K.pursuitTrail = {}
@@ -572,6 +574,9 @@ K.shieldMissingForms = {}
 K.shieldRejectedForms = {}
 K.shieldPendingTarget = nil
 K.shieldRescue, K.shieldTurn, K.teamShieldNotice = nil, nil, nil
+K.shieldPositionUntil = {}
+if K.shieldPositionTimer then pcall(killTimer, K.shieldPositionTimer) end
+K.shieldPositionTimer, K.shieldPositionToken = nil, nil
 K.sendingShield = nil
 if K.shieldReplyTimer then pcall(killTimer, K.shieldReplyTimer) end
 K.shieldReplyTimer, K.shieldReplyToken = nil, nil
@@ -1493,10 +1498,15 @@ sendRecoveryReturnAttempt = function()
   later("recoveryTimer", K.config.escapeRetryDelay, sendRecoveryReturnAttempt)
 end
 
+local function escapeDestination()
+  return K.refugeRoom or tonumber(K.config.startRoom)
+end
+
 local function scheduleHealingCheck()
   later("healTimer", 3.0, function()
     updateVitals()
     if not K.enabled or isFollower() or K.mode ~= "heal_rest" then return end
+    if K.checkRecoveryThreat(false) then return end
     local currentTeamSafe = K.teamSeenCount == 0 or K.config.teamEscapeHp <= 0
       or K.teamLowestHp > K.config.teamEscapeHp
     local trackedReady = true
@@ -1508,6 +1518,13 @@ local function scheduleHealingCheck()
     end
     local teamReady = currentTeamSafe and trackedReady
     K.recoveryMissing = nil
+    for name in pairs(K.recoveryEmergency and K.recoveryEmergency.wounded or {}) do
+      if not K.teamHealth[name] or K.teamHealth[name] < 100 then
+        teamReady = false
+        K.recoveryMissing = name:gsub("^%l", string.upper) .. " (do 100% HP)"
+        break
+      end
+    end
     local visible = {}
     if K.entitiesReady then
       for _, member in ipairs(groupContext().members) do visible[normal(member.name)] = true end
@@ -1528,6 +1545,7 @@ local function scheduleHealingCheck()
     end
     if K.lastHp >= 100 and K.lastMoves >= K.config.resumeAtMoves and teamReady
         and not K.config.equipmentHold and not K.movementRest then
+      K.recoveryEmergency = nil
       K.mode = "recovery_return"
       K.recoveryAttempts = 0
       note("HP wrocilo do pelni. Wracam przez /idz do startu patrolu.", "green")
@@ -1561,13 +1579,15 @@ local function finishEscapeTail()
   if K.config.equipmentHold then
     note("Po uzupelnieniu ekwipunku wpisz /kozojeb ekwipunek gotowy.", "yellow")
   end
+  if K.checkRecoveryThreat(false) then return end
   scheduleHealingCheck()
 end
 
 local function sendEscapeAttempt()
   if not K.enabled or isFollower() or K.mode ~= "escape" then return end
+  if K.recoveryEmergency then K.recoveryEmergencyStep() return end
   if K.movementRest then K.armMovementRest() return end
-  if currentRoom() == tonumber(K.config.startRoom) then
+  if currentRoom() == escapeDestination() then
     finishEscapeTail()
     return
   end
@@ -1581,15 +1601,15 @@ local function sendEscapeAttempt()
   if K.escapeAttempts > K.config.escapeMaxAttempts then
     K.stop(string.format(
       "Nie udalo sie dotrzec przez /idz do bazy %d po %d probach.",
-      K.config.startRoom, K.config.escapeMaxAttempts
+      escapeDestination(), K.config.escapeMaxAttempts
     ))
     return
   end
   note(string.format(
     "Proba dojscia do bazy %d: %d/%d.",
-    K.config.startRoom, K.escapeAttempts, K.config.escapeMaxAttempts
+    escapeDestination(), K.escapeAttempts, K.config.escapeMaxAttempts
   ), "yellow")
-  expandAlias("/idz " .. K.config.startRoom)
+  expandAlias("/idz " .. escapeDestination())
   later("escapeWatchTimer", K.config.escapeRetryDelay, sendEscapeAttempt)
 end
 
@@ -1598,7 +1618,10 @@ function K.escape(reason, injuredTeamMember)
   -- konczy sie tutaj. Wspierajacy nigdy nie uruchamiaja wlasnego /idz,
   -- leczenia ani powrotu. Decyzje dla druzyny podejmuje prowadzacy.
   if isFollower() then return end
-  if K.mode == "escape" or K.mode == "heal_rest" or K.mode == "recovery_return" then return end
+  if K.mode == "escape" or K.mode == "heal_rest" or K.mode == "recovery_return" then
+    K.checkRecoveryThreat(false)
+    return
+  end
   K.recoveryRoster = {}
   for name, member in pairs(K.moveSnapshot and K.moveSnapshot.roster or K.teamStep and K.teamStep.roster or {}) do
     K.recoveryRoster[name] = member.name
@@ -1614,6 +1637,7 @@ function K.escape(reason, injuredTeamMember)
   end
   K.enabled = true -- monitorujemy dojscie do bazy mimo zatrzymania patrolu
   K.mode = "escape"
+  K.escapeOriginRoom = currentRoom()
   K.generation = K.generation + 1
   cancelAllTimers()
   K.moveSnapshot, K.teamStep = nil, nil
@@ -1625,12 +1649,12 @@ function K.escape(reason, injuredTeamMember)
   K.escapeAttempts = 0
   K.injuredTeamMember = injuredTeamMember and trim(injuredTeamMember) or nil
   if K.movementRest and K.armMovementRest then K.armMovementRest() end
-  note((reason or "Awaryjny odwrot.") .. " Ide przez /idz " .. K.config.startRoom .. ".", "red")
+  note((reason or "Awaryjny odwrot.") .. " Ide przez /idz " .. escapeDestination() .. ".", "red")
   if K.movementRest and K.tryResumeMovement then
     K.tryResumeMovement()
     if not K.movementRest then return end
   end
-  if currentRoom() == tonumber(K.config.startRoom) then
+  if currentRoom() == escapeDestination() then
     finishEscapeTail()
     return
   end
@@ -1850,6 +1874,45 @@ local function shieldRescueInFlight(entity, hp)
   return true
 end
 
+local function armShieldPosition()
+  cancelTimer("shieldPositionTimer")
+  local deadline
+  for form, untilTime in pairs(K.shieldPositionUntil) do
+    if untilTime <= now() then K.shieldPositionUntil[form] = nil
+    else deadline = math.min(deadline or untilTime, untilTime) end
+  end
+  local token = {}
+  K.shieldPositionToken = token
+  if deadline then
+    K.shieldPositionTimer = tempTimer(math.max(0, deadline - now()), function()
+      if K.shieldPositionToken ~= token then return end
+      K.shieldPositionTimer = nil
+      armShieldPosition()
+      if K.enabled then queueInspection(inspectRoom) end
+    end)
+  end
+end
+
+function K.onShieldPositionBlocked(form)
+  form = normal(form)
+  local pending = K.shieldPendingTarget
+  if not pending or normal(pending.form) ~= form then return end
+  -- Gra nie podaje terminu odzyskania pozycji. Stosujemy ograniczony
+  -- 10-sekundowy odstep dla tej osoby, niezalezny od gotowosci szyku.
+  if not K.shieldPositionUntil[form] or K.shieldPositionUntil[form] <= now() then
+    K.shieldPositionUntil[form] = now() + 10
+  end
+  K.shieldPendingTarget, K.shieldRescue, K.shieldReplyToken = nil, nil, nil
+  cancelTimer("shieldReplyTimer")
+  if not pending.conflicted then
+    K.shieldFormationReady, K.formationToken = true, nil
+    cancelTimer("formationTimer")
+  end
+  clearShieldTurn()
+  armShieldPosition()
+  if K.enabled then queueInspection(inspectRoom) end
+end
+
 local function reserveShieldRequest(entity, form, external)
   clearShieldTurn()
   local incoming = entity and combatSnapshot().incoming[tostring(entity.id)]
@@ -1985,6 +2048,11 @@ local function tryShield(entity, hp, threshold)
     return
   end
   if K.shieldRejectedForms[key] == form then return end
+  if (K.shieldPositionUntil[form] or 0) > now() then
+    clearShieldTurn()
+    K.shieldBlockedReason = "Odzyskiwanie pozycji przed " .. form
+    return
+  end
   if K.config.role == "zaslony" and hp > K.config.escapeHp then
     local notice = K.teamShieldNotice
     if notice and notice.id == tostring(entity.id) and notice.room == currentRoom()
@@ -2084,7 +2152,11 @@ function K.onFormationReady()
   if K.enabled then queueInspection(inspectRoom) end
 end
 
-local function maybeShieldTeamMember()
+local function shieldPositionReady(entity)
+  return (K.shieldPositionUntil[shieldNameForm(entity.name) or ""] or 0) <= now()
+end
+
+local function maybeShieldTeamMember(coverOnly)
   if isFollower() or not K.entitiesReady or not combatIsActive() or K.teamSeenCount <= 0 then return end
   local candidates = {}
   local own, snapshot = groupContext().self, combatSnapshot()
@@ -2106,9 +2178,9 @@ local function maybeShieldTeamMember()
     if not shieldRescueInFlight(candidate.entity, candidate.hp) then
       if tryShield(candidate.entity, candidate.hp, K.config.teamShieldHp) then return end
       local guard = math.min(K.config.teamShieldHp - 1, K.config.teamEscapeHp + 15)
-      if K.config.teamEscapeHp > 0 and candidate.hp < guard then
+      if not coverOnly and K.config.teamEscapeHp > 0 and candidate.hp < guard then
         local safe = shieldImprovesSafety(candidate.entity, candidate.hp)
-        if not K.shieldFormationReady or not safe then
+        if not K.shieldFormationReady or not shieldPositionReady(candidate.entity) or not safe then
           K.escape("Nie moge bezpiecznie oslonic " .. shieldDisplayName(candidate.entity.name)
             .. " (" .. candidate.hp .. "% HP).", candidate.entity.name)
           return
@@ -2116,6 +2188,157 @@ local function maybeShieldTeamMember()
       end
     end
   end
+end
+
+local function recoveryThreat()
+  if not K.entitiesReady or not K.combatRoomReady or not K.sessionFresh.combat then return false end
+  local members, snapshot = {}, combatSnapshot()
+  for _, member in ipairs(groupContext().members) do
+    local id = tostring(member.id)
+    members[id] = true
+    if snapshot.incoming[id] then return true end
+  end
+  local own = groupContext().self
+  if own then
+    members[tostring(own.id)] = true
+    if liveNpc(entityById(combatState().primary)) then return true end
+  end
+  for _, relation in ipairs(combatState().relations or {}) do
+    if members[tostring(relation.attacker)] and liveNpc(entityById(relation.defender)) then return true end
+  end
+  return false
+end
+
+function K.recoveryEmergencyStep()
+  local emergency = K.recoveryEmergency
+  if not K.enabled or isFollower() or K.sessionBlocked or not emergency or K.mode ~= "escape" then return end
+  local room, pending = currentRoom(), emergency.pending
+  if (pending and room ~= pending.from) or (not pending and room ~= emergency.room) then
+    emergency.pending = nil
+    emergency.room = room
+    K.refugeRoom = room
+    K.escapeTailSent = false
+    finishEscapeTail()
+    return
+  end
+  if pending then
+    if now() < pending.deadline then return end
+    -- Niepotwierdzony krok nie moze blokowac wyjscia na zawsze. Nie
+    -- wysylamy go ponownie ani nie kasujemy cudzej nowszej proby ruchu.
+    emergency.pending = nil
+    if K.sentDirection == pending.direction and K.roomChangePending then
+      K.roomChangePending, K.sentDirection, K.moveSnapshot = false, nil, nil
+      K.entitiesReady = true
+      K.failedExits[room] = K.failedExits[room] or {}
+      K.failedExits[room][pending.direction] = true
+    end
+  end
+  if not K.entitiesReady or K.roomChangePending then return end
+  if K.movementRest then K.armMovementRest() return end
+  if emergency.waitUntil and now() < emergency.waitUntil then return end
+  local limit = math.max(1, math.min(3, K.config.escapeMaxAttempts))
+  if emergency.attempts >= limit or emergency.searches >= limit then
+    if not emergency.blocked then
+      emergency.blocked = true
+      note("Awaryjne wyjscie z zagrozonego miejsca nie powiodlo sie. Nadal chronie druzyne; sprawdz droge na mapie.", "red")
+    end
+    return
+  end
+  emergency.unsafe[room] = true
+  local exits, selected, score = adjacentExitList(room), nil, math.huge
+  for _, exit in ipairs(exits) do
+    local rejected = K.failedExits[room] and K.failedExits[room][exit.direction]
+    if exit.room ~= room and not emergency.unsafe[exit.room] and not rejected then
+      local value = (K.roomSet[exit.room] and 2 or 0) + (exit.room == K.previousRoom and 1 or 0)
+      if value < score or (value == score and (not selected or exit.room < selected.room)) then
+        selected, score = exit, value
+      end
+    end
+  end
+  if not selected then
+    emergency.searches = emergency.searches + 1
+    emergency.waitUntil = now() + 3
+    if not emergency.noExitNotice then
+      emergency.noExitNotice = true
+      note("Brak dostepnego zwyklego wyjscia na mapie. Chronie druzyne i ponowie odczyt mapy najwyzej trzy razy.", "red")
+    end
+    later("escapeWatchTimer", 3, K.recoveryEmergencyStep)
+    return
+  end
+  emergency.attempts = emergency.attempts + 1
+  emergency.pending = {from=room, destination=selected.room, direction=selected.direction,
+    deadline=now() + K.config.escapeRetryDelay}
+  note("Atak podczas leczenia. Wyprowadzam druzyne: " .. selected.direction
+    .. " do pokoju " .. selected.room .. "; sprawdze swieze dane po kroku.", "red")
+  sendDirection(selected.direction)
+  later("escapeWatchTimer", K.config.escapeRetryDelay, K.recoveryEmergencyStep)
+end
+
+local function rememberRecoveryWounds()
+  local emergency = K.recoveryEmergency
+  if not emergency or K.config.teamEscapeHp <= 0 then return end
+  emergency.wounded = emergency.wounded or {}
+  for name, hp in pairs(K.teamHealth) do
+    if hp < K.config.teamEscapeHp then emergency.wounded[name] = true end
+  end
+end
+
+function K.checkRecoveryThreat(urgentOnly)
+  if not K.enabled or isFollower() or K.sessionBlocked then return false end
+  local recovery = K.mode == "escape" or K.mode == "heal_rest" or K.mode == "recovery_return"
+  if not recovery then return false end
+  rememberRecoveryWounds()
+  if not recoveryThreat() then
+    if K.mode == "escape" and K.recoveryEmergency and not K.recoveryEmergency.pending
+        and K.entitiesReady and K.combatRoomReady and not K.roomChangePending then
+      K.refugeRoom = currentRoom()
+      K.recoveryEmergency.room = currentRoom()
+      K.escapeTailSent = false
+      finishEscapeTail()
+      return true
+    end
+    return false
+  end
+  local critical = K.lastHp < K.config.escapeHp or (K.config.teamEscapeHp > 0
+    and K.teamSeenCount > 0 and K.teamLowestHp < K.config.teamEscapeHp)
+  -- Podczas zwyklego odwrotu chodzik juz prowadzi poza zagrozenie.
+  -- Nie uruchamiamy nowej trasy po kazdym ataku mijanego NPC.
+  if K.mode == "escape" and not K.recoveryEmergency and currentRoom() ~= escapeDestination() then
+    if not urgentOnly then maybeShieldTeamMember(true) end
+    return false
+  end
+  if K.mode == "recovery_return" and not critical then
+    if not urgentOnly then maybeShieldTeamMember(true) end
+    return false
+  end
+  if K.mode == "recovery_return" and currentRoom() ~= escapeDestination() then
+    cancelTimer("recoveryTimer")
+    K.mode, K.escapeAttempts, K.escapeTailSent = "escape", 0, false
+    note("Zagrozenie podczas powrotu po leczeniu. Ponownie wycofuje druzyne.", "red")
+    sendEscapeAttempt()
+    return true
+  end
+  if not K.recoveryEmergency then
+    K.recoveryEmergency = {room=currentRoom(), attempts=0, searches=0, unsafe={}}
+    if K.escapeOriginRoom then K.recoveryEmergency.unsafe[K.escapeOriginRoom] = true end
+    rememberRecoveryWounds()
+  end
+  if K.mode ~= "escape" then
+    cancelTimer("healTimer")
+    cancelTimer("recoveryTimer")
+    K.mode, K.escapeTailSent = "escape", false
+    K.teamStep = nil
+    cancelTimer("teamStepTimer")
+    -- Zmeczenie bez faktycznej odmowy nie blokuje pilnego wyjscia.
+    if K.movementRest and not K.movementRest.ownRejected then
+      K.movementRest = nil
+      cancelTimer("movementRestTimer")
+    end
+  end
+  if not urgentOnly then maybeShieldTeamMember(true) end
+  K.recoveryEmergencyStep()
+  if urgentOnly and K.entitiesReady then queueInspection(inspectRoom) end
+  return true
 end
 
 local function needsBurstReserve(entity, percent, threshold)
@@ -2158,6 +2381,7 @@ local function safetyCheck(urgentOnly, skipMovementWait)
     end
   end
   local recovery = K.mode == "escape" or K.mode == "heal_rest" or K.mode == "recovery_return"
+  if K.enabled and recovery and K.checkRecoveryThreat(urgentOnly) then return false end
   local injuredTeamMember
   if not isFollower() and K.config.teamEscapeHp > 0 and K.teamSeenCount > 0
       and K.teamLowestHp < K.config.teamEscapeHp then
@@ -2186,7 +2410,7 @@ local function safetyCheck(urgentOnly, skipMovementWait)
         if not isSelf(member) and needsBurstReserve(member, hp, K.config.teamEscapeHp) then
           local pending = shieldRescueInFlight(member, hp)
           local canShield = hp < K.config.teamShieldHp and K.lastHp >= K.config.shieldSelfHp
-            and K.shieldFormationReady and shieldImprovesSafety(member, hp)
+            and K.shieldFormationReady and shieldPositionReady(member) and shieldImprovesSafety(member, hp)
           if not pending and not canShield then
             K.escape("Brak rezerwy HP na kolejny silny cios: " .. tostring(member.name) .. ".", member.name)
             return false
@@ -2527,7 +2751,8 @@ inspectRoom = function()
   local observedRoom = currentRoom()
   if K.pursuitOriginRoom and observedRoom and not K.roomSet[observedRoom] then K.pursuitLeftArea = true end
   if K.mode == "escape" then
-    if currentRoom() == tonumber(K.config.startRoom) then finishEscapeTail() end
+    if K.recoveryEmergency then K.recoveryEmergencyStep()
+    elseif currentRoom() == escapeDestination() then finishEscapeTail() end
     return
   end
   if K.mode == "heal_rest" or K.mode == "recovery_return" or K.mode == "returning"
@@ -2914,7 +3139,7 @@ function K.onIdleTimeout()
 end
 
 function K.onCombatProgress()
-  if K.enabled and not isFollower() and not K.sessionBlocked and K.entitiesReady
+  if K.enabled and not isFollower() and not K.sessionBlocked and K.sessionFresh.room
       and (K.mode == "combat" or K.mode == "chase") then touchActivity() end
 end
 
@@ -3060,6 +3285,8 @@ function K.onRoomChanged(eventName)
     K.shieldRescue, K.teamShieldNotice = nil, nil
     clearShieldTurn()
     if previousRoom ~= currentRoom() then
+      K.previousRoom = previousRoom
+      K.combatRoomReady = false
       K.recentTarget, K.supportDeathBarrier = nil, nil
       K.currentTargetAmbiguous, K.pendingKill = false, nil
       K.supportAttempt = nil
@@ -3096,7 +3323,9 @@ function K.onRoomChanged(eventName)
   touchActivity()
   if K.pursuitOriginRoom and room and not K.roomSet[room] then K.pursuitLeftArea = true end
   if K.mode == "escape" then
-    if room == tonumber(K.config.startRoom) then
+    if K.recoveryEmergency then
+      K.recoveryEmergencyStep()
+    elseif room == escapeDestination() then
       finishEscapeTail()
     else
       -- Dopoki /idz robi postep, przesuwamy watchdog. Ponowienie nastepuje
@@ -3164,6 +3393,7 @@ function K.onGmcp(eventName)
   end
   if eventName == "gmcp.Chimera.Combat.State" then
     K.sessionFresh.combat = true
+    K.combatRoomReady = true
     K.combatRevision = K.combatRevision + 1
   end
   if eventName == "gmcp.Chimera.Group.State" then
@@ -3219,8 +3449,7 @@ function K.onGmcp(eventName)
     end
     return
   end
-  if K.mode ~= "escape" and K.mode ~= "heal_rest" and K.mode ~= "recovery_return"
-      and K.mode ~= "returning" and K.mode ~= "herb_search" then
+  if K.mode ~= "returning" and K.mode ~= "herb_search" then
     queueInspection(inspectRoom)
   end
 end
@@ -3436,6 +3665,7 @@ function K.stop(reason)
   invalidateState(true)
   K.reconnectTask, K.reconnectWaitReason = nil, nil
   K.restartPending = nil
+  K.refugeRoom, K.recoveryEmergency, K.escapeOriginRoom = nil, nil, nil
   K.movementRest, K.moveSnapshot, K.teamStep = nil, nil, nil
   K.enabled = false
   K.mode = "stop"
@@ -3591,7 +3821,11 @@ end
 function K.onSessionEvent(eventName)
   invalidateState(true)
   K.shieldPendingTarget, K.shieldRescue, K.shieldReplyToken = nil, nil, nil
+  K.combatRoomReady = false
+  if K.recoveryEmergency then K.recoveryEmergency.pending = nil end
   cancelTimer("shieldReplyTimer")
+  K.shieldPositionUntil, K.shieldPositionToken = {}, nil
+  cancelTimer("shieldPositionTimer")
   K.progressOwn, K.progressTeam = {}, {}
   K.healthHistory, K.shieldTransfers = {}, {}
   K.previousIncoming, K.transferRevision = nil, nil
@@ -3654,6 +3888,11 @@ function K.onMoveRejected()
   K.patrolMovePending, K.chaseMovePending = false, false
   K.route = nil
   K.moveSnapshot = nil
+  if K.recoveryEmergency then
+    K.recoveryEmergency.pending = nil
+    cancelTimer("escapeWatchTimer")
+    K.recoveryEmergencyStep()
+  end
   if K.mode == "patrol" then queueInspection(inspectRoom) end
 end
 
@@ -3748,6 +3987,11 @@ function K.onMovementExhausted()
     K.entitiesReady = true
     K.moveSnapshot = nil
     invalidateState(true)
+    if K.recoveryEmergency and K.recoveryEmergency.pending then
+      K.recoveryEmergency.pending = nil
+      K.recoveryEmergency.attempts = math.max(0, K.recoveryEmergency.attempts - 1)
+      cancelTimer("escapeWatchTimer")
+    end
   end
   local rest = K.movementRest or {roster=step and step.roster or {}, readyAt=now() + 10}
   rest.ownRejected, rest.afterRevision = true, K.dataRevision
@@ -3845,6 +4089,7 @@ function K.start()
     return
   end
   K.restartPending = nil
+  if not K.enabled then K.refugeRoom, K.recoveryEmergency, K.escapeOriginRoom = nil, nil, nil end
   K.movementRest, K.moveSnapshot, K.teamStep = nil, nil, nil
   K.recoveryTired, K.regroupFailures = {}, 0
   if not isFollower() and K.config.equipmentHold then
@@ -4029,6 +4274,8 @@ function K.status()
   if K.reconnectTask then statusRow("Wznowienie", K.reconnectWaitReason or "Automatyczne po odebraniu swiezych danych") end
   if K.restartPending then statusRow("Wznowienie", "Czekam na swiezy pokoj i kompletne HP; wznowie automatycznie") end
   if K.config.equipmentHold then statusRow("Ekwipunek", K.config.equipmentHold) end
+  if K.refugeRoom then statusRow("Miejsce leczenia", "Awaryjne: " .. K.refugeRoom .. "; start patrolu: " .. K.config.startRoom) end
+  if K.recoveryEmergency and K.recoveryEmergency.blocked then statusRow("Awaryjny odwrot", "Brak potwierdzonej drogi; nadal chronie druzyne") end
   if K.recoveryMissing then statusRow("Brak w druzynie", K.recoveryMissing) end
   if K.updater then statusRow("Aktualizacje", K.updater.status or "gotowy") end
 
@@ -4896,6 +5143,8 @@ K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
 K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
   "^Musisz chwile odpoczac po ostatniej zmianie w szyku\\.$", [[kozojeb.onShieldCooldown()]])
 K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
+  "^Dopiero co zepchnieto cie sprzed ([^;]+);", [[kozojeb.onShieldPositionBlocked(matches[2])]])
+K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
   "^Jestes gotowy do zmiany w szyku\\.$", [[kozojeb.onFormationReady()]])
 K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
   "^([^\\.]+) uciekl[ao]? ci\\.$",
@@ -4947,6 +5196,8 @@ function K.onUninstall(_, packageName)
   K.stop("Usuwanie lub aktualizacja paczki.")
   cancelTimer("formationTimer")
   cancelTimer("shieldReplyTimer")
+  cancelTimer("shieldPositionTimer")
+  K.shieldPositionToken = nil
   K.shieldReplyToken = nil
   K.formationToken = nil
   for _, id in ipairs(K.handlers.triggers) do pcall(killTrigger, id) end

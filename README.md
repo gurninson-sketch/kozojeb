@@ -1,4 +1,4 @@
-# Chimera Kozojeb 2.9.4
+# Chimera Kozojeb 2.9.5
 
 [Pobierz najnowszą paczkę](https://github.com/gurninson-sketch/kozojeb/releases/latest/download/Chimera_Kozojeb.mpackage) · [Wydania](https://github.com/gurninson-sketch/kozojeb/releases)
 
@@ -85,6 +85,8 @@ Domyślnie zasłona nie może podnieść liczby napastników osłaniającego pow
 
 Każda próba rezerwuje zmianę szyku od razu. Od 2.9.4 dotyczy to również rozpoznanych poleceń `zaslon <imię>` wysłanych ręcznie lub przez inne skrypty: automat czeka na ich wynik. Nie blokuje przy tym ręcznych poleceń. Spóźniony komunikat gotowości sprzed odpowiedzi na próbę nie zwalnia rezerwacji. Rezerwacja trwa także podczas zatrzymania bota; nie uruchamia go ponownie. Bot czeka na `Jestes gotowy do zmiany w szyku.`; limit awaryjny przy braku komunikatu wynosi 10 sekund. Nieudana próba umiejętności również zużywa gotowość szyku.
 
+Od 2.9.5 odpowiedź `Dopiero co zepchnieto cie sprzed <osoby>; ...` kończy oczekiwanie na wynik i wprowadza 10 s odstępu przed kolejną automatyczną próbą osłony tej osoby. Jest to zachowawczy odstęp skryptu, nie odczyt czasu blokady z serwera. Gotowość szyku nie usuwa tej blokady. Inne osoby można osłaniać zgodnie z pozostałymi warunkami; prowadzący uwzględnia niedostępną pozycję przy decyzji o odwrocie. Stop/start zachowuje niewygasłą blokadę, a upływ czasu nie uruchamia zatrzymanego bota.
+
 Profile z rolą `zaslony` rozkładają decyzje w czasie: kandydat z korzystniejszym przewidywanym obciążeniem względem punktów HP ma pierwszeństwo, pozostali czekają najwyżej 0,36 s. Nie zakładają, że inne profile mają włączone zasłony — po tym czasie mogą osłonić samodzielnie. Widoczna zasłona innego członka daje do 0,5 s na aktualizację relacji walki. Zmiana napastników kończy to oczekiwanie, a niskie HP prowadzącego pomija dodatkowe opóźnienie. Nie wymaga to komunikacji między profilami ani nowych progów. Notatka przy wykonanej komendzie pokazuje punkty HP i liczby napastników obu postaci, aby ułatwić analizę logów.
 
 Odmiany imion są zapisane dla Yarrima, Morrida, Yerga i Grora. Dla kolejnej postaci ustaw biernik, np.:
@@ -104,6 +106,10 @@ Niepoprawna forma odrzucona przez grę jest blokowana do poprawienia.
 - Od 2.9.1 prowadzący przez 8 s pamięta największy ostatni spadek HP w bieżącym pokoju. Przy stracie co najmniej 15% maksymalnego HP i nadal atakującym NPC zachowuje rezerwę na kolejny taki cios ponad skonfigurowany próg odwrotu. Przykład: próg 50%, ostatni spadek 25 punktów procentowych, teraz 74% — możliwy wcześniejszy odwrót. Przy zagrożonym koledze bezpieczna dostępna zasłona jest rozważana przed tym dodatkowym odwrotem. `progdruzyny 0` wyłącza rezerwę drużynową. Jest to reakcja na zaobserwowane HP, a nie przewidywanie pierwszego silnego ciosu, pancerza czy umiejętności przeciwnika.
 - Śmierć własnej postaci zatrzymuje bota i anuluje oczekujące wznowienie.
 - Po odwrocie czeka na swoje pełne HP, wymagany poziom ruchu oraz obecność i znane HP wcześniej widocznych członków drużyny. Osoba, której rany wywołały odwrót, musi odzyskać 100% HP.
+- Jeśli podczas awaryjnej ewakuacji kolejny członek spadnie poniżej progu odwrotu drużyny, on również musi odzyskać 100% HP przed wznowieniem. Zagrożenie kolejnej osoby nie zastępuje wcześniejszego oczekiwania na rannych.
+- Od 2.9.5 leczenie nie wyłącza ochrony drużyny. Świeże dane o ataku NPC na odpoczywającą drużynę uruchamiają awaryjne wyjście prowadzącego, także zanim HP stanie się krytyczne. Bot wybiera zwykłe wyjście zapisane na mapie, preferując pokój poza obszarem patrolu i kierunek inny niż ostatnia droga przybycia. Pomija miejsca odrzucone w tej ewakuacji oraz znane miejsce rozpoczęcia odwrotu. Nie korzysta z wymyślonych kierunków ani wyjść specjalnych.
+- Po każdym kroku czeka na potwierdzenie pokoju i świeże dane walki. Jeśli atak trwa, może wykonać kolejny krok; cała ewakuacja ma najwyżej trzy próby ruchu, bez powrotu do odrzuconych miejsc. Odmowa wyjścia pozwala wybrać inne, brak potwierdzenia ma limit czasu, a odmowa z powodu zmęczenia wymaga świeżego odczytu sił i nie zużywa próby trasy. Przy braku wyjścia bot nadal może wykonywać bezpieczne zasłony i wyświetla przyczynę blokady; odczyt mapy jest ponawiany najwyżej trzy razy.
+- Nowe miejsce leczenia jest sprawdzane po przybyciu — mapa nie gwarantuje, że sąsiedni pokój będzie bezpieczny. Potwierdzone miejsce pozostaje awaryjnym celem następnych odwrotów do zatrzymania zadania. Ustawiony start patrolu nie jest zmieniany; po pełnej regeneracji i zebraniu drużyny bot wraca do niego. Panel pokazuje awaryjne miejsce leczenia. Rozłączenie zachowuje ten kontekst, ręczny stop, śmierć i zmiana roli go anulują. Wspierający nie wykonują własnej ewakuacji ani raportowania.
 - Pęknięcie własnego lub widocznego drużynowego ekwipunku uruchamia wspólny odwrót i blokuje automatyczne wznowienie. Uzupełnij sprzęt i wpisz na prowadzącym `/kozojeb ekwipunek gotowy`.
 - Rozłączenie wstrzymuje komendy i zapamiętuje aktywne zadanie. Po ponownym zalogowaniu Kozojeb **automatycznie je wznawia, bez `/kozojeb start`**. Wymaga świeżego pokoju i listy encji z własną postacią oraz kompletnym HP. Po krótkiej pauzie 0,5 s ocenia aktualny stan. Brak ponownego wysłania niezmienionych `Group.State`, `Combat.State` lub `Char.Vitals` nie blokuje wznowienia. Starsze dane walki i składu drużyny pozostają odfiltrowane; drużyna może być rozpoznana po rolach na świeżej liście encji. Ruch jest monitorowany według ostatniego znanego odczytu, aż przyjdzie jego aktualizacja.
 - Przed wznowieniem patrolu prowadzący czeka na wcześniej widocznych członków drużyny. Ich nieobecność nie blokuje pilnego odwrotu ani kontynuacji leczenia; zebranie drużyny jest wtedy sprawdzane w bazie. Wspierający wracają do swoich ról bez własnego ruchu. Panel pokazuje konkretny brakujący odczyt albo gracza, gdy wznowienie nadal oczekuje.
@@ -115,7 +121,7 @@ Niepoprawna forma odrzucona przez grę jest blokowana do poprawienia.
 
 ## Aktualizacje z GitHuba
 
-Jeśli masz już Kozojeba 2.8.1–2.9.3, wykonaj na **każdym profilu**:
+Jeśli masz już Kozojeba 2.8.1–2.9.4, wykonaj na **każdym profilu**:
 
 ```text
 /kozojeb stop
@@ -124,7 +130,7 @@ Jeśli masz już Kozojeba 2.8.1–2.9.3, wykonaj na **każdym profilu**:
 /kozojeb aktualizuj
 ```
 
-Poczekaj na zakończenie walki i ruchu oraz komunikat `Zainstalowano 2.9.4`. Sprawdź `/kozojeb status`; powinien pokazać wersję **2.9.4**. Następnie uruchom `/kozojeb start` — najpierw na wspierających, potem na prowadzącym. To jednorazowy start po aktualizacji; późniejsze rozłączenia nie wymagają ręcznego wznowienia. Nie trzeba usuwać ani ręcznie instalować paczki; ustawienia profili pozostają zachowane. Można przejść bezpośrednio z 2.9.2 do 2.9.4.
+Poczekaj na zakończenie walki i ruchu oraz komunikat `Zainstalowano 2.9.5`. Sprawdź `/kozojeb status`; powinien pokazać wersję **2.9.5**. Następnie uruchom `/kozojeb start` — najpierw na wspierających, potem na prowadzącym. To jednorazowy start po aktualizacji; późniejsze rozłączenia nie wymagają ręcznego wznowienia. Nie trzeba usuwać ani ręcznie instalować paczki; ustawienia profili pozostają zachowane. Można przejść bezpośrednio z 2.9.2 do 2.9.5.
 
 Przy paczce zbudowanej w tym repozytorium adres wydań jest wbudowany. W paczce przygotowanej bez adresu skonfiguruj na każdym profilu:
 
@@ -153,6 +159,8 @@ Kolejne zdarzenia GMCP współdzielą jeden oczekujący timer decyzji (zwykle 0,
 Kolejka zasłony ma jeden dodatkowy timer tylko podczas krótkiego oczekiwania, a ponowienia aktualizacji jeden tylko po błędzie pobierania. Nie dodają stałego odpytywania gry. Obserwacja wysyłania poleceń odrzuca inne komendy bez zapisywania ich treści; rozszerzona notatka pojawia się tylko przy rzeczywistym poleceniu zasłony.
 
 Watchdog uwzględnia zmiany pełnych HP z `Char.Vitals`, `Group.State` i `Room.Entities`, również mniejsze od zaokrąglonego procenta, oraz rzeczywiste własne ciosy. Każde źródło porównuje z jego poprzednim odczytem: przełączanie między niezmienionymi skalami, np. `1000/1000` i `10/10`, nie udaje aktywności. Przesuwa znacznik czasu bez tworzenia nowego timera przy każdym pakiecie lub ciosie. Po powrocie do bazy restart czeka na świeży pokój i kompletne HP, zachowując aktywne zadanie. Nie wymaga ręcznego startu po spóźnionej liście encji; ręczny stop anuluje oczekiwanie.
+
+Od 2.9.5 własne ciosy podczas trwającej walki lub pościgu odświeżają aktywność także przy opóźnionej liście encji. Nie odblokowują przy tym ataków ani ruchu na podstawie starych danych. Tekst po rozłączeniu jest ignorowany, a rzeczywisty zastój nadal uruchamia watchdog. Ewakuacja wykorzystuje dotychczasowy timer odwrotu; blokady pozycji współdzielą jeden dodatkowy timer działający tylko do ich wygaśnięcia.
 
 Potwierdzenie własnej walki, w tym odpowiedź `Juz walczysz`, powstrzymuje kolejne `wesprzyj` dla tego samego starcia. Krótkie przejście od tekstowej informacji o walce do konkretnego ID przeciwnika zachowuje potwierdzenie. Sygnał tekstowy jest powiązany z pokojem i widocznymi żywymi NPC. Po śmierci przeciwnika stary komunikat nie uruchamia kolejnego wsparcia; dalsza walka prowadzącego musi mieć potwierdzenie w świeżych danych. Po odmowie wsparcia wymagane są nowe relacje dotyczące prowadzącego lub jego przeciwnika albo nowy poprawny komunikat walki. Walka innych NPC, identyczne pakiety, kolejność i duplikaty relacji nie odnawiają próby.
 

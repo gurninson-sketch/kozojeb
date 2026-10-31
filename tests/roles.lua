@@ -1222,6 +1222,7 @@ test("recovery waits for every previously present teammate", function()
   gmcp.Chimera.Group.State.leader = "S"
   gmcp.Chimera.Combat.State.primary = "N"
   kozojeb.start()
+  gmcp.Chimera.Combat.State = {primary="",relations={}} -- zakonczona walka w miejscu leczenia
   gmcp.Chimera.Room.Entities.entities[1].hp = 40
   event()
   assert(kozojeb.mode == "heal_rest")
@@ -1280,6 +1281,8 @@ test("broken party weapon triggers the leader retreat and blocks automatic resta
   gmcp.Chimera.Combat.State.primary = "N"
   kozojeb.start()
   room = 1323
+  kozojeb.onRoomChanged("gmcp.Room.Info")
+  event()
   kozojeb.onEquipmentBroken("Nulnijski dlugi ronkon dzierzony przez Yarrima peka!!!")
   assert(kozojeb.mode == "escape" and aliases[#aliases] == "/idz 1322")
   room = 1322
@@ -2878,6 +2881,314 @@ test("a shield note records raw HP and incoming counts only when a command is se
   for i=1,2000 do kozojeb.onGmcp("gmcp.Chimera.Combat.State") end
   advance(.13)
   assert(#output==before and count("zaslon yarrima")==1); noMovement()
+end)
+
+local function healingLeader()
+  setupLeader()
+  gmcp.Chimera.Room.Entities.entities[1].hp=200
+  gmcp.Chimera.Room.Entities.entities[1].maxhp=200
+  gmcp.Char.Vitals.hp,gmcp.Char.Vitals.maxhp=200,200
+  gmcp.Chimera.Combat.State={primary="",relations={}}
+  kozojeb.start()
+  gmcp.Chimera.Room.Entities.entities[3].hp=60
+  kozojeb.onGmcp("gmcp.Chimera.Room.Entities")
+  kozojeb.escape("Leczenie druzyny","Morrid")
+  assert(kozojeb.mode=="heal_rest")
+  sends,aliases={},{}
+end
+
+local function ambushAtRest(hp)
+  if hp then gmcp.Chimera.Room.Entities.entities[3].hp=hp end
+  gmcp.Chimera.Combat.State={primary="N",relations={{attacker="S",defender="N"},{attacker="N",defender="M"}}}
+  kozojeb.onGmcp("gmcp.Chimera.Room.Entities")
+  event("gmcp.Chimera.Combat.State")
+end
+
+local function arriveRefuge(id, fighting)
+  room=id
+  kozojeb.onRoomChanged("gmcp.Room.Info")
+  if not fighting then gmcp.Chimera.Combat.State={primary="",relations={}} end
+  event()
+  event("gmcp.Chimera.Combat.State")
+end
+
+local function positionReply(form)
+  local line="Dopiero co zepchnieto cie sprzed "..form.."; potrzebujesz jeszcze chwili, zeby odzyskac pozycje."
+  for _, trigger in ipairs(triggers) do
+    if trigger.handler:find("kozojeb.onShieldPositionBlocked",1,true) then
+      local target=line:match(trigger.pattern)
+      assert(target==form,"registered position trigger did not match the logged response")
+      matches={line,target}
+      assert(compile(trigger.handler))()
+      return
+    end
+  end
+  error("Missing position rejection trigger")
+end
+
+test("injured teammates resting without combat do not cause an endless evacuation", function()
+  healingLeader();gmcp.Chimera.Room.Entities.entities[3].hp=20;event();advance(20)
+  assert(kozojeb.mode=="heal_rest" and not kozojeb.recoveryEmergency and #aliases==0 and count("e")==0)
+end)
+
+test("a fresh ambush at the healing base immediately sends one mapped escape step", function()
+  healingLeader();ambushAtRest()
+  assert(kozojeb.mode=="escape" and kozojeb.recoveryEmergency and count("e")==1)
+  assert(kozojeb.config.startRoom==1322 and #aliases==0)
+end)
+
+test("critical teammate HP at the healing base cannot remain in passive recovery", function()
+  healingLeader();ambushAtRest(20)
+  assert(kozojeb.teamLowestHp==20 and count("e")==1 and kozojeb.mode=="escape")
+end)
+
+test("critical own HP at the base bypasses waiting for the wounded teammate", function()
+  healingLeader();gmcp.Char.Vitals.hp=40;gmcp.Chimera.Room.Entities.entities[1].hp=40
+  ambushAtRest()
+  assert(kozojeb.lastHp==20 and count("e")==1 and count("zaslon morrida")==0)
+end)
+
+test("combat belonging only to bystanders does not evacuate the resting party", function()
+  healingLeader()
+  gmcp.Chimera.Room.Entities.entities[5]={id="X",name="Obcy",kind="player",hp=100,maxhp=100}
+  gmcp.Chimera.Combat.State={primary="",relations={{attacker="N",defender="X"}}}
+  event("gmcp.Chimera.Combat.State");advance(3.1)
+  assert(kozojeb.mode=="heal_rest" and count("e")==0)
+end)
+
+test("old combat from before a room change cannot trigger a false ambush evacuation", function()
+  healingLeader()
+  room=1323;kozojeb.onRoomChanged("gmcp.Room.Info")
+  room=1322;kozojeb.onRoomChanged("gmcp.Room.Info")
+  gmcp.Chimera.Combat.State={primary="N",relations={{attacker="N",defender="M"}}}
+  event();advance(3.1)
+  assert(kozojeb.mode=="heal_rest" and count("e")==0)
+  event("gmcp.Chimera.Combat.State")
+  assert(count("e")==1)
+end)
+
+test("an ambush packet burst shares a decision and sends only one pending escape step", function()
+  healingLeader()
+  gmcp.Chimera.Combat.State={primary="N",relations={{attacker="N",defender="M"}}}
+  local before=serial
+  for i=1,2000 do kozojeb.onGmcp("gmcp.Chimera.Combat.State") end
+  assert(serial-before==1)
+  advance(.13);assert(count("e")==1)
+  for i=1,2000 do kozojeb.onGmcp("gmcp.Chimera.Combat.State") end
+  advance(.13);assert(count("e")==1 and kozojeb.recoveryEmergency.attempts==1)
+end)
+
+test("a confirmed fresh refuge preserves both the patrol start and injured roster", function()
+  healingLeader();ambushAtRest();arriveRefuge(1323)
+  assert(kozojeb.mode=="heal_rest" and kozojeb.refugeRoom==1323 and kozojeb.config.startRoom==1322)
+  assert(kozojeb.injuredTeamMember=="Morrid" and kozojeb.recoveryRoster.morrid=="Morrid")
+  advance(3.1);assert(kozojeb.mode=="heal_rest")
+end)
+
+test("full recovery returns to the original patrol start instead of rebasing it", function()
+  healingLeader();ambushAtRest();arriveRefuge(1323)
+  gmcp.Chimera.Room.Entities.entities[3].hp=100;event();advance(3.1)
+  assert(kozojeb.mode=="recovery_return" and aliases[#aliases]=="/idz 1322")
+  arriveRefuge(1322)
+  assert(kozojeb.enabled and kozojeb.config.startRoom==1322 and kozojeb.refugeRoom==1323)
+  aliases={};kozojeb.escape("Kolejny odwrot")
+  assert(kozojeb.mode=="escape" and aliases[1]=="/idz 1323")
+end)
+
+test("a newly critical teammate must also heal fully before the party resumes", function()
+  healingLeader();gmcp.Chimera.Room.Entities.entities[2].hp=20;ambushAtRest()
+  arriveRefuge(1323)
+  gmcp.Chimera.Room.Entities.entities[3].hp=100
+  gmcp.Chimera.Room.Entities.entities[2].hp=60;event();advance(3.1)
+  assert(kozojeb.mode=="heal_rest" and kozojeb.recoveryMissing)
+  gmcp.Chimera.Room.Entities.entities[2].hp=100;event();advance(3.1)
+  assert(kozojeb.mode=="recovery_return" and aliases[#aliases]=="/idz 1322")
+end)
+
+test("missing escape exits retain safe shielding and bound map rereads", function()
+  local exits=getRoomExits
+  healingLeader();getRoomExits=function() return {} end
+  ambushAtRest()
+  assert(count("zaslon morrida")==1 and count("e")==0 and #aliases==0)
+  advance(10)
+  assert(kozojeb.recoveryEmergency.blocked and kozojeb.recoveryEmergency.searches==3)
+  assert(not kozojeb.escapeWatchTimer and kozojeb.enabled)
+  getRoomExits=exits
+end)
+
+test("an unknown map exit is never invented during an emergency", function()
+  local exits=getRoomExits
+  healingLeader();getRoomExits=function() return {portal=9999, east="?"} end
+  ambushAtRest();assert(count("e")==0 and #aliases==0 and kozojeb.recoveryEmergency.noExitNotice)
+  getRoomExits=exits
+end)
+
+test("a rejected emergency exit immediately tries a different mapped exit", function()
+  local exits=getRoomExits
+  healingLeader();getRoomExits=function() return {east=1323,west=1324} end
+  ambushAtRest();assert(count("e")==1)
+  kozojeb.onMoveRejected()
+  assert(count("e")==1 and count("w")==1 and kozojeb.recoveryEmergency.attempts==2)
+  getRoomExits=exits
+end)
+
+test("a missing step acknowledgement times out without repeatedly sending the same exit", function()
+  local exits=getRoomExits
+  healingLeader();getRoomExits=function() return {east=1323,west=1324} end
+  ambushAtRest();advance(12.1)
+  assert(count("e")==1 and count("w")==1 and kozojeb.recoveryEmergency.attempts==2)
+  getRoomExits=exits
+end)
+
+test("hostile refuge steps are bounded and never return to a rejected room", function()
+  local exits=getRoomExits
+  healingLeader();getRoomExits=function(id)
+    if id==1322 then return {east=1323} end
+    return {east=id+1,west=id-1}
+  end
+  ambushAtRest();assert(count("e")==1)
+  arriveRefuge(1323,true);assert(count("e")==2)
+  arriveRefuge(1324,true);assert(count("e")==3)
+  arriveRefuge(1325,true);advance(20)
+  assert(count("e")==3 and count("w")==0 and kozojeb.recoveryEmergency.blocked)
+  getRoomExits=exits
+end)
+
+test("a brief quiet interval cannot reset the evacuation movement budget", function()
+  local exits=getRoomExits
+  healingLeader();getRoomExits=function(id) return {east=id+1} end
+  ambushAtRest();local emergency=kozojeb.recoveryEmergency
+  arriveRefuge(1323)
+  assert(kozojeb.recoveryEmergency==emergency and emergency.attempts==1)
+  ambushAtRest()
+  assert(count("e")==2 and kozojeb.recoveryEmergency==emergency and emergency.attempts==2)
+  getRoomExits=exits
+end)
+
+test("ending combat after a blocked evacuation resumes healing instead of staying stuck", function()
+  local exits=getRoomExits
+  healingLeader();getRoomExits=function() return {} end
+  ambushAtRest();advance(10);assert(kozojeb.recoveryEmergency.blocked)
+  gmcp.Chimera.Combat.State={primary="",relations={}}
+  event("gmcp.Chimera.Combat.State")
+  assert(kozojeb.mode=="heal_rest" and kozojeb.enabled)
+  gmcp.Chimera.Room.Entities.entities[3].hp=100;event();advance(3.1)
+  assert(kozojeb.enabled and not kozojeb.recoveryEmergency)
+  getRoomExits=exits
+end)
+
+test("manual stop death and changing role cancel an outstanding evacuation", function()
+  for _, action in ipairs({"stop","death","rola wsparcie"}) do
+    healingLeader();ambushAtRest()
+    if action=="death" then kozojeb.onDeath() else kozojeb.command(action) end
+    sends,aliases={},{};advance(30)
+    assert(not kozojeb.enabled and not kozojeb.recoveryEmergency and not kozojeb.escapeWatchTimer)
+    assert(#sends==0 and #aliases==0)
+  end
+end)
+
+test("a reconnect after the emergency step recognizes the new room without another move", function()
+  healingLeader();ambushAtRest();kozojeb.onSessionEvent("sysDisconnectionEvent")
+  room=1323;gmcp.Chimera.Combat.State={primary="",relations={}}
+  sends,aliases={},{};kozojeb.onSessionEvent("sysConnectionEvent");reconnectPackets();advance(.6)
+  assert(kozojeb.enabled and kozojeb.mode=="heal_rest" and kozojeb.refugeRoom==1323)
+  assert(count("e")==0 and count("w")==0 and #aliases==0)
+end)
+
+test("a reconnect at the attacked original room resumes evacuation automatically", function()
+  healingLeader();ambushAtRest();kozojeb.onSessionEvent("sysDisconnectionEvent")
+  sends,aliases={},{};kozojeb.onSessionEvent("sysConnectionEvent");reconnectPackets();advance(.6)
+  assert(kozojeb.enabled and not kozojeb.reconnectTask and kozojeb.mode=="escape" and count("e")==1)
+end)
+
+test("a fatigue refusal during evacuation requires fresh movement before resuming", function()
+  healingLeader();ambushAtRest();kozojeb.onMovementExhausted()
+  assert(kozojeb.movementRest and not kozojeb.recoveryEmergency.pending)
+  local before=count("e");advance(2)
+  assert(count("e")==before)
+  gmcp.Char.Vitals.fatigue=0;event("gmcp.Char.Vitals")
+  assert(count("e")==before+1 and not kozojeb.movementRest)
+end)
+
+test("followers at critical HP never start their own emergency movement", function()
+  for _, role in ipairs({"wsparcie","zaslony"}) do
+    reset(role,80);kozojeb.start();gmcp.Chimera.Room.Entities.entities[1].hp=20;event()
+    kozojeb.escape("Atak w bazie");advance(3)
+    assert(not kozojeb.recoveryEmergency and not kozojeb.refugeRoom);noMovement()
+  end
+end)
+
+test("the logged position rejection clears rescue waiting and defers only that target", function()
+  reset("zaslony",60);kozojeb.start();positionReply("Yarrima")
+  assert(not kozojeb.shieldPendingTarget and not kozojeb.shieldRescue and kozojeb.shieldPositionUntil.yarrima==10)
+  assert(kozojeb.shieldFormationReady and kozojeb.shieldPositionTimer)
+  advance(9.8);assert(count("zaslon yarrima")==1)
+  advance(.4);assert(count("zaslon yarrima")==2)
+end)
+
+test("stop and start cannot erase an unexpired position restriction", function()
+  reset("zaslony",60);kozojeb.start();positionReply("Yarrima");kozojeb.stop();advance(3);kozojeb.start()
+  advance(1);assert(count("zaslon yarrima")==1)
+  advance(7);assert(count("zaslon yarrima")==2)
+end)
+
+test("position expiry never restarts a stopped profile", function()
+  reset("zaslony",60);kozojeb.start();positionReply("Yarrima");kozojeb.stop();advance(20)
+  assert(not kozojeb.enabled and count("zaslon yarrima")==1 and not kozojeb.shieldPositionTimer)
+end)
+
+test("position restrictions for two manual targets share one timer", function()
+  reset("wsparcie");kozojeb.start()
+  send("zaslon yarrima");positionReply("Yarrima")
+  send("zaslon morrida");positionReply("Morrida")
+  assert(kozojeb.shieldPositionUntil.yarrima and kozojeb.shieldPositionUntil.morrida)
+  local active=0;for _ in pairs(timers) do active=active+1 end
+  assert(kozojeb.shieldPositionTimer and active<=3) -- pozycja, kolejka decyzji i istniejacy odstep wsparcia
+end)
+
+test("an unrelated position response cannot poison another shield target", function()
+  reset("zaslony",60);kozojeb.start();kozojeb.onShieldPositionBlocked("Obcego")
+  assert(kozojeb.shieldPendingTarget and not kozojeb.shieldPositionUntil.obcego)
+end)
+
+test("conflicting manual commands cannot falsely restore formation after a position reply", function()
+  reset("zaslony",60);kozojeb.start();send("zaslon yarrima");positionReply("Yarrima")
+  assert(not kozojeb.shieldFormationReady and kozojeb.formationTimer)
+end)
+
+test("a blocked rescue position is unavailable when the leader decides team retreat", function()
+  rescueLeader();positionReply("Morrida");advance(.13)
+  assert(kozojeb.mode=="escape" and aliases[#aliases]=="/idz 1322")
+end)
+
+test("disconnect removes an old position timer without waking the profile", function()
+  reset("zaslony",60);kozojeb.start();positionReply("Yarrima");kozojeb.onSessionEvent("sysDisconnectionEvent")
+  assert(not kozojeb.shieldPositionTimer and next(kozojeb.shieldPositionUntil)==nil)
+  advance(12);assert(not kozojeb.enabled and count("zaslon yarrima")==1)
+end)
+
+test("own combat text keeps the watchdog alive while the room entity list is delayed", function()
+  setupLeader();kozojeb.start();kozojeb.entitiesReady=false
+  for i=1,8 do advance(5);kozojeb.onCombatProgress() end
+  assert(kozojeb.enabled and kozojeb.mode=="combat" and kozojeb.metrics.idleResets==0)
+end)
+
+test("a burst of own combat progress reuses the existing idle timer", function()
+  setupLeader();kozojeb.start();kozojeb.entitiesReady=false
+  local before, timer=serial,kozojeb.idleTimer
+  for i=1,2000 do kozojeb.onCombatProgress() end
+  assert(serial==before and kozojeb.idleTimer==timer)
+end)
+
+test("without combat progress the idle watchdog still detects a genuine stall", function()
+  setupLeader();kozojeb.start();kozojeb.entitiesReady=false;advance(20.1)
+  assert(kozojeb.metrics.idleResets==1 and kozojeb.mode=="idle_return")
+end)
+
+test("late combat text after disconnection cannot keep a suspended task alive", function()
+  setupLeader();kozojeb.start();kozojeb.onSessionEvent("sysDisconnectionEvent")
+  for i=1,30 do kozojeb.onCombatProgress() end
+  advance(25);assert(not kozojeb.enabled and not kozojeb.idleTimer)
 end)
 
 print(string.format("%d simulations passed", total))
