@@ -4705,6 +4705,7 @@ end)
 test("targeted ordinals follow the local current live NPC order", function()
   golemSetup("G")
   local e=gmcp.Chimera.Room.Entities.entities
+  e[5].name="Alabastrowy golem"
   e[5],e[8]=e[8],e[5]
   kozojeb.start();assert(count("zaslon yarrima przed czwartym golemem")==1)
 end)
@@ -4964,6 +4965,279 @@ end)
 test("a recovery restart at base retains unfinished cargo before allowing patrol", function()
   cargoAtBase();kozojeb.start(true);advance(4)
   assert(kozojeb.G.job.remaining==4 and kozojeb.G.busy() and kozojeb.mode=="heal_rest")
+end)
+
+local function liveGolemLeader()
+  golemSetup("L","prowadzacy")
+  kozojeb.start()
+  assert(kozojeb.G.job and kozojeb.G.job.phase=="battle")
+end
+local function killGolem(index)
+  local npc=gmcp.Chimera.Room.Entities.entities[4+index]
+  npc.hp=0
+  kozojeb.onKill(npc.name,false)
+  return npc
+end
+
+test("initial allocation stays distinct with viewer specific player and NPC identifiers", function()
+  local chosen={}
+  for view,selfId in ipairs({"G","M","S"}) do
+    golemSetup(selfId)
+    local e=gmcp.Chimera.Room.Entities.entities
+    local ids={}
+    for i,entity in ipairs(e) do
+      local old=entity.id
+      entity.id="view"..view.."-"..(40-i*((view%2==0) and -1 or 1))
+      ids[old]=entity.id
+    end
+    e[5].name="Nieforemny skrzypiacy golem";e[6].name="Kanciasty skrzypiacy golem"
+    e[7].name="Pekaty nieforemny golem";e[8].name="Nieforemny pekaty golem"
+    gmcp.Chimera.Group.State={leader=ids.L,members={ids.G,ids.L,ids.M,ids.S}}
+    for _,relation in ipairs(gmcp.Chimera.Combat.State.relations) do
+      relation.attacker,relation.defender=ids[relation.attacker],ids[relation.defender]
+    end
+    kozojeb.start()
+    assert(#shieldCommands()==1)
+    local command=shieldCommands()[1]
+    assert(not chosen[command],"local ID order caused duplicate opening assignment")
+    chosen[command]=true
+  end
+end)
+test("small differences in initial HP do not shift other defenders opening slots", function()
+  local chosen={}
+  for _,selfId in ipairs({"G","M","S"}) do
+    golemSetup(selfId)
+    for _,entity in ipairs(gmcp.Chimera.Room.Entities.entities) do
+      if entity.kind=="player" and entity.id~="L" and not entity.self then entity.hp=999 end
+    end
+    kozojeb.start()
+    local command=shieldCommands()[1]
+    assert(command and not chosen[command]);chosen[command]=true
+  end
+end)
+test("the visible successful shield reserves that specific NPC before GMCP catches up", function()
+  golemSetup("G")
+  kozojeb.shieldFormationReady=false;kozojeb.start()
+  kozojeb.G.onTeamCover("Yergo","Yarrima","kamiennego golema")
+  kozojeb.shieldFormationReady=true;event()
+  assert(#shieldCommands()==0)
+end)
+test("unrelated and failed team shield text cannot reserve a golem", function()
+  golemSetup("G")
+  kozojeb.shieldFormationReady=false;kozojeb.start()
+  kozojeb.G.onTeamCover("Obcy","Yarrima","kamiennego golema")
+  kozojeb.G.onTeamCover("Yergo","Obcego","kamiennego golema")
+  kozojeb.shieldFormationReady=true;event();assert(#shieldCommands()==1)
+end)
+test("a hold prevents a third person from taking the recently transferred NPC", function()
+  golemSetup("G");golemRelations({"L","G","M","S"})
+  gmcp.Chimera.Room.Entities.entities[2].hp=750
+  kozojeb.golemApi.snapshot()
+  kozojeb.shieldTransfers.N1={from="M",to="L",untilTime=clock+8}
+  kozojeb.start()
+  assert(#shieldCommands()==0)
+end)
+test("urgent rescue keeps priority over an optimization hold", function()
+  golemSetup("G");golemRelations({"L","G","M","S"})
+  local e=gmcp.Chimera.Room.Entities.entities
+  e[2].hp=600;e[3].hp=800;e[4].hp=800
+  kozojeb.golemApi.snapshot();kozojeb.shieldTransfers.N1={from="M",to="L",untilTime=clock+8}
+  kozojeb.start();assert(#shieldCommands()==1)
+end)
+test("a failed same NPC shield is not retried immediately after formation recovers", function()
+  golemSetup("G");kozojeb.start()
+  assert(#shieldCommands()==1)
+  local failedCommand=shieldCommands()[1]
+  kozojeb.onShieldResult("yarrima",false);advance(10.2)
+  event("gmcp.Chimera.Combat.State");kozojeb.onFormationReady();advance(.13)
+  assert(count(failedCommand)==1)
+end)
+test("fallback waiting times are staggered by stable member names", function()
+  local waits={}
+  for _,selfId in ipairs({"L","S"}) do
+    golemSetup(selfId,selfId=="L" and "prowadzacy" or "zaslony",2)
+    kozojeb.start()
+    assert(kozojeb.G.wait);waits[#waits+1]=kozojeb.G.wait.at-clock
+  end
+  assert(waits[1]~=waits[2])
+end)
+test("identical packet content reuses the current golem plan within the same decision window", function()
+  golemSetup("S");kozojeb.start()
+  local before=kozojeb.metrics.golemPlans
+  for i=1,50 do
+    kozojeb.onGmcp("gmcp.Char.Vitals")
+    kozojeb.G.shield()
+  end
+  assert(kozojeb.metrics.golemPlans<=before+1)
+end)
+test("changing rooms clears stale NPC holds and failures", function()
+  golemSetup("S");kozojeb.start()
+  kozojeb.G.onShieldResult({golemNpcId="N1",id="L"},true)
+  room=1323;kozojeb.onRoomChanged("gmcp.Room.Info");event();event("gmcp.Chimera.Combat.State")
+  assert(next(kozojeb.G.holds)==nil)
+end)
+test("disconnect clears combat reservations while preserving the cargo job", function()
+  liveGolemLeader();local job=kozojeb.G.job
+  kozojeb.G.onShieldResult({golemNpcId="N1",id="L"},true)
+  kozojeb.onSessionEvent("sysDisconnectionEvent")
+  assert(next(kozojeb.G.holds)==nil and kozojeb.G.job==job)
+end)
+test("a confirmed golem death picks armor immediately while other NPCs are alive", function()
+  liveGolemLeader();killGolem(1)
+  assert(count("wez pancerz")==1 and kozojeb.G.job.lootPending)
+  assert(count("przeszukaj pancerz")==0 and #aliases==0)
+end)
+test("duplicate death and XP lines cannot duplicate a fast pickup", function()
+  liveGolemLeader();local npc=killGolem(1)
+  kozojeb.onKill(npc.name,false);kozojeb.onKill("kamiennego golema",true)
+  assert(count("wez pancerz")==1 and kozojeb.G.job.deathCount==1)
+end)
+test("simultaneous deaths queue serial pickups until each previous one is confirmed", function()
+  liveGolemLeader()
+  local e=gmcp.Chimera.Room.Entities.entities
+  e[5].name="Alabastrowy golem";e[6].name="Kamienny golem"
+  killGolem(1);killGolem(2)
+  assert(count("wez pancerz")==1)
+  pickup();assert(count("wez pancerz")==2)
+  pickup();assert(kozojeb.G.job.picked==2 and not kozojeb.G.job.lootPending)
+end)
+test("the consumed armor is never added to cargo or retried after its refusal", function()
+  liveGolemLeader();killGolem(1)
+  kozojeb.G.onConsumed("Kamienny golem")
+  kozojeb.G.onText("Wez co?");advance(4)
+  assert(count("wez pancerz")==1 and kozojeb.G.job.picked==0 and kozojeb.G.job.consumed==1)
+end)
+test("a repeated consume message does not subtract a carried armor", function()
+  liveGolemLeader();killGolem(1)
+  kozojeb.G.onConsumed("Kamienny golem");kozojeb.G.onConsumed("Kamienny golem")
+  assert(kozojeb.G.job.consumed==1 and kozojeb.G.job.picked==0)
+  kozojeb.G.onText("Bierzesz powyginany pancerz plytowy.")
+  assert(kozojeb.G.job.picked==1)
+end)
+test("ground armor disintegration does not impersonate consumption by a living golem", function()
+  liveGolemLeader();killGolem(1)
+  kozojeb.G.onText("Zniszczony powyginany pancerz plytowy rozsypuje sie w proch.")
+  assert(kozojeb.G.job.consumed==0 and kozojeb.G.job.lootPending)
+end)
+test("a temporary missing armor gets only one delayed retry", function()
+  liveGolemLeader();killGolem(1)
+  kozojeb.G.onText("Wez co?");advance(.5)
+  assert(count("wez pancerz")==2)
+  kozojeb.G.onText("Wez co?");advance(4)
+  assert(count("wez pancerz")==2 and kozojeb.G.job.unavailable==1)
+end)
+test("an unanswered pickup is preserved as uncertainty without repeated commands", function()
+  liveGolemLeader();killGolem(1);advance(4)
+  assert(count("wez pancerz")==1 and kozojeb.G.job.uncertainPickup==1)
+end)
+test("manual stop cancels fast loot, delayed retries and late replies", function()
+  liveGolemLeader();killGolem(1);kozojeb.G.onText("Wez co?")
+  kozojeb.stop();local before=#sends;advance(5)
+  kozojeb.G.onText("Bierzesz powyginany pancerz plytowy.")
+  assert(#sends==before and not kozojeb.G.job and not kozojeb.G.lootTimer)
+end)
+test("support profiles never pick golem armor on death notifications", function()
+  for _,role in ipairs({"zaslony","wsparcie"}) do
+    golemSetup("S",role);kozojeb.start();killGolem(1)
+    assert(count("wez pancerz")==0 and #aliases==0)
+  end
+end)
+test("urgent low HP retreat takes priority over immediate armor pickup", function()
+  liveGolemLeader()
+  gmcp.Char.Vitals.hp=100;gmcp.Chimera.Room.Entities.entities[2].hp=100
+  kozojeb.onGmcp("gmcp.Char.Vitals");killGolem(1)
+  assert(count("wez pancerz")==0)
+end)
+test("healing text polling waits while armor searching is active", function()
+  cargoAtBase();local e=gmcp.Chimera.Room.Entities.entities
+  e[2].hp=900;gmcp.Char.Vitals.hp=900
+  event("gmcp.Char.Vitals");advance(18)
+  assert(count("kondycja")==0 and kozojeb.G.actionBusy())
+end)
+test("two thousand combat packets cannot duplicate the in flight death pickup", function()
+  liveGolemLeader();killGolem(1)
+  for i=1,2000 do kozojeb.onGmcp("gmcp.Chimera.Combat.State") end
+  advance(.13)
+  assert(count("wez pancerz")==1 and kozojeb.G.lootTimer)
+end)
+
+test("all four in combat pickups finish with four searches and drops without an external trigger", function()
+  golemCycle(function()
+    for i=1,4 do killGolem(i);pickup() end
+  end,function() end)
+  assert(count("wez pancerz")==4 and kozojeb.G.job.picked==4)
+  arriveWithCargo()
+  for i=1,4 do finishArmor() end
+  assert(count("przeszukaj pancerz")==4 and count("odloz pancerz")==4 and not kozojeb.G.busy())
+end)
+test("the logged consumed armor cycle handles exactly three carried items without end of room retries", function()
+  golemCycle(function()
+    killGolem(1);kozojeb.G.onConsumed("Kamienny golem");kozojeb.G.onText("Wez co?");advance(.13)
+    for i=2,4 do killGolem(i);pickup() end
+  end,function() end)
+  assert(count("wez pancerz")==4 and kozojeb.G.job.picked==3 and kozojeb.G.job.consumed==1)
+  arriveWithCargo()
+  for i=1,3 do finishArmor() end
+  assert(count("przeszukaj pancerz")==3 and count("odloz pancerz")==3 and not kozojeb.G.busy())
+end)
+test("disconnect during immediate loot preserves its uncertain receipt without a blind replay", function()
+  liveGolemLeader();killGolem(1)
+  kozojeb.onSessionEvent("sysDisconnectionEvent");advance(2)
+  assert(count("wez pancerz")==1)
+  reconnectPackets();advance(1)
+  assert(kozojeb.enabled and kozojeb.G.job.uncertainPickup==1 and count("wez pancerz")==1)
+end)
+test("a visible reservation of one named NPC does not block another defender's different assignment", function()
+  golemSetup("M");local e=gmcp.Chimera.Room.Entities.entities
+  e[5].name="Alabastrowy golem";e[6].name="Kamienny golem";e[7].name="Metalowy golem";e[8].name="Zelazny golem"
+  kozojeb.shieldFormationReady=false;kozojeb.start()
+  kozojeb.G.onTeamCover("Gror","Yarrima","alabastrowego golema")
+  kozojeb.shieldFormationReady=true;event()
+  assert(count("zaslon yarrima przed drugim golemem")==1)
+end)
+test("partially confirmed opening assignments preserve distinct remaining slots", function()
+  local chosen={}
+  for _,selfId in ipairs({"M","S"}) do
+    golemSetup(selfId);golemRelations({"G","L","L","L"});kozojeb.start()
+    local command=shieldCommands()[1]
+    assert(command and not chosen[command]);chosen[command]=true
+    assert(not command:find("pierwszym",1,true))
+  end
+end)
+test("new urgent damage permits a rescue despite a previous same NPC failure", function()
+  golemSetup("G");kozojeb.start();local command=shieldCommands()[1]
+  kozojeb.onShieldResult("yarrima",false);advance(2.1)
+  gmcp.Chimera.Room.Entities.entities[2].hp=600
+  kozojeb.onFormationReady();event()
+  assert(count(command)==2)
+end)
+test("two thousand visible reservations share one decision queue and no per NPC timers", function()
+  golemSetup("M");kozojeb.shieldFormationReady=false;kozojeb.start()
+  for i=1,2000 do kozojeb.G.onTeamCover("Gror","Yarrima","kamiennego golema") end
+  assert(kozojeb.actionTimer and not kozojeb.G.timer and not kozojeb.G.lootTimer)
+  advance(.13);assert(#shieldCommands()==0)
+end)
+test("a recovered base cycle counts at least the confirmed backpack cargo", function()
+  cargoAtBase()
+  kozojeb.G.job.picked=3;kozojeb.G.job.bagged=4;kozojeb.G.job.phase="return"
+  event()
+  assert(kozojeb.G.job.remaining==4 and kozojeb.G.busy())
+end)
+
+test("an unrelated golem death cannot start looting while this party has not engaged", function()
+  golemSetup("L","prowadzacy")
+  gmcp.Chimera.Combat.State={primary="",relations={}}
+  kozojeb.config.targets.golem=false;kozojeb.start()
+  killGolem(1)
+  assert(count("wez pancerz")==0)
+end)
+
+test("duplicate empty replies do not recreate the pending pickup retry timer", function()
+  liveGolemLeader();killGolem(1);kozojeb.G.onText("Wez co?")
+  local timer=kozojeb.G.lootTimer
+  for i=1,2000 do kozojeb.G.onText("Wez co?") end
+  assert(kozojeb.G.lootTimer==timer and kozojeb.G.job.lootPending.tries==1)
+  advance(.5);assert(count("wez pancerz")==2)
 end)
 
 print(string.format("%d simulations passed", total))

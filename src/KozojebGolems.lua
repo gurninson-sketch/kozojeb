@@ -3,7 +3,7 @@
 do
 local K = kozojeb
 local A = K.golemApi
-local G = {}
+local G = {holds={}, failures={}, combatEpoch=0}
 K.G = G
 local ordinal = {"pierwszym", "drugim", "trzecim", "czwartym"}
 local function enabled() return K.config.golemsEnabled == true end
@@ -25,8 +25,13 @@ end
 local function cancel(name)
   if G[name] then pcall(killTimer, G[name]); G[name] = nil end
 end
-function G.cancel() cancel("timer"); cancel("shieldTimer") end
-function G.reset() G.cancel(); G.job, G.wait, G.planCache = nil, nil, nil end
+function G.cancel() cancel("timer"); cancel("shieldTimer"); cancel("lootTimer") end
+function G.resetCombat()
+  cancel("shieldTimer")
+  G.holds,G.failures,G.wait,G.planCache,G.combatRoom={},{},nil,nil,nil
+  G.combatEpoch=G.combatEpoch+1
+end
+function G.reset() G.cancel(); G.job=nil; G.resetCombat() end
 local function later(seconds, callback)
   cancel("timer")
   local job, generation = G.job, K.generation
@@ -50,6 +55,7 @@ function G.allowRoom(count)
 end
 function G.encounter()
   if not fresh() or not K.combatRoomReady or not K.sessionFresh.combat then return false end
+  if G.combatRoom~=A.room() then G.resetCombat(); G.combatRoom=A.room() end
   local list, others = golems()
   if #list == 0 or #list > 4 or others > 0 then return false end
   local snapshot = A.snapshot()
@@ -67,6 +73,25 @@ local function health(entity)
   if percent and A.isSelf(entity) then percent = math.min(percent, K.lastHp) end
   return percent
 end
+local function byName(a,b)
+  local first,second=A.normal(a.name),A.normal(b.name)
+  if first~=second then return first<second end
+  return tostring(a.id)<tostring(b.id)
+end
+local function urgent(target)
+  local hp=health(target)
+  return hp and hp<=math.max(K.config.escapeHp,K.config.teamEscapeHp)+15
+end
+local function pruneLocks()
+  local active={}
+  for _,npc in ipairs(golems()) do active[tostring(npc.id)]=true end
+  for id,hold in pairs(G.holds) do
+    if not active[id] or hold.untilTime<=A.now() then G.holds[id]=nil end
+  end
+  for key,failure in pairs(G.failures) do
+    if not active[failure.npcId] or failure.untilTime<=A.now() then G.failures[key]=nil end
+  end
+end
 local function selectedProjection(own, target, npc, rotation)
   local hp, ownHp = health(target), health(own)
   if not hp or not ownHp or ownHp < math.max(K.config.shieldSelfHp, K.config.escapeHp + 15)
@@ -79,6 +104,14 @@ local function selectedProjection(own, target, npc, rotation)
   local owners = A.snapshot().owners[tostring(npc.id)]
   local owner = owners and next(owners)
   if owner ~= tostring(target.id) or next(owners, owner) ~= nil then return end
+  local id=tostring(npc.id)
+  if not urgent(target) then
+    local hold,transfer,failure=G.holds[id],K.shieldTransfers[id],G.failures[id..":"..tostring(target.id)]
+    if hold and hold.untilTime>A.now() then return end
+    if transfer and transfer.untilTime>A.now() then return end
+    if failure and failure.untilTime>A.now() then return end
+  end
+  if A.isSelf(own) and (K.shieldPositionUntil[A.form(target.name) or ""] or 0)>A.now() then return end
   return A.projection(own, target, hp, tostring(npc.id), rotation)
 end
 function G.project(own, target)
@@ -94,15 +127,29 @@ function G.project(own, target)
   end
 end
 local function plans()
-  local key = table.concat({K.combatRevision, K.dataRevision, K.config.golemHpGap,
+  pruneLocks()
+  local context,snapshot=A.group(),A.snapshot()
+  local parts={snapshot.signature}
+  for _,member in ipairs(context.members) do
+    local value=A.health(member,context.memberVitals[tostring(member.id)] or context.memberVitals[A.normal(member.name)])
+    local history=K.healthHistory[tostring(member.id)]
+    parts[#parts+1]=table.concat({tostring(member.id),A.normal(member.name),value and value.hp or "?",
+      value and value.maxhp or "?",history and history.debt or 0},"/")
+  end
+  table.sort(parts)
+  local key = table.concat({table.concat(parts,"|"),G.combatEpoch,K.lastHp,K.config.golemHpGap,
     K.config.shieldSelfHp, K.config.shieldMaxAttackers, K.config.escapeHp,
     math.floor(A.now() * 2)}, ":")
-  if G.planCache and G.planCache.key == key then return G.planCache.value end
+  if G.planCache and G.planCache.key == key then return G.planCache.value,G.planCache.opening end
   K.metrics.golemPlans = (K.metrics.golemPlans or 0) + 1
-  local context, snapshot = A.group(), A.snapshot()
   local players, loads, npcs, order, assignments, assigned = {}, {}, golems(), {}, {}, {}
   for index, npc in ipairs(npcs) do order[tostring(npc.id)] = ordinal[index] end
-  table.sort(npcs, function(a, b) return tostring(a.id) < tostring(b.id) end)
+  local localOrder={}
+  for index,npc in ipairs(npcs) do localOrder[tostring(npc.id)]=index end
+  table.sort(npcs,function(a,b)
+    if A.normal(a.name)~=A.normal(b.name) then return A.normal(a.name)<A.normal(b.name) end
+    return localOrder[tostring(a.id)]<localOrder[tostring(b.id)]
+  end)
   for _, member in ipairs(context.members) do
     local id, hp = tostring(member.id), health(member)
     if hp and hp > 0 then
@@ -110,7 +157,30 @@ local function plans()
       loads[id] = snapshot.incoming[id] and snapshot.incoming[id].count or 0
     end
   end
-  table.sort(players, function(a, b) return tostring(a.id) < tostring(b.id) end)
+  table.sort(players,byName)
+  local leader=context.actualLeader
+  local incoming=leader and snapshot.incoming[tostring(leader.id)]
+  if incoming and incoming.count>1 then
+    local free,available={},{}
+    for _,member in ipairs(players) do
+      if tostring(member.id)~=tostring(leader.id) and loads[tostring(member.id)]==0 then free[#free+1]=member end
+    end
+    for _,npc in ipairs(npcs) do
+      if incoming.npcs[tostring(npc.id)] then available[#available+1]=npc end
+    end
+    if #free>0 then
+      -- Para nazw obronca/NPC jest wspolna takze przy innych lokalnych ID.
+      -- Niedostepny obronca nie przesuwa natychmiast pozostalych przydzialow.
+      for i=1,math.min(#free,#available-1) do
+        local own,npc=free[i],available[i]
+        if selectedProjection(own,leader,npc,false) then
+          assignments[tostring(own.id)]={own=own,target=leader,npcId=tostring(npc.id),ordinal=order[tostring(npc.id)]}
+        end
+      end
+      G.planCache={key=key,value=assignments,opening=true}
+      return assignments,true
+    end
+  end
   local used = {}
   -- Wirtualny podzial daje kazdemu profilowi ten sam osobny cel juz przy
   -- pierwszym stanie 4 -> prowadzacy. Nie zakladamy wspolnego timera/IPC.
@@ -168,30 +238,50 @@ function G.shield()
   if not G.encounter() then cancel("shieldTimer"); G.wait=nil; return false end
   if A.isFollower() and K.config.role ~= "zaslony" then return true end
   local own = A.group().self
-  local assignments = plans()
+  local assignments,opening = plans()
   local plan = own and assignments[tostring(own.id)]
   if plan then
     cancel("shieldTimer"); G.wait=nil
     A.shield(plan.target, health(plan.target), 100, plan)
-  elseif next(assignments) and own then
+  elseif (next(assignments) or opening) and own then
     -- Brak raportow o wlaczeniu innych profili: po krotkim czasie mozliwy
     -- jest lokalny plan awaryjny, ponownie oceniony na aktualnym GMCP.
     local key = A.snapshot().signature
     if not G.wait or G.wait.key ~= key then
       cancel("shieldTimer")
-      G.wait = {key=key, at=A.now() + 0.9}
+      local members={}
+      for _,member in ipairs(A.group().members) do members[#members+1]=member end
+      table.sort(members,byName)
+      local rank=0
+      for i,member in ipairs(members) do if A.isSelf(member) then rank=i-1 break end end
+      local emergency=false
+      for _,member in ipairs(members) do if urgent(member) then emergency=true break end end
+      local delay=emergency and (0.15+rank*0.15) or (0.9+rank*0.3)
+      G.wait = {key=key, at=A.now() + delay}
       local wait, generation = G.wait, K.generation
-      G.shieldTimer = tempTimer(0.9, function()
+      G.shieldTimer = tempTimer(delay, function()
         G.shieldTimer=nil
         if G.wait == wait and K.enabled and K.generation == generation then A.queue() end
       end)
     elseif A.now() >= G.wait.at then
       local list = golems()
-      for _, target in ipairs(A.group().members) do
+      local targets={}
+      for _,member in ipairs(A.group().members) do targets[#targets+1]=member end
+      local snapshot=A.snapshot()
+      table.sort(targets,function(a,b)
+        local first=snapshot.incoming[tostring(a.id)]
+        local second=snapshot.incoming[tostring(b.id)]
+        local aCount,bCount=first and first.count or 0,second and second.count or 0
+        if aCount~=bCount then return aCount>bCount end
+        if health(a)~=health(b) then return (health(a) or 100) < (health(b) or 100) end
+        return byName(a,b)
+      end)
+      for _, target in ipairs(targets) do
         if tostring(target.id) ~= tostring(own.id) then
           for index, npc in ipairs(list) do
-            if selectedProjection(own, target, npc, false) then
-              A.shield(target, health(target), 100, {npcId=tostring(npc.id), ordinal=ordinal[index]})
+            local direct=selectedProjection(own,target,npc,false)
+            if direct or selectedProjection(own,target,npc,true) then
+              A.shield(target, health(target), 100, {npcId=tostring(npc.id), ordinal=ordinal[index],rotation=not direct})
               return true
             end
           end
@@ -200,6 +290,40 @@ function G.shield()
     end
   end
   return true
+end
+local function accusative(name)
+  local words={}
+  for word in A.normal(name):gmatch("%S+") do
+    words[#words+1]=word=="golem" and "golema" or word:gsub("y$","ego"):gsub("i$","iego")
+  end
+  return table.concat(words," ")
+end
+function G.onTeamCover(actor,form,description)
+  if not fresh() or K.config.role=="wsparcie" then return end
+  if G.combatRoom~=A.room() then G.resetCombat();G.combatRoom=A.room() end
+  local context=A.group()
+  local source,patient
+  for _,member in ipairs(context.members) do
+    if A.normal(member.name)==A.normal(actor) then source=member end
+    if A.normal(member.name)==A.normal(form) or A.form(member.name)==A.normal(form)
+        or (A.normal(form)=="cie" and A.isSelf(member)) then patient=member end
+  end
+  if not source or not patient then return end
+  local found=false
+  for _,npc in ipairs(golems()) do
+    if accusative(npc.name)==A.normal(description) or A.normal(npc.name)==A.normal(description) then
+      G.holds[tostring(npc.id)]={untilTime=A.now()+K.config.shieldHold}
+      found=true
+    end
+  end
+  if found then G.combatEpoch=G.combatEpoch+1; G.planCache=nil; A.queue() end
+end
+function G.onShieldResult(pending,succeeded)
+  if not enabled() or not pending.golemNpcId then return end
+  local id=pending.golemNpcId
+  if succeeded then G.holds[id]={untilTime=A.now()+K.config.shieldHold}
+  else G.failures[id..":"..tostring(pending.id)]={npcId=id,untilTime=A.now()+15} end
+  G.combatEpoch=G.combatEpoch+1; G.planCache=nil
 end
 local function finishCargo(job)
   cancel("timer")
@@ -230,6 +354,81 @@ local function returnHome(job)
     K.escape("Golemy: pokoj oczyszczony. Wracam z pancerzami do kozobazy.")
   end
 end
+local function newJob(expected)
+  return {room=A.room(),expected=expected,picked=0,remaining=0,bagged=0,extraCargo=0,
+    attempts=0,phase="battle",deaths={},deathCount=0,lootQueue={},consumed=0,unavailable=0}
+end
+local function lootLater(seconds,callback)
+  cancel("lootTimer")
+  local job,generation=G.job,K.generation
+  G.lootTimer=tempTimer(seconds,function()
+    G.lootTimer=nil
+    if G.job~=job or not K.enabled or generation~=K.generation then return end
+    callback(job)
+    A.queue()
+  end)
+end
+local function finishFast(job)
+  if job.lootPending then job.lootPending.done=true;job.lootPending=nil end
+  cancel("lootTimer")
+end
+function G.pumpLoot()
+  local job=G.job
+  if not fresh() or A.isFollower() or not job or A.room()~=job.room or K.movementRest
+      or K.mode=="escape" or K.mode=="heal_rest" or K.mode=="recovery_return" then return end
+  while job.lootQueue and job.lootQueue[1] and job.lootQueue[1].done do table.remove(job.lootQueue,1) end
+  local pending=job.lootPending
+  if not pending then pending=job.lootQueue and job.lootQueue[1];job.lootPending=pending end
+  if not pending or (pending.waiting or pending.retryAt and A.now()<pending.retryAt) then return end
+  pending.waiting=true;pending.tries=(pending.tries or 0)+1
+  lootLater(1.6,function(j)
+    if j.lootPending~=pending then return end
+    if not pending.lost then j.uncertainPickup=(j.uncertainPickup or 0)+1 end
+    finishFast(j)
+  end)
+  send("wez pancerz")
+end
+function G.onKill(name,dead,confirmed)
+  if confirmed or not fresh() or A.isFollower() or K.limitRoom or K.movementRest
+      or K.mode=="escape" or K.mode=="heal_rest" or K.mode=="recovery_return"
+      or not A.normal(name):match("%f[%a]golem%f[%A]") then return end
+  local job=G.job
+  local engaged=job and job.hadCombat or G.encounter()
+    or (dead and tostring(K.currentTargetId)==tostring(dead.id))
+  if not engaged then return end
+  if not job then
+    local list,others=golems()
+    if others>0 or #list>4 then return end
+    job=newJob(#list+1);G.job=job
+  end
+  if job.room~=A.room() or job.cargoReady or job.phase=="done" then return end
+  local key=dead and tostring(dead.id) or A.normal(name)..":"..math.floor(A.now()*2)
+  job.deaths=job.deaths or {}
+  if job.deaths[key] then return end
+  job.deaths[key]=true;job.deathCount=(job.deathCount or 0)+1
+  job.expected=math.max(job.expected,job.deathCount+#golems())
+  job.hadCombat=true;job.lootQueue=job.lootQueue or {}
+  if #job.lootQueue<16 then job.lootQueue[#job.lootQueue+1]={key=key} end
+  -- Jedna szybka reakcja na rzeczywisty zgon; bez dodatkowej petli walki.
+  if A.safety() then G.pumpLoot() end
+end
+function G.onConsumed(actor)
+  local job=G.job
+  if not fresh() or A.isFollower() or not job or job.cargoReady or A.room()~=job.room then return end
+  local present=false
+  for _,npc in ipairs(golems()) do if A.normal(npc.name)==A.normal(actor) then present=true break end end
+  if not present or (job.deathCount or 0)<=job.picked+(job.consumed or 0) then return end
+  local key=A.normal(actor)..":"..tostring(job.deathCount)
+  if job.lastConsumed==key then return end
+  job.lastConsumed=key;job.consumed=(job.consumed or 0)+1
+  if job.lootPending then job.lootPending.lost=true end
+  A.note("Golemy: zywy golem spalil pancerz z ziemi; nie doliczam go do zebranego ladunku.","yellow")
+  A.queue()
+end
+function G.actionBusy()
+  local phase=G.job and G.job.phase
+  return enabled() and (phase=="search_wait" or phase=="search_uncertain")
+end
 function G.inspect()
   if not fresh() or A.isFollower() then return false end
   if K.mode == "panic_wait" or K.mode == "panic_search" or K.mode == "idle_return"
@@ -238,8 +437,7 @@ function G.inspect()
   local job = G.job
   if not job and #list > 0 and #list <= 4 and others == 0
       and K.mode ~= "escape" and K.mode ~= "heal_rest" and K.mode ~= "recovery_return" then
-    job = {room=A.room(), expected=#list, picked=0, remaining=0, bagged=0,
-      extraCargo=0, attempts=0, phase="battle"}
+    job = newJob(#list)
     G.job = job
   end
   if not job or job.phase == "done" then return false end
@@ -247,6 +445,10 @@ function G.inspect()
   if G.encounter() and A.room() == job.room then job.hadCombat=true end
   local atBase = A.room() == tonumber(K.config.startRoom)
   local recovery = K.mode == "escape" or K.mode == "heal_rest" or K.mode == "recovery_return"
+  if not recovery and A.room()==job.room then
+    G.pumpLoot()
+    if job.lootPending and #list==0 and not A.threat() then return true end
+  end
   if (job.phase == "pickup" or job.phase == "settle" or job.phase == "collect")
       and (recovery or A.room() ~= job.room) then returnHome(job) end
   if (job.phase == "pickup" or job.phase == "settle") and not G.timer then job.phase="collect" end
@@ -264,7 +466,8 @@ function G.inspect()
   if job.phase == "settle" or job.phase == "pickup" then return true end
   if job.phase == "collect" then
     if A.room() ~= job.room or recovery then returnHome(job)
-    elseif job.picked >= job.expected or job.attempts >= job.expected + 1 then returnHome(job)
+    elseif job.picked+(job.consumed or 0)+(job.unavailable or 0) >= job.expected
+        or job.attempts >= job.expected + 1 then returnHome(job)
     else
       K.mode="golem_loot"
       job.phase, job.attempts, job.empty = "pickup", job.attempts + 1, nil
@@ -288,7 +491,8 @@ function G.inspect()
       if not recovery then K.escape("Golemy: obsluga pancerzy i wspolny odpoczynek w kozobazie.") end
       return false
     end
-    job.remaining, job.phase = job.picked + (job.uncertainPickup or 0) + (job.extraCargo or 0), "search"
+    job.remaining, job.phase = math.max(job.bagged or 0,
+      job.picked + (job.uncertainPickup or 0) + (job.extraCargo or 0)), "search"
     job.cargoReady=true
   end
   if atBase and job.cargoReady and not recovery then
@@ -351,9 +555,21 @@ function G.onText(line)
   elseif armor and amount and text:match("^bierzesz ")
       and (A.room() == job.room or (job.cargoReady and A.room() == tonumber(K.config.startRoom))) then
     job.picked = job.picked + amount
+    if job.lootPending then finishFast(job) end
     if job.cargoReady then job.remaining=job.remaining+amount end
     if job.phase == "pickup" then cancel("timer"); job.phase="collect"; job.retried=nil end
     if job.phase == "done" or job.phase == "cargo_uncertain" then job.phase="search" end
+  elseif text=="wez co?" and job.lootPending then
+    local pending=job.lootPending
+    if not pending.waiting then return end
+    cancel("lootTimer")
+    if pending.lost or pending.tries>=2 then
+      if not pending.lost then job.unavailable=(job.unavailable or 0)+1 end
+      finishFast(job)
+    else
+      pending.waiting=false;pending.retryAt=A.now()+0.3
+      lootLater(0.3,function() end)
+    end
   elseif text == "wez co?" and job.phase == "pickup" then job.empty=true
   elseif (job.phase == "search_wait" or job.phase == "search_uncertain") and armor and text:match("^przestajesz przeszukiwac ") then
     cancel("timer"); job.phase="drop"
@@ -374,6 +590,10 @@ end
 function G.resume()
   local job = G.job
   if not enabled() or not job or A.isFollower() then return false end
+  if job.lootPending then
+    if not job.lootPending.lost then job.uncertainPickup=(job.uncertainPickup or 0)+1 end
+    finishFast(job)
+  end
   if job.phase == "pickup" or job.phase == "settle" then
     if job.phase == "pickup" then job.uncertainPickup = math.min(job.expected - job.picked, (job.uncertainPickup or 0) + 1) end
     job.phase = A.room() == job.room and "collect" or "return"
@@ -405,7 +625,8 @@ function G.status()
     cargo_uncertain="brak potwierdzenia pancerzy",
     search_uncertain="brak potwierdzenia przeszukania",drop_uncertain="brak potwierdzenia odlozenia"}
   return string.format("roznica HP %d pp; %s", K.config.golemHpGap,
-    G.job and ((labels[G.job.phase] or "oczekiwanie") .. ", pozostalo " .. G.job.remaining
+    G.job and ((labels[G.job.phase] or "oczekiwanie") .. ", pozostalo "
+      .. (G.job.cargoReady and G.job.remaining or G.job.picked+(G.job.extraCargo or 0))
       .. ", w plecaku " .. (G.job.bagged or 0)) or "gotowy")
 end
 function G.command(rest)
@@ -435,4 +656,10 @@ end
 K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
   "^(?:Bierzesz .*pancerz.*|Wkladasz .*pancerz.*plecaka\\.|Wez co\\?|Przestajesz przeszukiwac .*pancerz.*|Przeszukaj co\\?|Odkladasz .*pancerz.*|Odloz co\\?)$",
   [[kozojeb.G.onText(matches[1])]])
+K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
+  "^([A-Za-z-]+)(?: zrecznie)? zaslania (.+) przed ciosami ([^.,]+)[.,]",
+  [[kozojeb.G.onTeamCover(matches[2],matches[3],matches[4])]])
+K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
+  "^(.+) zbliza sie do powyginanego pancerza plytowego, podnosi go i wciska do",
+  [[kozojeb.G.onConsumed(matches[2])]])
 end

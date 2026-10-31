@@ -54,7 +54,7 @@ end
 K.legacyImportTried = true
 K.initialized = false
 
-K.version = "2.9.12"
+K.version = "2.9.13"
 K.config = K.config or {
   chaseDelay = 0.20,
   patrolDelay = 0.70,
@@ -1583,7 +1583,8 @@ local function scheduleHealingCheck()
       end
       K.healPollTicks = (K.healPollTicks or 0) + 1
       local ownTarget = (K.recoveryOwnCritical or (K.G and K.G.fullHp())) and 100 or K.config.recoveryHp
-      if K.healPollTicks >= 5 and (not K.ownHealth
+      if K.G and K.G.actionBusy() then K.healPollTicks=0
+      elseif K.healPollTicks >= 5 and (not K.ownHealth
           or K.ownHealth.hp * 100 < K.ownHealth.maxhp * ownTarget) then
         send("kondycja", false)
         K.healPollTicks = 0
@@ -2168,7 +2169,11 @@ local function tryShield(entity, hp, threshold, plan)
   later("shieldTimer", K.config.teamShieldInterval, function() end)
   K.sendingShield = true
   local suffix = plan and (" przed " .. plan.ordinal .. " golemem") or ""
-  if plan then note("Golemy: celowana zaslona" .. suffix .. ".", "cyan") end
+  if plan then
+    local npc=entityById(plan.npcId)
+    note("Golemy: celowana zaslona" .. suffix .. " (" .. (npc and npc.name or "brak opisu")
+      .. "; ID " .. plan.npcId .. ").", "cyan")
+  end
   send("zaslon " .. form .. suffix)
   K.sendingShield = nil
   K.metrics.shields = K.metrics.shields + 1
@@ -2179,6 +2184,7 @@ end
 function K.onShieldRejected()
   local pending = K.shieldPendingTarget
   if not pending then return end
+  if K.G and pending.golemNpcId then K.G.onShieldResult(pending,false) end
   if not pending.external and not pending.golemNpcId then K.shieldRejectedForms[normal(pending.name)] = pending.form end
   K.shieldPendingTarget, K.shieldRescue, K.shieldReplyToken = nil, nil, nil
   cancelTimer("shieldReplyTimer")
@@ -2206,6 +2212,7 @@ function K.onShieldResult(form, succeeded)
   local pending = K.shieldPendingTarget
   local requestedRevision
   if pending and normal(pending.form) == normal(form) then
+    if K.G and pending.golemNpcId then K.G.onShieldResult(pending,succeeded) end
     requestedRevision = pending.combatRevision
     K.shieldPendingTarget = nil
     cancelTimer("shieldReplyTimer")
@@ -3915,6 +3922,7 @@ function K.onKill(name, confirmedByServer)
       K.creatureCountCache = nil
     end
   end
+  if K.G then K.G.onKill(name,dead,confirmedByServer) end
   if K.enabled and isFollower() then
     K.supportCombatHint = nil
     K.supportDeathBarrier = {combat=K.combatRevision, entities=K.sourceRevisions.entities}
@@ -4144,6 +4152,7 @@ function K.tryResumeAfterReconnect()
 end
 
 function K.onSessionEvent(eventName)
+  if K.G then K.G.resetCombat() end
   invalidateState(true)
   K.shieldPendingTarget, K.shieldRescue, K.shieldReplyToken = nil, nil, nil
   K.combatRoomReady = false
@@ -5150,6 +5159,7 @@ function K.performance()
     m.attacks, m.attackRetries, m.idleResets, m.restartWaits))
   note(string.format("Odpoczynki po odmowie ruchu lub rozdzieleniu druzyny %d; powroty po druzyne %d.",
     m.movementRests, m.regroups))
+  if K.config.golemsEnabled then note("Plany zaslon golemow: " .. (m.golemPlans or 0) .. ".") end
 end
 
 function K.diagnostics(reason)
@@ -5644,6 +5654,7 @@ K.golemApi = {
   isSelf=isSelf, isFollower=isFollower, health=latestHealth, normal=normal,
   liveNpc=liveNpc, snapshot=combatSnapshot, pair=shieldHealthPair,
   projection=shieldProjection, shield=tryShield, threat=recoveryThreat,
+  form=shieldNameForm, safety=function() return safetyCheck(true) end,
   queue=function() queueInspection(inspectRoom) end,
   ensureTarget=function() addCustomTarget("golem golema") end,
   heal=function() K.escapeTailSent=false; finishEscapeTail() end,

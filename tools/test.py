@@ -68,6 +68,20 @@ for line in ("Bierzesz powyginany pancerz plytowy.",
 assert not re.fullmatch(armor_pattern, "Zniszczony powyginany pancerz plytowy rozsypuje sie w proch.")
 assert not re.fullmatch(armor_pattern, "Nie udalo ci sie znalezc niczego interesujacego.")
 
+for handler,examples in (
+    ("onTeamCover",[("Gror zaslania Yarrima przed ciosami pekatego nieforemnego golema.",
+                     ("Gror","Yarrima","pekatego nieforemnego golema")),
+                    ("Yergo zrecznie zaslania cie przed ciosami skrzypiacego golema.",
+                     ("Yergo","cie","skrzypiacego golema"))]),
+    ("onConsumed",[("Porysowany nieforemny golem zbliza sie do powyginanego pancerza plytowego, podnosi go i wciska do",
+                    ("Porysowany nieforemny golem",))]),
+):
+    registered=re.search(r'tempRegexTrigger\(\s*("(?:\\.|[^"\\])*"),\s*\[\[kozojeb\.G\.'+handler, golems_source)
+    assert registered, "Missing golem trigger: " + handler
+    for line,groups in examples:
+        match=re.match(json.loads(registered.group(1)),line)
+        assert match and match.groups()==groups, "Wrong golem event: " + line
+
 for test in ("roles.lua", "sha256.lua", "updater.lua"):
     subprocess.run([sys.executable, "tools/run_lua.py", f"tests/{test}"], cwd=ROOT, check=True)
 

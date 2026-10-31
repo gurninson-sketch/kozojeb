@@ -1,5 +1,15 @@
 # Zmiany
 
+## 2.9.13
+
+- Pierwszy podział golemów używa wspólnej kolejności nazw członków i opisów NPC. Lokalne ID oraz niewielkie różnice HP nie przestawiają pozostałych miejsc. Komenda nadal wskazuje lokalny indeks żywego golema. Dla identycznych opisów używana jest kolejność lokalna; sam tekst nie identyfikuje egzemplarza.
+- Widoczna udana zasłona rezerwuje konkretnego NPC, również przed aktualizacją GMCP. Stabilizacja obejmuje kolejne przejęcia przez trzecią osobę, nie tylko bezpośredni powrót. Niejednoznaczny opis rezerwuje pasujące egzemplarze zamiast zgadywać ID. Ratowanie zagrożonej osoby zachowuje pierwszeństwo przy dotychczasowych ograniczeniach HP, gotowości szyku i liczby napastników.
+- Nieudana para NPC–osoba ma do 15 s przerwy przed zwykłym ponowieniem. Zastępstwa są rozdzielone według nazw profili i wybierają najpierw większe obciążenie. Pilny stan skraca oczekiwanie. Bufor planów opiera się na istotnym stanie, a nie samym nadejściu kolejnego identycznego pakietu. Rozłączenie i zmiana pokoju czyszczą stare rezerwacje.
+- Prowadzący podnosi pancerz natychmiast po potwierdzonym zabiciu golema. Równoczesne zgony korzystają z jednej kolejki i jednego aktywnego timera podniesienia. Duplikat zgonu i późniejsza linia XP nie powielają komendy. Przejściowy brak dopuszcza jedną opóźnioną powtórkę; duplikaty odmowy nie tworzą nowych timerów. Pilny odwrót ma pierwszeństwo. Role wspierające nie zbierają łupu.
+- Rozpoznawane jest zabranie pancerza z ziemi i spalenie go przez żywego golema. Przechwycony przedmiot nie powiększa ładunku i nie powoduje kolejnych pustych prób. Rozpad przedmiotów na ziemi pozostaje osobnym zdarzeniem. Powrót do bazy, przeszukiwanie, odkładanie i regeneracja całej drużyny do rzeczywistych 100% zachowują dotychczasowe potwierdzenia. Należy wyłączyć stary dodatkowy trigger pancerzy.
+- Tekstowe odpytywanie kondycji czeka podczas przeszukiwania; monitorowanie HP przez GMCP nadal działa. Notatka zasłony zawiera opis i lokalne ID NPC, a panel wydajności liczbę przeliczeń planu. Bez komunikacji między profilami, nadpisania `send`, stałej nowej pętli i skanowania każdej linii obrażeń.
+- 34 nowe symulacje: różne ID i drobne różnice HP między profilami, częściowy podział napastników, widoczne rezerwacje, przejęcie przez trzecią osobę, ratunkowe HP, porażki i zastępstwa, natychmiastowy łup, cztery kompletne pancerze, trzy po spaleniu czwartego, równoczesne zgony, brak odpowiedzi i rozłączenie, odwrót, ograniczenia ról oraz serie 2000 zdarzeń. Razem 501 symulacji bota i 30 aktualizatora; dodatkowo rzeczywiste wzorce komunikatów, SHA-256, zgodność źródeł i powtarzalność paczki.
+
 ## 2.9.12
 
 - Hotfix „podniesione cztery, przeszukane trzy”: potwierdzenie podniesienia jest liczone również w krótkiej fazie po ostatnim zabiciu i podczas powrotu. Licznik zebranego ładunku nie jest już obcinany do początkowej liczby NPC. Późniejszy odbiór pancerza w bazie rozszerza trwający cykl.
