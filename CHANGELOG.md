@@ -1,5 +1,15 @@
 # Zmiany
 
+## 2.9.10
+
+- Ocena zasłony obejmuje przejęcie od jednego do wszystkich widocznych napastników celu. Limit dotyczy sumy unikalnych NPC osłaniającego i celu. Odrzucana jest także zasłona mieszcząca się w limicie, jeśli pełne przejęcie nie poprawia oceny bezpieczeństwa o wymagane 15%. Wystarczają skrajne obciążenia, bez enumeracji podzbiorów i bez dodatkowej pętli. Notatka pokazuje maksymalną liczbę napastników po zasłonie.
+- Zwykły spadek HP nie omija kolejki wszystkich obrońców ani krótkiego oczekiwania po potwierdzonej zasłonie kolegi. Krytyczny stan i brak zapasu na kolejny obserwowany cios nadal pomijają dodatkowe oczekiwanie. Rezerwacje pozostają ograniczone czasowo; minimum własnego HP, limit napastników, stabilizacja przejęć oraz decyzja prowadzącego o wspólnym odwrocie są zachowane.
+- Room.Info odcina relacje walki poprzedniej lokacji, także przy ponownym pojawieniu się tego samego ID NPC. Wsparcie wymaga bieżącego ataku prowadzącego lub jego aktualnego komunikatu walki. Sam napastnik NPC nie oznacza rozpoczęcia walki przez prowadzącego.
+- Przy opóźnionym GMCP jednoznaczny tekst ataku NPC potwierdza tylko konkretną parę NPC–członek drużyny w obecnym pokoju. Pozwala osłaniać oraz reagować na atak podczas leczenia. Tekst pomocy nie jest atakiem; niejednoznaczne opisy NPC i osoby spoza drużyny nie tworzą relacji. Nowy Combat.State zastępuje obserwacje, również gdy jest pusty. Zmiana pokoju, rozłączenie oraz śmierć lub zniknięcie NPC usuwają stary kontekst. Brak nowych zapytań, stałych timerów i komunikacji między profilami.
+- Indeks nazw NPC współdzieli bufor encji. Duplikaty tekstu współdzielą jeden wpis i jedną kolejkę decyzji. Panel pokazuje stan danych walki, diagnostyka ich źródło; stary powód blokady zasłony nie przechodzi do nowej lokacji.
+- 30 nowych symulacji obejmuje 9 napastników przy limicie 2, pełne przejęcie, wspólne ID, stabilizację wielu NPC, zmiany HP podczas oczekiwania, obie kolejności pakietów pokoju, bieżący atak przed GMCP, niejednoznaczne nazwy, pusty stan walki, odwrót, role, rozłączenie i serie 2000 zdarzeń. Razem 419 symulacji bota i 30 aktualizatora; dodatkowo rzeczywiste wzorce tekstu, wektory SHA-256 i integralność paczki.
+- Zapisane role, progi, obszar, tempo i pauza po zabiciu pozostają zachowane. Komendy ręczne pozostają dostępne. Moduł łupienia głównej Chimery jest poza repozytorium; nie został podmieniony.
+
 ## 2.9.9
 
 - Prowadzący dołącza do kolejności obrońców używanej przez profile `zaslony`. Odstęp kolejnych miejsc wynosi 0,45 s, najwyżej 1,35 s, zamiast 0,12 s / 0,36 s. Pozostaje ograniczone oczekiwanie na rzeczywisty wynik i świeże relacje GMCP, bez założenia, że pozostałe profile mają włączone zasłony. Dalsza utrata rzeczywistego HP i stan pilny pomijają dodatkowe oczekiwanie. Zachowane porównywalne pule HP, ocena presji, limit napastników i stabilizacja przejęć.

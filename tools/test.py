@@ -32,6 +32,10 @@ for handler, examples in (
         ("Morrid zaslania cie przed ciosami orka.", ("Morrid",)),
         ("Gror zrecznie zaslania cie przed ciosami wrogow.", ("Gror",)),
     ]),
+    ("onTeamCombat", [
+        ("Maly glupkowaty snotling ATAKUJE Yarrima.", ("Maly glupkowaty snotling", "Yarrima")),
+        ("Yarrim ATAKUJE malego snotlinga.", ("Yarrim", "malego snotlinga")),
+    ]),
 ):
     registered = re.search(
         r'tempRegexTrigger\(\s*("(?:\\.|[^"\\])*"),\s*\[\[kozojeb\.' + handler + r'\(.*?\)\]\]', source
@@ -39,7 +43,13 @@ for handler, examples in (
     assert registered, "Missing shield text trigger: " + handler
     for line, groups in examples:
         match = re.match(json.loads(registered.group(1)), line)
-        assert match and match.groups() == groups, "Shield text captured the wrong actor or target: " + line
+        assert match and match.groups() == groups, "Combat text captured the wrong actor or target: " + line
+
+own_attack = re.search(
+    r'tempRegexTrigger\(\s*("(?:\\.|[^"\\])*"),\s*\[\[kozojeb\.onTeamCombat\(matches\[2\], "cie", true\)\]\]', source
+)
+assert own_attack, "Missing own incoming attack trigger"
+assert re.fullmatch(json.loads(own_attack.group(1)), "Maly glupkowaty snotling ATAKUJE CIE!").groups() == ("Maly glupkowaty snotling",)
 
 for test in ("roles.lua", "sha256.lua", "updater.lua"):
     subprocess.run([sys.executable, "tools/run_lua.py", f"tests/{test}"], cwd=ROOT, check=True)
