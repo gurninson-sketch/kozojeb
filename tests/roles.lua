@@ -5773,4 +5773,131 @@ test("the weakest HP chooser still skips a room over its ordinary patrol creatur
   assert(#attackCommands()==0 and kozojeb.limitRoom)
 end)
 
+local function manualCoverSetup(hp)
+  reset("zaslony",hp or 60)
+  gmcp.Chimera.Group.State.leader="S"
+  gmcp.Chimera.Room.Entities.entities[1].group_role="leader"
+  gmcp.Chimera.Room.Entities.entities[2].group_role="member"
+  return gmcp.Chimera.Room.Entities.entities
+end
+test("a manually controlled in game leader shields teammates in the shield role", function()
+  manualCoverSetup();kozojeb.start()
+  assert(kozojeb.mode=="manual_shields" and kozojeb.config.role=="zaslony")
+  assert(count("zaslon yarrima")==1 and count("wesprzyj")==0 and not kozojeb.supportWaitReason)
+  noMovement()
+end)
+test("manual leadership protects every teammate rather than looking for another leader", function()
+  for _,target in ipairs({{2,"L","yarrima"},{3,"M","morrida"}}) do
+    local e=manualCoverSetup(100);e[target[1]].hp=60
+    gmcp.Chimera.Combat.State={primary="",relations={{attacker="N",defender=target[2]}}}
+    kozojeb.start();assert(count("zaslon "..target[3])==1 and count("wesprzyj")==0);noMovement()
+  end
+end)
+test("the manual leader status identifies automatic shields and manual movement", function()
+  manualCoverSetup();kozojeb.start();output={};kozojeb.status()
+  local text=table.concat(output," ")
+  assert(text:find("Reczne; automatyczne zaslony calej druzyny",1,true))
+  assert(text:find("Reczny; bot wykonuje zaslony",1,true))
+  assert(not text:find("Ten profil prowadzi druzyne; wybierz",1,true))
+end)
+test("a manual shield leader requires no saved patrol area", function()
+  manualCoverSetup();kozojeb.rooms={};kozojeb.start()
+  assert(kozojeb.enabled and kozojeb.mode=="manual_shields" and count("zaslon yarrima")==1);noMovement()
+end)
+test("manual leadership never supports itself or chooses an attack target", function()
+  manualCoverSetup();kozojeb.start();kozojeb.onSupportResult(false)
+  for i=1,20 do event("gmcp.Chimera.Combat.State") end
+  assert(count("wesprzyj")==0 and #attackCommands()==0 and not kozojeb.supportAttempt);noMovement()
+end)
+test("manual shield leadership keeps movement and retreat manual at low HP and fatigue", function()
+  local e=manualCoverSetup();e[1].hp=49;gmcp.Char.Vitals.moves=0
+  kozojeb.start();kozojeb.escape("ranny");kozojeb.onMovementExhausted()
+  kozojeb.onIdleTimeout();kozojeb.onFlee("Maly glupkowaty snotling","wschod")
+  kozojeb.onTargetLost();advance(30)
+  assert(#sends==0 and #aliases==0 and #attackCommands()==0 and kozojeb.enabled)
+end)
+test("manual leader shields still honor the minimum own HP", function()
+  local e=manualCoverSetup();kozojeb.command("minhpzaslony 80");e[1].hp=79
+  kozojeb.start();assert(count("zaslon yarrima")==0 and kozojeb.mode=="manual_shields");noMovement()
+end)
+test("manual leader shields still honor the incoming NPC limit", function()
+  local e=manualCoverSetup()
+  for i=2,3 do e[#e+1]={id="N"..i,name="Maly snotling",kind="npc",hp=100,maxhp=100} end
+  gmcp.Chimera.Combat.State.relations={{attacker="N",defender="L"},{attacker="N2",defender="L"},{attacker="N3",defender="L"}}
+  kozojeb.start();assert(count("zaslon yarrima")==0);noMovement()
+end)
+test("a manual leader with less raw HP does not shield only because the patient percentage is lower", function()
+  local e=manualCoverSetup();e[1].hp=600;e[1].maxhp=1000;e[2].hp=650;e[2].maxhp=2000
+  gmcp.Char.Vitals.hp=600;gmcp.Char.Vitals.maxhp=1000
+  kozojeb.start();assert(count("zaslon yarrima")==0);noMovement()
+end)
+test("the leader threshold does not disable the manual leader protection of other members", function()
+  manualCoverSetup();kozojeb.command("proglidera 0");kozojeb.start()
+  assert(count("zaslon yarrima")==1);noMovement()
+end)
+test("the team shield switch remains effective for ordinary manual encounters", function()
+  manualCoverSetup();kozojeb.command("progzaslony 0");kozojeb.start()
+  assert(count("zaslon yarrima")==0);noMovement()
+end)
+test("a manual leader without an actual party does not adopt stale member roles", function()
+  manualCoverSetup();gmcp.Chimera.Group.State={members={}};kozojeb.start()
+  assert(kozojeb.mode=="support_wait" and #sends==0);noMovement()
+end)
+test("ambiguous leadership cannot activate manual leader shields", function()
+  local e=manualCoverSetup();gmcp.Chimera.Group.State.leader=nil;e[2].group_role="leader"
+  kozojeb.start();assert(kozojeb.mode=="support_wait" and #sends==0)
+end)
+test("the DPS only role remains without shields when manually leading", function()
+  manualCoverSetup();kozojeb.command("rola wsparcie");kozojeb.start()
+  assert(count("zaslon yarrima")==0 and count("wesprzyj")==0);noMovement()
+end)
+test("transferring leadership away and back switches shield behavior without restarting", function()
+  local e=manualCoverSetup();kozojeb.start();assert(kozojeb.mode=="manual_shields")
+  gmcp.Chimera.Group.State.leader="L";event("gmcp.Chimera.Group.State")
+  assert(kozojeb.mode~="manual_shields")
+  gmcp.Chimera.Group.State.leader="S";event("gmcp.Chimera.Group.State")
+  assert(kozojeb.mode=="manual_shields" and not kozojeb.supportAttempt);noMovement()
+end)
+test("a stale explicit support leader cannot suppress the actual manual leader shields", function()
+  manualCoverSetup();kozojeb.command("lider Morrid morrida");kozojeb.start()
+  assert(kozojeb.mode=="manual_shields" and count("zaslon yarrima")==1);noMovement()
+end)
+test("manual movement waits for new room combat evidence before shielding again", function()
+  manualCoverSetup();gmcp.Chimera.Combat.State={primary="",relations={}};kozojeb.start()
+  gmcp.Chimera.Combat.State={primary="N",relations={{attacker="N",defender="L"}}}
+  room=1323;kozojeb.onRoomChanged("gmcp.Room.Info");event()
+  assert(count("zaslon yarrima")==0)
+  event("gmcp.Chimera.Combat.State");assert(count("zaslon yarrima")==1);noMovement()
+end)
+test("manual leader shield mode resumes automatically after a real login", function()
+  manualCoverSetup();kozojeb.start();kozojeb.onSessionEvent("sysDisconnectionEvent")
+  local before=#sends;advance(2);assert(#sends==before)
+  reconnectPackets();advance(11)
+  assert(kozojeb.enabled and kozojeb.mode=="manual_shields" and count("zaslon yarrima")>=2)
+  assert(count("wesprzyj")==0 and #attackCommands()==0);noMovement()
+end)
+test("two thousand room updates coalesce manual shield decisions without a support loop", function()
+  manualCoverSetup();kozojeb.start();local before=kozojeb.metrics.actions
+  for i=1,2000 do kozojeb.onGmcp("gmcp.Chimera.Room.Entities") end
+  advance(.13)
+  assert(kozojeb.metrics.actions<=before+2 and count("zaslon yarrima")==1 and not kozojeb.supportTimer)
+  noMovement()
+end)
+test("stopping a manual shield leader prevents every later autonomous action", function()
+  manualCoverSetup();kozojeb.start();kozojeb.stop();local before=#sends
+  for i=1,20 do event() end
+  advance(30);assert(#sends==before and not kozojeb.enabled);noMovement()
+end)
+test("a manual in game leader uses targeted golem shields but no armor workflow", function()
+  golemSetup("L","zaslony",1)
+  kozojeb.config.teamRoles.gror="wsparcie";kozojeb.config.teamRoles.morrid="wsparcie";kozojeb.config.teamRoles.yergo="wsparcie"
+  local e=gmcp.Chimera.Room.Entities.entities;e[3].hp=800
+  gmcp.Chimera.Combat.State={primary="N1",relations={{attacker="L",defender="N1"},{attacker="N1",defender="M"}}}
+  kozojeb.start();assert(kozojeb.mode=="manual_shields" and count("zaslon morrida przed kamiennym golemem")==1)
+  assert(not kozojeb.G.job)
+  e[5].hp=0;kozojeb.onKill(e[5].name,false);advance(12)
+  assert(count("wez pancerz")==0 and count("przeszukaj pancerz")==0 and count("odloz pancerz")==0)
+  assert(count("wesprzyj")==0 and #attackCommands()==0);noMovement()
+end)
+
 print(string.format("%d simulations passed", total))

@@ -1,5 +1,13 @@
 # Zmiany
 
+## 2.9.16
+
+- Rola `zaslony` działa także na faktycznym prowadzącym przy ręcznym sterowaniu. W 2.9.15 taki profil czekał na innego lidera i nie wykonywał automatycznych zasłon; poprawka odpowiada odcinkowi ręcznego prowadzenia Yarrima z logów. Pozostaje w tej samej roli, osłania zagrożonych kolegów i korzysta z celowanych zasłon golemów.
+- Ruch, wybór ataku i odwrót pozostają ręczne. Profil nie wspiera sam siebie, nie wymaga obszaru patrolu i nie uruchamia automatycznego zbierania ani przeszukiwania pancerzy. Ochrona zachowuje minimum własnego HP, porównywalne punkty HP, limit napastników, szyk, stabilizację i świeżość danych pokoju. Dotychczasowe progi i role pozostałych postaci pozostają zapisane.
+- Przekazanie prowadzenia przełącza ten sam profil na zwykłe wspieranie nowego lidera; odzyskanie prowadzenia przywraca ręczny tryb zasłon bez ponownego startu. Po prawdziwym zalogowaniu ochrona wznawia się automatycznie. Brak drużyny, niejednoznaczne lub stare prowadzenie nie włączają ochrony z niepotwierdzonych danych.
+- Panel i pomoc pokazują ręczne prowadzenie oraz automatyczne zasłony, zamiast błędnego oczekiwania na innego lidera. W tym trybie panel nie sugeruje automatycznego wybierania celów ani odwrotu. Bez nowych stałych timerów, komunikacji między profilami i zmiany mechaniki pancerzy.
+- 21 nowych symulacji: ręczny lider, ochrona różnych kolegów, brak mapy, brak własnych ataków i ruchu przy niskim HP oraz zmęczeniu, limity i punkty HP, przełączniki progów, brak drużyny, role DPS, przekazanie prowadzenia, świeże dane po ruchu, automatyczne wznowienie, serie 2000 pakietów, stop i celowane zasłony golemów. Razem 589 symulacji bota i 30 aktualizatora; dodatkowo wzorce tekstu, SHA-256 i powtarzalność paczki.
+
 ## 2.9.15
 
 - Prowadzący domyślnie wybiera nowy, jednoznacznie adresowalny dozwolony cel z najniższymi znanymi HP, także po zabiciu poprzedniego NPC i obrażeniach obszarowych. Pełny biernik wskazuje wybrany opis zamiast ogólnego gatunku. Porównanie używa poprawnych par `hp/maxhp` z `Room.Entities`, przede wszystkim pozostałych HP; skrypt nie odtwarza nieudostępnionych rzeczywistych pul z procentów. Remisy i brak wiarygodnego wyboru zachowują kolejność. Komenda `celowanie hp|kolejnosc`, panel i zapis ustawienia.

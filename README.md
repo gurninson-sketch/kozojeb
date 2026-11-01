@@ -1,4 +1,4 @@
-# Chimera Kozojeb 2.9.15
+# Chimera Kozojeb 2.9.16
 
 [Pobierz najnowszą paczkę](https://github.com/gurninson-sketch/kozojeb/releases/latest/download/Chimera_Kozojeb.mpackage) · [Wydania](https://github.com/gurninson-sketch/kozojeb/releases)
 
@@ -23,6 +23,7 @@ Najpierw utwórz drużynę w grze. Rola bota nie przekazuje faktycznego prowadze
 | Profil — przykład | Komendy konfiguracji | Zachowanie |
 | --- | --- | --- |
 | Yarrim | `/kozojeb rola prowadzacy` | Patrol, wybór celów, pościg, zasłony drużyny i wspólny odwrót |
+| Yarrim — ręczne prowadzenie | `/kozojeb rola zaslony` i `/kozojeb start` | Ręczna nawigacja i walka; automatyczne zasłony całej drużyny |
 | Morrid, Yergo i Gror | `/kozojeb rola zaslony` oraz `/kozojeb lider auto` | Wsparcie i osłanianie zagrożonych członków całej drużyny |
 | Brix, Gunz i Rodrick | `/kozojeb rola wsparcie` oraz `/kozojeb lider auto` | Wsparcie i DPS, bez automatycznych zasłon |
 
@@ -33,6 +34,17 @@ Od 2.9.14 każdy profil ma zapisany model ról pozostałych osób. **Brix, Gunz 
 Podgląd modelu: `/kozojeb druzyna role`. Gdy w przyszłości role się zmienią, na każdym profilu ustaw np. `/kozojeb druzyna rola Brix zaslony`. Dostępne wartości to `wsparcie`, `zaslony` i `auto` (usuwa zapisane przypisanie). To model planowania, nie zdalna zmiana roli innego profilu. Obecne trzy przypisania wsparcia są dodawane automatycznie przy aktualizacji. Faktyczny prowadzący nadal może być dowolną postacią ustawioną na `prowadzacy`.
 
 Zmiana roli zatrzymuje bota. Po skonfigurowaniu uruchom go przez `/kozojeb start` na każdym profilu. Wspierających można uruchomić przed prowadzącym. Bez widocznego, faktycznego prowadzącego czekają.
+
+Od **2.9.16** rola `zaslony` działa również na faktycznym prowadzącym drużynę, gdy chodzisz ręcznie. Na Yarrimie ustaw:
+
+```text
+/kozojeb rola zaslony
+/kozojeb start
+```
+
+Bot rozpoznaje własne prowadzenie przez GMCP i automatycznie osłania pozostałych członków drużyny. Nie wymaga innego lidera ani zapisanej trasy. Panel pokazuje `Prowadzenie: Reczne; automatyczne zaslony calej druzyny`. Sam wybierasz ataki, kierunki, odwrót i odpoczynek. Ten tryb nie wysyła `wesprzyj` do własnej postaci, nie rozpoczyna patrolu, pościgu ani cyklu pancerzy. Włączone `golemy` nadal zapewniają celowane zasłony. Po przekazaniu prowadzenia profil sam wraca do wspierania nowego widocznego lidera; po odzyskaniu prowadzenia znów osłania podczas ręcznego chodzenia. Rozłączenie wznawia ochronę automatycznie po świeżych danych.
+
+Dla ochrony kolegów przy ręcznym prowadzeniu znaczenie mają `progzaslony`, `minhpzaslony`, limit napastników i stabilizacja. `proglidera` określa ochronę **innego** prowadzącego, kiedy ten profil jest wspierającym. Próg `progdruzyny` nie uruchamia w tej roli automatycznego odwrotu; w planie golemów nadal wpływa na rozpoznanie pilnej zasłony. Ustawienia pozostają zapisane i nie są automatycznie wyrównywane między profilami. Do pełnego patrolu, wspólnego odwrotu i cyklu pancerzy wybierz `rola prowadzacy`.
 
 Od 2.9.9 start prowadzącego w spokojnym pokoju sprawdza HP całej widocznej drużyny według `powrothp` (domyślnie 95%). Brak odczytu lub ranny kolega wstrzymuje rozpoczęcie patrolu, także po aktualizacji. Stan poniżej progu odwrotu wymaga 100% tej postaci. Po regeneracji bot rusza automatycznie; atak podczas oczekiwania uruchamia dotychczasową ewakuację. Start podczas trwającej walki zachowuje decyzje bojowe i progi odwrotu. Ponowny `start` podczas leczenia lub powrotu nie kasuje wymagań regeneracji; wznowienie jest automatyczne.
 
@@ -200,7 +212,7 @@ Wznowienie patrolu wymaga obsłużenia pancerzy, obecności całej zapamiętanej
 
 ## Aktualizacje z GitHuba
 
-Jeśli masz już Kozojeba 2.8.1–2.9.14, wykonaj na **każdym profilu**:
+Jeśli masz już Kozojeba 2.8.1–2.9.15, wykonaj na **każdym profilu**:
 
 ```text
 /kozojeb stop
@@ -209,7 +221,7 @@ Jeśli masz już Kozojeba 2.8.1–2.9.14, wykonaj na **każdym profilu**:
 /kozojeb aktualizuj
 ```
 
-Poczekaj na zakończenie walki i ruchu oraz komunikat `Zainstalowano 2.9.15`. Sprawdź `/kozojeb status`; powinien pokazać wersję **2.9.15**. Wyłącz stary dodatkowy trigger pancerzy — podniesienia po każdym zabiciu są już wbudowane. Następnie uruchom `/kozojeb start` — najpierw na wspierających, potem na prowadzącym stojącym w bazie. To jednorazowy start po aktualizacji; późniejsze rozłączenia nie wymagają ręcznego wznowienia. Nie trzeba usuwać ani ręcznie instalować paczki; dotychczasowe ustawienia profili pozostają zachowane. Można przejść bezpośrednio z 2.9.2 do 2.9.15. Model ról sam uwzględni Brixa, Gunza i Rodricka jako wsparcie, bez przydzielania im zasłon. Profile już ustawione na `zaslony` korzystają z ochrony całej drużyny; rola `wsparcie` pozostaje drugą linią. Zwykły próg regeneracji wynosi domyślnie 95%; można go zmienić na prowadzącym przez `/kozojeb powrothp 95`. Tryb golemów wymaga osobnego włączenia i w swoim cyklu czeka na 100% całej drużyny.
+Poczekaj na zakończenie walki i ruchu oraz komunikat `Zainstalowano 2.9.16`. Sprawdź `/kozojeb status`; powinien pokazać wersję **2.9.16**. Wyłącz stary dodatkowy trigger pancerzy — podniesienia po każdym zabiciu są już wbudowane. Następnie uruchom `/kozojeb start` — najpierw na wspierających, potem na prowadzącym stojącym w bazie. To jednorazowy start po aktualizacji; późniejsze rozłączenia nie wymagają ręcznego wznowienia. Nie trzeba usuwać ani ręcznie instalować paczki; dotychczasowe ustawienia profili pozostają zachowane. Można przejść bezpośrednio z 2.9.2 do 2.9.16. Model ról sam uwzględni Brixa, Gunza i Rodricka jako wsparcie, bez przydzielania im zasłon. Profile już ustawione na `zaslony` korzystają z ochrony całej drużyny; rola `wsparcie` pozostaje drugą linią. Zwykły próg regeneracji wynosi domyślnie 95%; można go zmienić na prowadzącym przez `/kozojeb powrothp 95`. Tryb golemów wymaga osobnego włączenia i w swoim cyklu czeka na 100% całej drużyny.
 
 Przy paczce zbudowanej w tym repozytorium adres wydań jest wbudowany. W paczce przygotowanej bez adresu skonfiguruj na każdym profilu:
 

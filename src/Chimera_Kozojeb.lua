@@ -54,7 +54,7 @@ end
 K.legacyImportTried = true
 K.initialized = false
 
-K.version = "2.9.15"
+K.version = "2.9.16"
 K.config = K.config or {
   chaseDelay = 0.20,
   patrolDelay = 0.70,
@@ -971,6 +971,10 @@ local function groupContext()
   end
   K.groupContextCache = context
   return context
+end
+
+local function manualShieldLeader(context)
+  return K.config.role == "zaslony" and isSelf(context.actualLeader)
 end
 
 -- Watchdog ma mierzyc rzeczywisty postep, a nie sam fakt nadejscia pakietu
@@ -2874,6 +2878,20 @@ local function inspectFollower()
   local leader = context.leader
   K.leaderName = leader and trim(leader.name) or nil
   K.leaderHp = nil
+  if manualShieldLeader(context) then
+    -- Rola zaslony sluzy tez do recznego prowadzenia. Nadal pozostaje
+    -- poza automatyka patrolu, poscigu, odwrotu i pancerzy, ale nie musi
+    -- szukac innego lidera, zeby chronic wlasna druzyne.
+    if K.mode ~= "manual_shields" then clearTarget() end
+    K.mode, K.supportWaitReason = "manual_shields", nil
+    K.supportAttempt, K.supportCombatHint, K.supportDeathBarrier = nil, nil, nil
+    cancelTimer("supportTimer")
+    cancelTimer("supportHintTimer")
+    if not safetyCheck() then return end
+    K.leaderName, K.leaderHp = trim(context.actualLeader.name), K.lastHp
+    maybeShieldTeamMember(true)
+    return
+  end
   if not leader then
     clearShieldTurn()
     K.mode = "support_wait"
@@ -4645,8 +4663,12 @@ function K.start(recovered)
     K.mode = "support_wait"
     K.injuredTeamMember = nil
     K.lastRoom = currentRoom()
-    note("Start roli: " .. roleLabels[K.config.role]
-      .. ". Ruch za prowadzacym zapewnia druzyna w grze.", "green")
+    if manualShieldLeader(groupContext()) then
+      note("Start: reczne prowadzenie druzyny; automatyczne zaslony. Ruch i odwrot sa reczne.", "green")
+    else
+      note("Start roli: " .. roleLabels[K.config.role]
+        .. ". Ruch za prowadzacym zapewnia druzyna w grze.", "green")
+    end
     inspectRoom()
     if K.supportWaitReason then note(K.supportWaitReason, "yellow") end
     return
@@ -4853,7 +4875,8 @@ function K.status()
   statusLink("[ ZASLONY ]", "rola zaslony", "Wsparcie oraz zaslony calej druzyny", "yellow")
   statusEndRow()
   statusRow("Wybrana rola", roleLabels[K.config.role])
-  statusRow("Celowanie", K.config.targetWeakest and "nowy cel: najnizsze znane HP" or "nowy cel: kolejnosc celow")
+  statusRow("Celowanie", manualShieldLeader(groupContext()) and "Reczne" or
+    (K.config.targetWeakest and "nowy cel: najnizsze znane HP" or "nowy cel: kolejnosc celow"))
   local supportOnly = {}
   for name, role in pairs(K.config.teamRoles) do if role == "wsparcie" then supportOnly[#supportOnly+1]=name end end
   table.sort(supportOnly)
@@ -4861,18 +4884,23 @@ function K.status()
   local context = groupContext()
   local leader = context.leader
   local leaderHp = context.leaderHp
-  statusPrefix("Lider wsparcia")
-  statusLink("[ AUTO ]", "lider auto", "Wykrywaj prowadzacego z GMCP", "cyan")
-  cecho("  " .. (K.config.leaderName ~= "" and K.config.leaderName or "auto"))
-  cecho(" -> " .. (leader and trim(leader.name) or "brak widocznego"))
-  if leaderHp then cecho(" (" .. leaderHp .. "%)") end
-  statusEndRow()
-  statusPrefix("Prog lidera")
-  statusLink("[ - ]", "proglidera " .. math.max(0, K.config.leaderShieldHp - 5), "Zmniejsz prog zaslony lidera", "yellow")
-  cecho("  " .. K.config.leaderShieldHp .. "%  ")
-  statusLink("[ + ]", "proglidera " .. math.min(100, K.config.leaderShieldHp + 5), "Zwieksz prog zaslony lidera", "green")
-  cecho("  (rola zaslony)")
-  statusEndRow()
+  local manual = manualShieldLeader(context)
+  if manual then
+    statusRow("Prowadzenie", "Reczne; automatyczne zaslony calej druzyny")
+  else
+    statusPrefix("Lider wsparcia")
+    statusLink("[ AUTO ]", "lider auto", "Wykrywaj prowadzacego z GMCP", "cyan")
+    cecho("  " .. (K.config.leaderName ~= "" and K.config.leaderName or "auto"))
+    cecho(" -> " .. (leader and trim(leader.name) or "brak widocznego"))
+    if leaderHp then cecho(" (" .. leaderHp .. "%)") end
+    statusEndRow()
+    statusPrefix("Prog lidera")
+    statusLink("[ - ]", "proglidera " .. math.max(0, K.config.leaderShieldHp - 5), "Zmniejsz prog zaslony lidera", "yellow")
+    cecho("  " .. K.config.leaderShieldHp .. "%  ")
+    statusLink("[ + ]", "proglidera " .. math.min(100, K.config.leaderShieldHp + 5), "Zwieksz prog zaslony lidera", "green")
+    cecho("  (rola zaslony)")
+    statusEndRow()
+  end
   if isFollower() and K.supportWaitReason then statusRow("Oczekiwanie", K.supportWaitReason) end
 
   if not isFollower() then
@@ -4907,7 +4935,8 @@ function K.status()
     K.config.teamEscapeHp, K.teamLowestName, K.teamLowestHp, K.teamSeenCount))
   statusLink("[ + ]", "progdruzyny " .. math.min(maxEscapeSetting, K.config.teamEscapeHp + 5), "Zwieksz prog HP druzyny", "green")
   statusEndRow()
-  if isFollower() then statusRow("Odwrot druzyny", "Prog druzyny obsluguje profil prowadzacego") end
+  if manual then statusRow("Odwrot druzyny", "Reczny; bot wykonuje zaslony")
+  elseif isFollower() then statusRow("Odwrot druzyny", "Prog druzyny obsluguje profil prowadzacego") end
   if not isFollower() then
     local minimumRecovery = math.floor(escapeCeiling) + 1
     statusPrefix("Powrot po HP")
@@ -4947,7 +4976,8 @@ function K.status()
     if K.shieldLastTarget then cecho("  cel: " .. K.shieldLastTarget) end
   end
   statusEndRow()
-  if K.config.role == "zaslony" then statusRow("Zaslony druzyny", "Cala druzyna; lider ma osobny prog lidera")
+  if manual then statusRow("Zaslony druzyny", "Cala druzyna; progzaslony i minhpzaslony")
+  elseif K.config.role == "zaslony" then statusRow("Zaslony druzyny", "Cala druzyna; lider ma osobny prog lidera")
   elseif isFollower() then statusRow("Zaslony druzyny", "Wylaczone w roli wsparcie") end
   statusRow("Odmiany zaslon", #shieldForms > 0 and table.concat(shieldForms, ", ") or "brak (/kozojeb imie)")
   statusRow("Limit zaslony", K.config.shieldMaxAttackers .. " napastnikow; stabilizacja " .. K.config.shieldHold .. " s")
@@ -5095,6 +5125,8 @@ function K.help()
                               bez automatycznych zaslon
   <green>/kozojeb rola zaslony<reset>          wsparcie oraz "zaslon <biernik>"
                               na zagrozonych czlonkow druzyny
+                              na faktycznym liderze: reczne prowadzenie
+                              i automatyczne zaslony calej druzyny
   <green>/kozojeb lider auto<reset>            ustal prowadzacego z GMCP (domyslnie)
   <green>/kozojeb lider Yarrim yarrima<reset>   opcjonalnie wskaz imie i biernik
   <green>/kozojeb proglidera 70<reset>          zaslona prowadzacego ponizej 70% HP;
@@ -5122,7 +5154,10 @@ function K.help()
     "Jestes ranny" nie uruchamiaja u nich wlasnego odwrotu ani powrotu.
     Decyzje o odwrocie i wznowieniu podejmuje wylacznie prowadzacy,
     korzystajac z dotychczasowej kontroli HP i stanow druzyny.
-  - Ustaw role prowadzacego na postaci, ktora naprawde prowadzi druzyne.
+  - Rola zaslony na faktycznym liderze dziala takze przy recznym chodzeniu.
+    Ruch, odwrot i atak wybierasz wtedy sam; bot automatycznie oslania.
+    Przekazanie prowadzenia przywraca zwykle wspieranie nowego lidera.
+  - Do automatycznego patrolu ustaw role prowadzacy na faktycznym liderze.
     Zmiana roli w bocie nie przekazuje prowadzenia w grze.
 
 <white>  Obszar i cele<reset>
