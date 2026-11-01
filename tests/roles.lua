@@ -118,9 +118,9 @@ end
 local function shieldReply(line)
   for _, trigger in ipairs(triggers) do
     if trigger.handler:find("kozojeb.onShieldResult", 1, true) then
-      local form = line:match(trigger.pattern)
+      local form,description = line:match(trigger.pattern)
       if form then
-        matches = {line, form}
+        matches = {line, form, description}
         assert(compile(trigger.handler))()
         return
       end
@@ -4613,7 +4613,13 @@ local function shieldCommands()
 end
 local function golemRelations(owners)
   local relations={{attacker="L",defender="N1"}}
-  for i, id in ipairs(owners) do relations[#relations+1]={attacker="N"..i,defender=id} end
+  local names={"Alabastrowy golem","Kamienny golem","Metalowy golem","Zelazny golem"}
+  for i, id in ipairs(owners) do
+    relations[#relations+1]={attacker="N"..i,defender=id}
+    -- Rotacje oceniamy na rozroznialnych NPC. Jednakowe opisy maja
+    -- osobne przypadki sprawdzajace ostrozne zachowanie przy niepewnym ID.
+    gmcp.Chimera.Room.Entities.entities[4+i].name=names[i]
+  end
   gmcp.Chimera.Combat.State.relations=relations
 end
 local function golemCycle(beforeClear,afterClear)
@@ -4668,7 +4674,7 @@ test("four full HP golems get three distinct immediate targeted shields", functi
   for _, id in ipairs({"G","M","S"}) do
     golemSetup(id);kozojeb.start()
     local commands=shieldCommands();assert(#commands==1)
-    assert(commands[1]:match("^zaslon yarrima przed %a+ golemem$"))
+    assert(commands[1]:match("^zaslon yarrima przed %a+ kamiennym golemem$"))
     assert(not chosen[commands[1]],"duplicate assigned golem")
     chosen[commands[1]]=true;assert(#aliases==0)
   end
@@ -4702,12 +4708,12 @@ test("unknown or ambiguous NPC ownership never produces a targeted shield", func
   for i=1,4 do gmcp.Chimera.Combat.State.relations[#gmcp.Chimera.Combat.State.relations+1]={attacker="N"..i,defender="M"} end
   kozojeb.start();assert(#shieldCommands()==0)
 end)
-test("targeted ordinals follow the local current live NPC order", function()
+test("a unique full NPC description is independent of its local list position", function()
   golemSetup("G")
   local e=gmcp.Chimera.Room.Entities.entities
   e[5].name="Alabastrowy golem"
   e[5],e[8]=e[8],e[5]
-  kozojeb.start();assert(count("zaslon yarrima przed czwartym golemem")==1)
+  kozojeb.start();assert(count("zaslon yarrima przed alabastrowym golemem")==1)
 end)
 test("balanced golems rotate toward a healthier party member", function()
   golemSetup("S");golemRelations({"L","G","M","S"})
@@ -4715,7 +4721,7 @@ test("balanced golems rotate toward a healthier party member", function()
   gmcp.Chimera.Room.Entities.entities[4].hp=1000
   gmcp.Chimera.Room.Entities.entities[1].hp=900
   gmcp.Chimera.Room.Entities.entities[3].hp=900
-  kozojeb.start();assert(count("zaslon yarrima przed pierwszym golemem")==1)
+  kozojeb.start();assert(count("zaslon yarrima przed alabastrowym golemem")==1)
   assert(kozojeb.shieldDecision.maxOwnAttackers==2)
 end)
 test("HP rotation waits below its configured percentage gap", function()
@@ -4976,6 +4982,7 @@ local function killGolem(index)
   local npc=gmcp.Chimera.Room.Entities.entities[4+index]
   npc.hp=0
   kozojeb.onKill(npc.name,false)
+  advance(.06) -- koniec obslugi triggerow tej samej linii zgonu
   return npc
 end
 
@@ -5193,7 +5200,7 @@ test("a visible reservation of one named NPC does not block another defender's d
   kozojeb.shieldFormationReady=false;kozojeb.start()
   kozojeb.G.onTeamCover("Gror","Yarrima","alabastrowego golema")
   kozojeb.shieldFormationReady=true;event()
-  assert(count("zaslon yarrima przed drugim golemem")==1)
+  assert(count("zaslon yarrima przed kamiennym golemem")==1)
 end)
 test("partially confirmed opening assignments preserve distinct remaining slots", function()
   local chosen={}
@@ -5246,6 +5253,243 @@ test("a fractional golem HP percentage can be logged without losing its actual H
   e[2].hp=749;e[1].hp=900;e[3].hp=900
   kozojeb.start()
   assert(#shieldCommands()==1 and kozojeb.shieldDecision.targetHp==749)
+end)
+
+local function sevenPlayers(selfId,role)
+  golemSetup(selfId or "G",role)
+  local e=gmcp.Chimera.Room.Entities.entities
+  for _,item in ipairs({{"B","Brix"},{"U","Gunz"},{"R","Rodrick"}}) do
+    e[#e+1]={id=item[1],name=item[2],kind="player",hp=1000,maxhp=1000,group_role="member"}
+    gmcp.Chimera.Group.State.members[#gmcp.Chimera.Group.State.members+1]=item[1]
+  end
+  return e
+end
+local function distinctGolems()
+  local e=gmcp.Chimera.Room.Entities.entities
+  e[5].name="Pekaty skrzypiacy golem";e[6].name="Zgrzytajacy kanciasty golem"
+  e[7].name="Nieforemny porysowany golem";e[8].name="Zgrzytajacy skrzypiacy golem"
+  return e
+end
+local function requestedSecondGolem()
+  golemSetup("G");local e=distinctGolems()
+  kozojeb.shieldFormationReady=false;kozojeb.start();kozojeb.shieldFormationReady=true
+  kozojeb.golemApi.shield(e[2],100,100,{npcId="N2"})
+  assert(count("zaslon yarrima przed zgrzytajacym kanciastym golemem")==1)
+  return e
+end
+
+test("the seven player opening assigns all three shields to defenders rather than DPS roles", function()
+  local commands={}
+  for _,id in ipairs({"G","M","S"}) do
+    sevenPlayers(id);distinctGolems();kozojeb.start()
+    local command=shieldCommands()[1]
+    assert(command and not commands[command]);commands[command]=true
+    assert(kozojeb.teamSeenCount==6)
+  end
+end)
+test("Brix Gunz and Rodrick remain protected recipients with their own HP monitored", function()
+  for _,item in ipairs({{"B","Brix","brixa"},{"U","Gunz","gunza"},{"R","Rodrick","rodricka"}}) do
+    local e=sevenPlayers("G")
+    for _,member in ipairs(e) do if member.id==item[1] then member.hp=650 end end
+    golemRelations({item[1],item[1],"M","S"})
+    kozojeb.start()
+    assert(kozojeb.teamHealth[item[2]:lower()]==65)
+    assert(count("zaslon "..item[3].." przed alabastrowym golemem")==1)
+    assert(not kozojeb.golemApi.canShield(kozojeb.golemApi.group().members[5]))
+  end
+end)
+test("the DPS only profiles never shield or move even in a seven player golem battle", function()
+  for _,id in ipairs({"B","U","R"}) do
+    local e=sevenPlayers("G","wsparcie")
+    for _,member in ipairs(e) do member.self=member.id==id and 1 or nil end
+    distinctGolems();kozojeb.start();advance(4)
+    assert(#shieldCommands()==0 and count("wesprzyj")>=1);noMovement()
+  end
+end)
+test("a DPS only teammate does not reserve a turn outside golem mode", function()
+  reset("zaslony",60)
+  local e=gmcp.Chimera.Room.Entities.entities
+  e[#e+1]={id="Z",name="Gunz",kind="player",group_role="member",hp=3000,maxhp=3000}
+  gmcp.Chimera.Group.State.members[#gmcp.Chimera.Group.State.members+1]="Z"
+  kozojeb.start();assert(count("zaslon yarrima")==1)
+end)
+test("the actual leader may defend even if their previous roster role was DPS only", function()
+  local e=sevenPlayers("G")
+  gmcp.Chimera.Group.State.leader="B"
+  kozojeb.start()
+  assert(kozojeb.golemApi.canShield(e[9]))
+  assert(not kozojeb.golemApi.canShield(e[10]) and not kozojeb.golemApi.canShield(e[11]))
+end)
+test("team role changes persist independently from automatic roster detection", function()
+  reset("zaslony")
+  assert(kozojeb.config.teamRoles.brix=="wsparcie")
+  kozojeb.command("druzyna rola Brix zaslony")
+  kozojeb.command("druzyna rola Rodrick auto")
+  kozojeb.command("druzyna auto")
+  kozojeb=nil;loadCore()
+  assert(kozojeb.config.teamRoles.brix=="zaslony" and kozojeb.config.teamRoles.rodrick==nil)
+  assert(kozojeb.config.teamRoles.gunz=="wsparcie" and kozojeb.config.role=="zaslony")
+end)
+test("invalid team role commands preserve the roster and configured roles", function()
+  reset("zaslony");kozojeb.config.teamMembers.morrid=true
+  for _,command in ipairs({"druzyna rola","druzyna rola Brix magic","druzyna rola Gunz","druzyna rola Rodrick wsparcie extra"}) do
+    kozojeb.command(command)
+  end
+  assert(kozojeb.config.teamMembers.morrid and kozojeb.config.teamRoles.brix=="wsparcie")
+end)
+test("default name forms never overwrite a user disabled shield recipient", function()
+  reset("zaslony");assert(kozojeb.config.shieldNameForms.gunz=="gunza")
+  kozojeb.config.shieldNameForms.gunz=false;kozojeb.saveSettings()
+  kozojeb=nil;loadCore();assert(kozojeb.config.shieldNameForms.gunz==false)
+end)
+test("unique descriptions keep the same command across different local entity permutations", function()
+  local chosen={}
+  for _,order in ipairs({{5,6,7,8},{8,5,7,6},{6,8,5,7}}) do
+    golemSetup("G");local e=distinctGolems();local original={e[5],e[6],e[7],e[8]}
+    for i,index in ipairs(order) do e[4+i]=original[index-4] end
+    kozojeb.start();chosen[#chosen+1]=shieldCommands()[1]
+  end
+  assert(chosen[1]==chosen[2] and chosen[2]==chosen[3])
+  assert(chosen[1]=="zaslon yarrima przed nieforemnym porysowanym golemem")
+end)
+test("a logged successful shield for another NPC reserves the actual golem only", function()
+  requestedSecondGolem()
+  shieldReply("Zaslaniasz Yarrima przed ciosami pekatego skrzypiacego golema.")
+  assert(kozojeb.G.holds.N1 and not kozojeb.G.holds.N2)
+  assert(not kozojeb.shieldRescue and kozojeb.metrics.golemTargetMismatches==1)
+end)
+test("a logged failed shield for another NPC delays that actual NPC rather than the planned one", function()
+  requestedSecondGolem()
+  shieldReply("Probujesz zaslonic Yarrima przed ciosami pekatego skrzypiacego golema, lecz nie jestes w stanie tego uczynic.")
+  assert(kozojeb.G.failures["N1:L"] and not kozojeb.G.failures["N2:L"])
+  assert(kozojeb.metrics.golemTargetMismatches==1)
+end)
+test("an unrecognized successful answer cannot certify protection against the planned NPC", function()
+  requestedSecondGolem();shieldReply("Zaslaniasz Yarrima przed ciosami wrogow.")
+  assert(next(kozojeb.G.holds)==nil and not kozojeb.shieldRescue)
+  assert(kozojeb.metrics.golemTargetMismatches==1)
+end)
+test("the matching full answer confirms precisely the requested NPC", function()
+  requestedSecondGolem()
+  shieldReply("Zaslaniasz Yarrima przed ciosami zgrzytajacego kanciastego golema.")
+  assert(kozojeb.G.holds.N2 and not kozojeb.G.holds.N1 and kozojeb.shieldRescue)
+  assert((kozojeb.metrics.golemTargetMismatches or 0)==0)
+end)
+test("an inconsistent selector is suppressed instead of immediately reused", function()
+  requestedSecondGolem()
+  shieldReply("Zaslaniasz Yarrima przed ciosami pekatego skrzypiacego golema.")
+  assert(kozojeb.G.selector("N2",kozojeb.golemApi.group().leader)==nil)
+end)
+test("ambiguous identical descriptions cannot target an NPC attacking a different teammate", function()
+  golemSetup("G")
+  gmcp.Chimera.Combat.State.relations={{attacker="L",defender="N1"},
+    {attacker="N1",defender="L"},{attacker="N2",defender="M"},
+    {attacker="N3",defender="L"},{attacker="N4",defender="L"}}
+  kozojeb.shieldFormationReady=false;kozojeb.start();kozojeb.shieldFormationReady=true
+  local leader=kozojeb.golemApi.group().leader
+  assert(not kozojeb.G.selector("N1",leader))
+  kozojeb.golemApi.shield(leader,60,70)
+  assert(#shieldCommands()==0,"an uncertain selector fell back to taking three NPCs")
+end)
+test("unknown grammatical forms are not guessed as a room ordinal", function()
+  golemSetup("G");local e=gmcp.Chimera.Room.Entities.entities
+  e[5].name="Golem z marmuru"
+  kozojeb.start();assert(not kozojeb.G.selector("N1",kozojeb.golemApi.group().leader))
+  for _,command in ipairs(shieldCommands()) do assert(not command:match("przed %a+ golemem$")) end
+end)
+test("manual full description shields reserve formation just as ordinary shields do", function()
+  golemSetup("S");send("zaslon yarrima przed zgrzytajacym kanciastym golemem")
+  kozojeb.start();assert(#shieldCommands()==1 and not kozojeb.shieldFormationReady)
+end)
+test("an urgent rescue obtains a specific golem plan before composing its command", function()
+  golemSetup("G");local e=distinctGolems()
+  e[2].hp=600
+  kozojeb.shieldFormationReady=false;kozojeb.start();kozojeb.shieldFormationReady=true
+  kozojeb.golemApi.shield(e[2],60,70)
+  assert(#shieldCommands()==1 and count("zaslon yarrima")==0)
+  assert(kozojeb.shieldPendingTarget.golemNpcId and kozojeb.shieldDecision.maxOwnAttackers==1)
+end)
+test("an external armor pickup after the death trigger replaces the scheduled module command", function()
+  liveGolemLeader();local npc=gmcp.Chimera.Room.Entities.entities[5];npc.hp=0
+  kozojeb.onKill(npc.name,false);assert(count("wez pancerz")==0)
+  send("wez pancerz");advance(.13);pickup()
+  assert(count("wez pancerz")==1 and kozojeb.G.job.picked==1)
+  assert(kozojeb.metrics.golemObservedLoot==1)
+end)
+test("an external armor pickup before the death trigger is also adopted", function()
+  liveGolemLeader();send("wez pancerz")
+  local npc=gmcp.Chimera.Room.Entities.entities[5];npc.hp=0;kozojeb.onKill(npc.name,false)
+  advance(.13);pickup()
+  assert(count("wez pancerz")==1 and kozojeb.G.job.picked==1)
+  assert(kozojeb.metrics.golemObservedLoot==1)
+end)
+test("four external pickups and replies in one burst complete one shared cargo ledger", function()
+  liveGolemLeader();distinctGolems()
+  for i=1,4 do
+    local npc=gmcp.Chimera.Room.Entities.entities[4+i];npc.hp=0
+    kozojeb.onKill(npc.name,false);send("wez pancerz")
+  end
+  for i=1,4 do kozojeb.G.onText("Bierzesz powyginany pancerz plytowy.") end
+  advance(.13)
+  assert(count("wez pancerz")==4 and kozojeb.G.job.picked==4)
+  assert(kozojeb.metrics.golemObservedLoot==4 and not kozojeb.G.job.lootPending)
+end)
+test("repeated combat packets cannot duplicate an adopted external pickup", function()
+  liveGolemLeader();local npc=gmcp.Chimera.Room.Entities.entities[5];npc.hp=0
+  kozojeb.onKill(npc.name,false);send("wez pancerz")
+  local timer=kozojeb.G.lootTimer
+  for i=1,2000 do kozojeb.onGmcp("gmcp.Chimera.Combat.State") end
+  advance(.13);assert(count("wez pancerz")==1 and kozojeb.G.lootTimer==timer)
+end)
+test("a delayed external empty pickup still gets only one owned retry", function()
+  liveGolemLeader();local npc=gmcp.Chimera.Room.Entities.entities[5];npc.hp=0
+  kozojeb.onKill(npc.name,false);send("wez pancerz")
+  kozojeb.G.onText("Wez co?");advance(.5)
+  assert(count("wez pancerz")==2)
+  kozojeb.G.onText("Wez co?");advance(4)
+  assert(count("wez pancerz")==2 and kozojeb.G.job.unavailable==1)
+end)
+test("a fresh HP emergency during the short pickup deferral prevents sending loot", function()
+  liveGolemLeader();local e=gmcp.Chimera.Room.Entities.entities;e[5].hp=0
+  kozojeb.onKill(e[5].name,false)
+  gmcp.Char.Vitals.hp=100;e[2].hp=100;kozojeb.onGmcp("gmcp.Char.Vitals")
+  advance(.1);assert(count("wez pancerz")==0 and kozojeb.mode=="escape")
+end)
+test("manual stop cancels a pickup before its first command is sent", function()
+  liveGolemLeader();local e=gmcp.Chimera.Room.Entities.entities;e[5].hp=0
+  kozojeb.onKill(e[5].name,false);kozojeb.stop();advance(2)
+  assert(count("wez pancerz")==0 and not kozojeb.G.job and not kozojeb.G.lootTimer)
+end)
+test("disconnect before an unsent pickup does not invent an uncertain carried armor", function()
+  liveGolemLeader();local e=gmcp.Chimera.Room.Entities.entities;e[5].hp=0
+  kozojeb.onKill(e[5].name,false);kozojeb.onSessionEvent("sysDisconnectionEvent");advance(2)
+  assert(count("wez pancerz")==0)
+  reconnectPackets();advance(1)
+  assert(count("wez pancerz")==1 and (kozojeb.G.job.uncertainPickup or 0)==0,
+    "pickup="..count("wez pancerz").." uncertainty="..tostring(kozojeb.G.job.uncertainPickup)
+      .." phase="..kozojeb.G.job.phase.." mode="..kozojeb.mode)
+end)
+test("support profiles do not adopt a manual pickup as autonomous golem loot", function()
+  for _,role in ipairs({"wsparcie","zaslony"}) do
+    golemSetup("S",role);kozojeb.start();send("wez pancerz");advance(.13)
+    assert(count("wez pancerz")==1 and (kozojeb.metrics.golemObservedLoot or 0)==0 and not kozojeb.G.job)
+  end
+end)
+test("an unrelated outgoing command does not create pickup credits or retain command contents", function()
+  liveGolemLeader()
+  for i=1,2000 do kozojeb.onShieldCommand("sysDataSendRequest","wez monety") end
+  assert(not kozojeb.G.job.externalPickups and not kozojeb.G.lootTimer)
+end)
+test("repeated takeover prompts produce one diagnostic without commands or loss of task", function()
+  reset("zaslony");kozojeb.start();kozojeb.onSessionEvent("sysDisconnectionEvent")
+  local task,before,notes=kozojeb.reconnectTask,#sends,#output
+  for i=1,77 do kozojeb.onLoginConflict() end
+  assert(kozojeb.loginConflict and kozojeb.reconnectTask==task and #sends==before and #output==notes+1)
+end)
+test("a completed login clears the session conflict and resumes without a manual bot command", function()
+  reset("zaslony");kozojeb.start();kozojeb.onSessionEvent("sysDisconnectionEvent")
+  kozojeb.onLoginConflict();reconnectPackets();advance(1)
+  assert(kozojeb.enabled and not kozojeb.loginConflict and not kozojeb.reconnectTask)
 end)
 
 print(string.format("%d simulations passed", total))

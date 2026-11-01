@@ -68,6 +68,24 @@ for line in ("Bierzesz powyginany pancerz plytowy.",
 assert not re.fullmatch(armor_pattern, "Zniszczony powyginany pancerz plytowy rozsypuje sie w proch.")
 assert not re.fullmatch(armor_pattern, "Nie udalo ci sie znalezc niczego interesujacego.")
 
+for prefix, succeeded in (("Zaslaniasz", "true"), ("Probujesz zaslonic", "false")):
+    own_reply = re.search(
+        r'tempRegexTrigger\(\s*("(?:\\.|[^"\\])*"),\s*\[\[kozojeb\.onShieldResult\(matches\[2\], '
+        + succeeded + r', matches\[3\]\)\]\]', source
+    )
+    assert own_reply, "Missing NPC description in own shield reply"
+    line = prefix + " Grora przed ciosami pekatego skrzypiacego golema"
+    line += "." if succeeded == "true" else ", lecz nie jestes w stanie tego uczynic."
+    match = re.match(json.loads(own_reply.group(1)), line)
+    assert match and match.groups() == ("Grora", "pekatego skrzypiacego golema")
+
+conflicts = re.findall(
+    r'tempRegexTrigger\(\s*("(?:\\.|[^"\\])*"),\s*\[\[kozojeb\.onLoginConflict\(\)\]\]', source
+)
+for line in ("Nowe interaktywne polaczenie do twej postaci. Zamykam te sesje.",
+             "Twoja postac jest juz w grze. Czy chcesz przejac nad nia kontrole? "):
+    assert any(re.match(json.loads(pattern), line) for pattern in conflicts)
+
 for handler,examples in (
     ("onTeamCover",[("Gror zaslania Yarrima przed ciosami pekatego nieforemnego golema.",
                      ("Gror","Yarrima","pekatego nieforemnego golema")),

@@ -54,7 +54,7 @@ end
 K.legacyImportTried = true
 K.initialized = false
 
-K.version = "2.9.13"
+K.version = "2.9.14"
 K.config = K.config or {
   chaseDelay = 0.20,
   patrolDelay = 0.70,
@@ -143,7 +143,7 @@ local settingTypes = {
   escapeHp="number", teamEscapeHp="number", teamShieldHp="number", teamShieldInterval="number",
   maxCreatures="number", restAtMoves="number", resumeAtMoves="number", attackCommand="string",
   targets="table", targetOrder="table", attackForms="table", teamMembers="table",
-  shieldNameForms="table", ignoreNonTargets="boolean", ignoredNames="table",
+  shieldNameForms="table", teamRoles="table", ignoreNonTargets="boolean", ignoredNames="table",
   role="string", leaderName="string", leaderShieldHp="number", shieldSelfHp="number",
   zubrTargetInitialized="boolean", szkieletTargetInitialized="boolean", introducedTargets230="table",
   equipmentHold="string", recoveryHp="number",
@@ -240,6 +240,11 @@ K.config.targetOrder = K.config.targetOrder or {
 }
 K.config.attackForms = K.config.attackForms or {}
 K.config.teamMembers = K.config.teamMembers or {}
+-- Wspolny model rol, bez raportow miedzy profilami. Nie usuwa tych osob
+-- z druzyny, kontroli HP ani listy osob wymagajacych ochrony.
+if type(K.config.teamRoles) ~= "table" then
+  K.config.teamRoles = {brix="wsparcie", gunz="wsparcie", rodrick="wsparcie"}
+end
 local defaultShieldNameForms = {
   veesa = "veese",
   isill = "isilla",
@@ -249,6 +254,9 @@ local defaultShieldNameForms = {
   yarrim = "yarrima",
   gror = "grora",
   yergo = "yerga",
+  brix = "brixa",
+  gunz = "gunza",
+  rodrick = "rodricka",
 }
 K.config.shieldNameForms = K.config.shieldNameForms or {}
 for name, form in pairs(defaultShieldNameForms) do
@@ -1810,8 +1818,17 @@ local function shieldHealthPair(own, target)
   return reserve(own, ownHp, ownMax), reserve(target, targetHp, targetMax), ownHp, targetHp
 end
 
+local function canShieldMember(member)
+  if not member then return false end
+  if isSelf(member) and K.config.role == "wsparcie" then return false end
+  local leader = groupContext().actualLeader
+  if leader and tostring(member.id) == tostring(leader.id) then return true end
+  return K.config.teamRoles[normal(member.name)] ~= "wsparcie"
+end
+
 local function shieldProjection(own, target, percent, npcId, rotation)
   if not own or not own.id or not target.id then return nil, "Brak identyfikatorow graczy" end
+  if not canShieldMember(own) then return nil, "Rola wsparcia: bez zaslon" end
   local snapshot = combatSnapshot()
   local ownId, targetId = tostring(own.id), tostring(target.id)
   local ownIncoming = snapshot.incoming[ownId] or {count=0, npcs={}}
@@ -1983,10 +2000,11 @@ local function reserveShieldRequest(entity, form, external)
 end
 
 function K.onShieldCommand(_, command)
-  -- Obserwujemy tylko zaslony; inne wysylane polecenia nie sa zapisywane.
+  -- Wspoldzielony obserwator nie nadpisuje send i nie blokuje recznych komend.
+  if K.G then K.G.onLootCommand(command) end
   if K.sendingShield or type(command) ~= "string" or #command < 8 or #command > 128 then return end
   local form = command:match("^%s*[Zz][Aa][Ss][Ll][Oo][Nn]%s+([%a%-]+)%s*$")
-    or command:match("^%s*[Zz][Aa][Ss][Ll][Oo][Nn]%s+([%a%-]+)%s+przed%s+%a+%s+golemem%s*$")
+    or command:match("^%s*[Zz][Aa][Ss][Ll][Oo][Nn]%s+([%a%-]+)%s+przed%s+[%a%s%-]+%s+golemem%s*$")
   if not form or K.sessionBlocked then return end
   form = normal(form)
   clearShieldTurn()
@@ -2110,6 +2128,16 @@ local function tryShield(entity, hp, threshold, plan)
   if K.shieldAwaitCombatRevision == K.combatRevision then clearShieldTurn() return end
   if not hp or (not plan and hp >= threshold) or K.lastHp <= 0 or K.lastHp < K.config.shieldSelfHp then clearShieldTurn() return end
   if not incomingNpc(entity) then clearShieldTurn() return end
+  if not plan and K.G and K.G.encounter() then
+    local decision
+    decision, plan = K.G.project(groupContext().self, entity)
+    if not decision then clearShieldTurn() return end
+  end
+  local selector
+  if plan then
+    selector = K.G and K.G.selector(plan.npcId, entity)
+    if not selector then clearShieldTurn() return end
+  end
   local improves, reason
   if plan then
     local decision
@@ -2157,6 +2185,7 @@ local function tryShield(entity, hp, threshold, plan)
   K.shieldLastTarget = target
   local request = reserveShieldRequest(entity, form, false)
   request.golemNpcId = plan and plan.npcId or nil
+  request.golemSelector = selector
   K.shieldBlockedReason = nil
   local decision = K.shieldDecision
   note(string.format(
@@ -2168,7 +2197,7 @@ local function tryShield(entity, hp, threshold, plan)
   -- przychodzacymi bezposrednio podczas wykonania polecenia.
   later("shieldTimer", K.config.teamShieldInterval, function() end)
   K.sendingShield = true
-  local suffix = plan and (" przed " .. plan.ordinal .. " golemem") or ""
+  local suffix = selector and (" przed " .. selector) or ""
   if plan then
     local npc=entityById(plan.npcId)
     note("Golemy: celowana zaslona" .. suffix .. " (" .. (npc and npc.name or "brak opisu")
@@ -2208,16 +2237,17 @@ function K.onShieldCooldown()
   if K.enabled then queueInspection(inspectRoom) end
 end
 
-function K.onShieldResult(form, succeeded)
+function K.onShieldResult(form, succeeded, description)
   local pending = K.shieldPendingTarget
   local requestedRevision
   if pending and normal(pending.form) == normal(form) then
-    if K.G and pending.golemNpcId then K.G.onShieldResult(pending,succeeded) end
+    local matched = true
+    if K.G and pending.golemNpcId then matched = K.G.onShieldResult(pending,succeeded,description) end
     requestedRevision = pending.combatRevision
     K.shieldPendingTarget = nil
     cancelTimer("shieldReplyTimer")
     K.shieldReplyToken = nil
-    if succeeded and not pending.conflicted and pending.ratio and pending.count > 0 then
+    if succeeded and matched and not pending.conflicted and pending.ratio and pending.count > 0 then
       pending.deadline = math.min(pending.deadline, now() + 0.5)
       K.shieldRescue = pending
       armShieldReply(math.max(0, pending.deadline - now()), function()
@@ -3993,6 +4023,7 @@ end
 function K.stop(reason)
   invalidateState(true)
   K.reconnectTask, K.reconnectWaitReason = nil, nil
+  K.loginConflict = nil
   K.restartPending = nil
   K.refugeRoom, K.recoveryEmergency, K.escapeOriginRoom = nil, nil, nil
   K.recoveryCritical, K.recoveryOwnCritical, K.recoveryWaiters, K.recoveryArrival = nil, nil, nil, nil
@@ -4097,6 +4128,7 @@ function K.tryResumeAfterReconnect()
     end
   end
   K.reconnectTask, K.reconnectWaitReason = nil, nil
+  K.loginConflict = nil
   K.enabled = true
   K.route, K.routeIndex = nil, 1
   K.lastRoom = room
@@ -4149,6 +4181,13 @@ function K.tryResumeAfterReconnect()
     -- Walke lub dalszy patrol wybieramy na podstawie nowych danych.
     inspectRoom()
   end
+end
+
+function K.onLoginConflict()
+  if K.loginConflict then return end
+  K.loginConflict = true
+  note("Logowanie: postac jest uzywana przez inna sesje. Sprawdz drugi profil lub klienta; "
+    .. "samo ponawianie polaczenia nie odpowiada na pytanie o przejecie kontroli.", "yellow")
 end
 
 function K.onSessionEvent(eventName)
@@ -4628,6 +4667,7 @@ function K.status()
   statusBorder("=")
   if K.sessionBlocked then statusRow("Polaczenie", "Czekam na zalogowanie i swieze dane") end
   if K.reconnectTask then statusRow("Wznowienie", K.reconnectWaitReason or "Automatyczne po odebraniu swiezych danych") end
+  if K.loginConflict then statusRow("Logowanie", "Konflikt z inna sesja postaci") end
   if K.restartPending then statusRow("Wznowienie", "Czekam na swiezy pokoj i kompletne HP; wznowie automatycznie") end
   if K.config.equipmentHold then statusRow("Ekwipunek", K.config.equipmentHold) end
   if K.refugeRoom then statusRow("Miejsce leczenia", "Awaryjne: " .. K.refugeRoom .. "; start patrolu: " .. K.config.startRoom) end
@@ -4657,6 +4697,10 @@ function K.status()
   statusLink("[ ZASLONY ]", "rola zaslony", "Wsparcie oraz zaslony calej druzyny", "yellow")
   statusEndRow()
   statusRow("Wybrana rola", roleLabels[K.config.role])
+  local supportOnly = {}
+  for name, role in pairs(K.config.teamRoles) do if role == "wsparcie" then supportOnly[#supportOnly+1]=name end end
+  table.sort(supportOnly)
+  if #supportOnly>0 then statusRow("Tylko wsparcie", table.concat(supportOnly, ", ")) end
   local context = groupContext()
   local leader = context.leader
   local leaderHp = context.leaderHp
@@ -4985,6 +5029,11 @@ function K.help()
   <green>/kozojeb imie usun Pandjed<reset>     usun zapisana odmiane
   <green>/kozojeb druzyna auto<reset>          wykrywaj czlonkow przez GMCP
   <green>/kozojeb druzyna imie1 imie2<reset>   dodatkowe imiona do pilnowania
+  <green>/kozojeb druzyna role<reset>          pokaz zapisane role pozostalych osob
+  <green>/kozojeb druzyna rola Brix wsparcie<reset>  nie przydzielaj tej osobie zaslon;
+                              pozostaje chroniona i kontrolowana przez lidera
+  - Brix, Gunz i Rodrick domyslnie maja w planie role wsparcia.
+    Zmiane wpisz na kazdym profilu: druzyna rola <imie> wsparcie|zaslony|auto.
   <green>/kozojeb odpoczynek 25 55<reset>      przy 25% ruchu uciekaj do bazy,
                               wroc po regeneracji od 55%
   <green>/kozojeb powrothp 95<reset>           minimum HP kazdego czlonka po leczeniu;
@@ -5159,7 +5208,10 @@ function K.performance()
     m.attacks, m.attackRetries, m.idleResets, m.restartWaits))
   note(string.format("Odpoczynki po odmowie ruchu lub rozdzieleniu druzyny %d; powroty po druzyne %d.",
     m.movementRests, m.regroups))
-  if K.config.golemsEnabled then note("Plany zaslon golemow: " .. (m.golemPlans or 0) .. ".") end
+  if K.config.golemsEnabled then
+    note("Plany zaslon golemow: " .. (m.golemPlans or 0) .. "; inne NPC w odpowiedzi: "
+      .. (m.golemTargetMismatches or 0) .. "; przejete komendy pancerzy: " .. (m.golemObservedLoot or 0) .. ".")
+  end
 end
 
 function K.diagnostics(reason)
@@ -5470,6 +5522,24 @@ local function executeCommand(arguments)
     ), "green")
   elseif action == "druzyna" then
     local value = normal(rest)
+    if value:match("^rola%s") or value == "rola" or value == "role" then
+      if value == "role" then
+        local names = {}
+        for name, role in pairs(K.config.teamRoles) do names[#names+1]=name .. ": " .. tostring(role) end
+        table.sort(names)
+        note("Role druzyny: " .. (#names>0 and table.concat(names, ", ") or "auto") .. ".", "cyan")
+      else
+        local name, role = value:match("^rola%s+([%a%-]+)%s+(%a+)$")
+        if not name or #name>40 or (role~="wsparcie" and role~="zaslony" and role~="auto") then
+          note("Uzycie: /kozojeb druzyna rola <imie> wsparcie|zaslony|auto.", "yellow"); return
+        end
+        K.config.teamRoles[name] = role~="auto" and role or nil
+        if K.G then K.G.resetCombat() end
+        clearShieldTurn()
+        note("Rola w planie druzyny: " .. name .. " -> " .. role .. ".", "green")
+      end
+      return
+    end
     K.config.teamMembers = {}
     if value ~= "" and value ~= "auto" then
       for name in value:gmatch("[%a%-]+") do K.config.teamMembers[name] = true end
@@ -5540,6 +5610,10 @@ end
 K.handlers = { triggers = {}, aliases = {}, events = {} }
 
 K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
+  "^Nowe interaktywne polaczenie do twej postaci\\. Zamykam te sesje\\.$", [[kozojeb.onLoginConflict()]])
+K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
+  "^Twoja postac jest juz w grze\\. Czy chcesz przejac nad nia kontrole\\?", [[kozojeb.onLoginConflict()]])
+K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
   "^([A-Za-z-]+)(?: zrecznie)? zaslania cie przed ciosami ", [[kozojeb.onCoveredByLeader(matches[2])]])
 K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
   "^([A-Za-z-]+)(?: zrecznie)? zaslania (.+) przed ciosami ", [[kozojeb.onTeamShield(matches[2], matches[3])]])
@@ -5573,9 +5647,9 @@ K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
 K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
   "^Kogo chcesz zaslonic\\?$", [[kozojeb.onShieldRejected()]])
 K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
-  "^Zaslaniasz (.+) przed ciosami ", [[kozojeb.onShieldResult(matches[2], true)]])
+  "^Zaslaniasz (.+) przed ciosami ([^.,]+)", [[kozojeb.onShieldResult(matches[2], true, matches[3])]])
 K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
-  "^Probujesz zaslonic (.+) przed ciosami ", [[kozojeb.onShieldResult(matches[2], false)]])
+  "^Probujesz zaslonic (.+) przed ciosami ([^.,]+)", [[kozojeb.onShieldResult(matches[2], false, matches[3])]])
 K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
   "^Musisz chwile odpoczac po ostatniej zmianie w szyku\\.$", [[kozojeb.onShieldCooldown()]])
 K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
@@ -5653,7 +5727,7 @@ K.golemApi = {
   now=now, note=note, room=currentRoom, group=groupContext, entities=entities,
   isSelf=isSelf, isFollower=isFollower, health=latestHealth, normal=normal,
   liveNpc=liveNpc, snapshot=combatSnapshot, pair=shieldHealthPair,
-  projection=shieldProjection, shield=tryShield, threat=recoveryThreat,
+  projection=shieldProjection, shield=tryShield, threat=recoveryThreat, canShield=canShieldMember,
   form=shieldNameForm, safety=function() return safetyCheck(true) end,
   queue=function() queueInspection(inspectRoom) end,
   ensureTarget=function() addCustomTarget("golem golema") end,
