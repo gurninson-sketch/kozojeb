@@ -107,26 +107,27 @@ function G.selector(id,target)
   local name=A.normal(selected.name)
   local phrase=instrument(name)
   if not phrase then return end
-  local count,index=0,nil
-  local same={}
-  for _,npc in ipairs(list) do
-    if A.normal(npc.name)==name then
-      count=count+1;same[#same+1]=npc
-      if tostring(npc.id)==tostring(id) then index=count end
-    end
+  local same=A.commandPeers(selected)
+  local count,index,allowed=#same,nil,nil
+  for position,npc in ipairs(same) do
+    if tostring(npc.id)==tostring(id) then index=position end
   end
   if count>1 then
-    -- Jednakowy opis nie identyfikuje egzemplarza w odpowiedzi. Celowana
-    -- komenda jest bezpieczna tylko, gdy kazdy pasujacy NPC atakuje te osobe.
+    -- Rowniez przestawione przymiotniki moga wskazywac ten sam zbior NPC.
+    -- Dopuszczamy go tylko, gdy wszystkie egzemplarze atakuja te osobe;
+    -- odpowiedz gry nadal rozstrzyga faktyczne ID zaslonietego napastnika.
+    if not index or not ordinal[index] then return end
+    allowed={}
     for _,npc in ipairs(same) do
       local owners=A.snapshot().owners[tostring(npc.id)]
       local owner=owners and next(owners)
       if not target or owner~=tostring(target.id) or next(owners,owner)~=nil then return end
+      allowed[tostring(npc.id)]=true
     end
     phrase=ordinal[index] .. " " .. phrase
   end
   if (G.selectors[phrase] or 0)>A.now() then return end
-  return phrase
+  return phrase,allowed
 end
 local function pruneLocks()
   local active={}
@@ -381,7 +382,7 @@ function G.onShieldResult(pending,succeeded,description)
   else ids[1]=pending.golemNpcId end
   local matched=false
   for _,id in ipairs(ids) do
-    if id==pending.golemNpcId then matched=true end
+    if id==pending.golemNpcId or pending.golemAllowedIds and pending.golemAllowedIds[id] then matched=true end
     if succeeded then G.holds[id]={untilTime=A.now()+K.config.shieldHold}
     else G.failures[id..":"..tostring(pending.id)]={npcId=id,untilTime=A.now()+15} end
   end
@@ -426,9 +427,23 @@ local function returnHome(job)
     K.escape("Golemy: pokoj oczyszczony. Wracam z pancerzami do kozobazy.")
   end
 end
+local function rememberPopulation(job,dead)
+  job.population=job.population or {}
+  for _,npc in ipairs(A.entities()) do
+    if npc.kind=="npc" and A.normal(npc.name):match("%f[%a]golem%f[%A]") then
+      job.population[tostring(npc.id)]=A.normal(npc.name)
+    end
+  end
+  if dead and dead.id then job.population[tostring(dead.id)]=A.normal(dead.name) end
+  local count=0
+  for _ in pairs(job.population) do count=count+1 end
+  job.expected=math.max(job.expected,count)
+end
 local function newJob(expected)
-  return {room=A.room(),expected=expected,picked=0,remaining=0,bagged=0,extraCargo=0,
-    attempts=0,phase="battle",deaths={},deathCount=0,lootQueue={},consumed=0,unavailable=0}
+  local job={room=A.room(),expected=expected,picked=0,remaining=0,bagged=0,extraCargo=0,
+    attempts=0,phase="battle",deaths={},deathRecords={},ambiguousDeaths={},deathCount=0,lootQueue={},consumed=0,unavailable=0}
+  rememberPopulation(job)
+  return job
 end
 local function lootLater(seconds,callback)
   cancel("lootTimer")
@@ -504,7 +519,7 @@ function G.onLootCommand(command)
     if #job.externalPickups<16 then job.externalPickups[#job.externalPickups+1]=A.now() end
   end
 end
-function G.onKill(name,dead,confirmed)
+function G.onKill(name,dead,confirmed,observedId)
   if confirmed or not fresh() or A.isFollower() or K.limitRoom or K.movementRest
       or K.mode=="escape" or K.mode=="heal_rest" or K.mode=="recovery_return"
       or not A.normal(name):match("%f[%a]golem%f[%A]") then return end
@@ -515,16 +530,67 @@ function G.onKill(name,dead,confirmed)
   if not job then
     local list,others=golems()
     if others>0 or #list>4 then return end
-    job=newJob(#list+1);G.job=job
+    job=newJob(#list);G.job=job
   end
   if job.room~=A.room() or job.cargoReady or job.phase=="done" then return end
-  local key=dead and tostring(dead.id) or A.normal(name)..":"..math.floor(A.now()*2)
-  job.deaths=job.deaths or {}
-  if job.deaths[key] then return end
-  job.deaths[key]=true;job.deathCount=(job.deathCount or 0)+1
-  job.expected=math.max(job.expected,job.deathCount+#golems())
+  local id=observedId and tostring(observedId) or dead and tostring(dead.id)
+  if id and not dead then dead={id=id,name=name} end
+  rememberPopulation(job,dead)
+  local key=A.normal(name)
+  local record=id and job.deaths[id]
+  if not record then
+    for _,previous in ipairs(job.deathRecords) do
+      if previous.name==key and ((id and not previous.id)
+          or (not id and not observedId and not previous.textSeen)) then record=previous break end
+    end
+  end
+  if record then
+    if id then record.id=id;job.deaths[id]=record end
+    if not observedId then record.textSeen=true end
+    return
+  end
+  if not id then
+    local anchored,unbound=false,false
+    for _,previous in ipairs(job.deathRecords) do
+      if previous.name==key then
+        if previous.id then anchored=true else unbound=true end
+      end
+    end
+    if anchored and not unbound then
+      local missing={}
+      for candidate,populationName in pairs(job.population) do
+        if populationName==key and not job.deaths[candidate]
+            and not A.liveNpc(A.entity(candidate)) then missing[#missing+1]=candidate end
+      end
+      if #missing==1 then id=missing[1]
+      elseif #missing==0 then
+        -- Powtorka opisu po usunieciu znanego ID nie dowodzi drugiego
+        -- zgonu. Niejednoznaczna zapowiedz czeka na nowe zerowe HP.
+        job.ambiguousDeaths[key]=true
+        return
+      end
+    end
+  end
+  -- Tekst i GMCP sa dwoma potwierdzeniami tego samego zgonu. Nie tworzymy
+  -- klucza z zegara ani nie dodajemy tekstowego zgonu do nadal widocznego
+  -- egzemplarza. Kolejne rzeczywiste NPC rozszerzaja zapamietana populacje.
+  local capacity,anonymous=0,0
+  for _,populationName in pairs(job.population) do if populationName==key then capacity=capacity+1 end end
+  for _,previous in ipairs(job.deathRecords) do
+    if previous.name==key then anonymous=anonymous+1 end
+  end
+  if capacity==0 then
+    if anonymous>0 then return end
+    job.expected=job.expected+1
+  elseif anonymous>=capacity then return end
+  if job.deathCount>=job.expected then return end
+  record={id=id,name=key,textSeen=not observedId or job.ambiguousDeaths[key],key=id or "death:"..tostring(job.deathCount+1)}
+  job.ambiguousDeaths[key]=nil
+  job.deathRecords[#job.deathRecords+1]=record
+  if id then job.deaths[id]=record end
+  job.deathCount=job.deathCount+1
   job.hadCombat=true;job.lootQueue=job.lootQueue or {}
-  if #job.lootQueue<16 then job.lootQueue[#job.lootQueue+1]={key=key} end
+  if #job.lootQueue<16 then job.lootQueue[#job.lootQueue+1]=record end
   -- Jedna szybka reakcja na rzeczywisty zgon; bez dodatkowej petli walki.
   if A.safety() then G.pumpLoot() end
 end
@@ -557,6 +623,17 @@ function G.inspect()
     G.job = job
   end
   if not job or job.phase == "done" then return false end
+  if A.room()==job.room and job.phase=="battle" then
+    rememberPopulation(job)
+    if next(job.ambiguousDeaths) then
+      for id,name in pairs(job.population) do
+        local npc=A.entity(id)
+        if job.ambiguousDeaths[name] and not job.deaths[id] and npc and tonumber(npc.hp)==0 then
+          G.onKill(name,npc,false,id)
+        end
+      end
+    end
+  end
   if #list > 0 and (not K.combatRoomReady or not K.sessionFresh.combat) then return false end
   if G.encounter() and A.room() == job.room then job.hadCombat=true end
   local atBase = A.room() == tonumber(K.config.startRoom)

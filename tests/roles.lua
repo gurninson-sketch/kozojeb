@@ -5492,4 +5492,285 @@ test("a completed login clears the session conflict and resumes without a manual
   assert(kozojeb.enabled and not kozojeb.loginConflict and not kozojeb.reconnectTask)
 end)
 
+local function weakestSetup()
+  golemSetup("L","prowadzacy")
+  golemRelations({"L","L","L","L"})
+  gmcp.Chimera.Combat.State={primary="",relations={}}
+  return gmcp.Chimera.Room.Entities.entities
+end
+local function attackCommands()
+  local result={}
+  for _, command in ipairs(sends) do if command:match("^zabij ") then result[#result+1]=command end end
+  return result
+end
+test("a new fight selects the wounded golem by its full attack description", function()
+  local e=weakestSetup();e[6].hp=70;e[7].hp=20;e[8].hp=90
+  kozojeb.start()
+  assert(kozojeb.currentTargetId=="N3" and count("zabij metalowego golema")==1)
+end)
+test("the wounded first entry still gets a specific command rather than generic golem", function()
+  local e=weakestSetup();e[5].hp=20
+  kozojeb.start()
+  assert(count("zabij alabastrowego golema")==1 and count("zabij golema")==0)
+end)
+test("after a death the full pause precedes selecting the weakest instead of the automatic target", function()
+  local e=weakestSetup()
+  gmcp.Chimera.Combat.State={primary="N1",relations={{attacker="L",defender="N1"}}}
+  kozojeb.start();assert(kozojeb.currentTargetId=="N1")
+  e[5].hp=0;e[6].hp=65;e[7].hp=15
+  kozojeb.onKill(e[5].name,false)
+  gmcp.Chimera.Combat.State={primary="N2",relations={{attacker="L",defender="N2"}}}
+  event("gmcp.Chimera.Combat.State");advance(kozojeb.config.killPause-.3)
+  assert(kozojeb.mode=="kill_pause" and #attackCommands()==0)
+  advance(.3)
+  assert(kozojeb.currentTargetId=="N3" and count("zabij metalowego golema")==1)
+end)
+test("damage to another NPC never switches an already confirmed current target", function()
+  local e=weakestSetup()
+  gmcp.Chimera.Combat.State={primary="N1",relations={{attacker="L",defender="N1"}}}
+  kozojeb.start();e[7].hp=1
+  for i=1,2000 do kozojeb.onGmcp("gmcp.Chimera.Room.Entities") end
+  advance(.13)
+  assert(kozojeb.currentTargetId=="N1" and #attackCommands()==0)
+end)
+test("a previous combat packet cannot undo a newly requested weakest target", function()
+  local e=weakestSetup()
+  gmcp.Chimera.Combat.State={primary="N1",relations={{attacker="L",defender="N1"}}}
+  kozojeb.start();e[5].hp=0;e[6].hp=65;e[7].hp=15
+  kozojeb.onKill(e[5].name,false)
+  gmcp.Chimera.Combat.State={primary="N2",relations={{attacker="L",defender="N2"}}}
+  event("gmcp.Chimera.Combat.State");advance(kozojeb.config.killPause)
+  event();assert(kozojeb.currentTargetId=="N3")
+  gmcp.Chimera.Combat.State={primary="N3",relations={{attacker="L",defender="N3"}}}
+  event("gmcp.Chimera.Combat.State");advance(3)
+  assert(kozojeb.currentTargetId=="N3" and #attackCommands()==1)
+end)
+test("remaining reported HP wins over a smaller percentage of a bigger NPC pool", function()
+  local e=weakestSetup();e[6].hp=80;e[7].hp=90;e[7].maxhp=1000
+  kozojeb.start();assert(kozojeb.currentTargetId=="N2" and count("zabij kamiennego golema")==1)
+end)
+test("an ignored wounded NPC is excluded from weakest target selection", function()
+  local e=weakestSetup();e[6].hp=50;e[7].hp=1
+  kozojeb.command("ignoruj dodaj metalowy");kozojeb.start()
+  assert(kozojeb.currentTargetId=="N2" and count("zabij metalowego golema")==0)
+end)
+test("missing invalid and dead NPC health is never treated as the weakest living target", function()
+  local e=weakestSetup();e[5].hp=nil;e[6].hp=0/0;e[7].hp=0;e[8].hp=25
+  kozojeb.start();assert(kozojeb.currentTargetId=="N4" and count("zabij zelaznego golema")==1)
+end)
+test("equal or entirely unknown NPC health preserves the existing generic order", function()
+  for _,unknown in ipairs({false,true}) do
+    local e=weakestSetup()
+    if unknown then for i=5,8 do e[i].maxhp=nil end end
+    kozojeb.start();assert(kozojeb.currentTargetId=="N1" and count("zabij golema")==1)
+  end
+end)
+test("ambiguous adjective order cannot select a wounded internal ID with a generic attack", function()
+  local e=weakestSetup()
+  e[5].name="Nieforemny zgrzytajacy golem";e[6].name="Zgrzytajacy nieforemny golem";e[6].hp=1
+  e[7].hp=40;kozojeb.start()
+  assert(kozojeb.currentTargetId=="N3" and count("zabij metalowego golema")==1)
+end)
+test("a longer NPC description also makes a shorter matching attack ambiguous", function()
+  local e=weakestSetup();e[5].name="Kamienny golem";e[5].hp=1
+  e[6].name="Porysowany kamienny golem";e[6].hp=25
+  kozojeb.start();assert(kozojeb.currentTargetId=="N2" and count("zabij porysowanego kamiennego golema")==1)
+end)
+test("unknown adjective inflection does not generate a speculative targeted attack", function()
+  local e=weakestSetup();e[6].name="Bardzo ranny golem";e[6].hp=1;e[7].hp=30
+  kozojeb.start();assert(kozojeb.currentTargetId=="N3" and count("zabij bardzo rannego golema")==0)
+end)
+test("weakest targeting can be disabled and the choice survives a reload", function()
+  local e=weakestSetup();e[7].hp=1
+  kozojeb.command("celowanie kolejnosc");loadCore();kozojeb.start()
+  assert(not kozojeb.config.targetWeakest and count("zabij golema")==1)
+  kozojeb.command("celowanie hp");loadCore();assert(kozojeb.config.targetWeakest)
+  kozojeb.command("celowanie nieznane");assert(kozojeb.config.targetWeakest)
+end)
+test("support roles keep using support rather than autonomous weakest attacks", function()
+  for _,role in ipairs({"wsparcie","zaslony"}) do
+    golemSetup("S",role);golemRelations({"L","L","L","L"})
+    gmcp.Chimera.Room.Entities.entities[7].hp=1;kozojeb.start()
+    assert(#attackCommands()==0);noMovement()
+  end
+end)
+test("an interrupted kill pause automatically resumes and still selects the wounded next NPC", function()
+  local e=weakestSetup()
+  gmcp.Chimera.Combat.State={primary="N1",relations={{attacker="L",defender="N1"}}}
+  kozojeb.start();e[5].hp=0;e[7].hp=10;kozojeb.onKill(e[5].name,false)
+  kozojeb.onSessionEvent("sysDisconnectionEvent")
+  gmcp.Chimera.Combat.State={primary="N2",relations={{attacker="L",defender="N2"}}}
+  reconnectPackets();advance(kozojeb.config.killPause+.2)
+  assert(kozojeb.enabled and count("zabij metalowego golema")==1,
+    "mode="..kozojeb.mode.." target="..tostring(kozojeb.currentTargetId).." attacks="..table.concat(attackCommands(),","))
+end)
+test("a transient missing shield patient is eligible immediately after returning", function()
+  reset("zaslony",60);kozojeb.start();local e=gmcp.Chimera.Room.Entities.entities
+  local patient=table.remove(e,2);kozojeb.onShieldRejected()
+  assert(count("zaslon yarrima")==1)
+  event();table.insert(e,2,patient);advance(2.1);event()
+  assert(count("zaslon yarrima")==2,"count="..count("zaslon yarrima").." mode="..kozojeb.mode
+    .." ready="..tostring(kozojeb.shieldFormationReady).." reason="..tostring(kozojeb.shieldBlockedReason))
+end)
+test("a new incoming enemy clears a generic shield rejection without editing a correct name", function()
+  reset("zaslony",60);kozojeb.start();kozojeb.onShieldRejected()
+  gmcp.Chimera.Room.Entities.entities[4].id="N2"
+  gmcp.Chimera.Combat.State.relations={{attacker="N2",defender="L"}}
+  event();event("gmcp.Chimera.Combat.State")
+  advance(2.1);event()
+  assert(count("zaslon yarrima")==2)
+end)
+test("a generic rejection expires rather than permanently disabling a valid shield form", function()
+  reset("zaslony",60);kozojeb.start();kozojeb.onShieldRejected();advance(30.1);event()
+  assert(count("zaslon yarrima")==2)
+end)
+test("a dead targeted NPC rejection cannot blacklist the protected player or the NPC", function()
+  golemSetup("S");golemRelations({"L","L","L","L"});kozojeb.start()
+  local pending=kozojeb.shieldPendingTarget;assert(pending and pending.golemNpcId)
+  for _,npc in ipairs(gmcp.Chimera.Room.Entities.entities) do
+    if npc.id==pending.golemNpcId then npc.hp=0 end
+  end
+  event();kozojeb.onShieldRejected()
+  assert(not kozojeb.shieldRejectedForms.yarrim and next(kozojeb.G.failures)==nil)
+end)
+test("opposite adjective order across different patients prevents a speculative targeted shield", function()
+  golemSetup("S");golemRelations({"L","G","M","L"})
+  local e=gmcp.Chimera.Room.Entities.entities
+  e[5].name="Nieforemny zgrzytajacy golem";e[6].name="Zgrzytajacy nieforemny golem"
+  kozojeb.start()
+  assert(kozojeb.G.selector("N1",e[2])==nil and kozojeb.G.selector("N2",e[1])==nil)
+end)
+test("an interchangeable ordinal pool holds the actual reported golem rather than the planned ID", function()
+  golemSetup("S");golemRelations({"L","L","L","L"})
+  local e=gmcp.Chimera.Room.Entities.entities
+  e[5].name="Nieforemny zgrzytajacy golem";e[6].name="Zgrzytajacy nieforemny golem"
+  kozojeb.start()
+  local phrase,allowed=kozojeb.G.selector("N1",e[2])
+  assert(phrase=="pierwszym nieforemnym zgrzytajacym golemem" and allowed.N1 and allowed.N2)
+  local pending={golemNpcId="N1",golemSelector=phrase,golemAllowedIds=allowed,id="L"}
+  assert(kozojeb.G.onShieldResult(pending,true,"zgrzytajacego nieforemnego golema"))
+  assert(kozojeb.G.holds.N2 and not kozojeb.G.holds.N1)
+  assert((kozojeb.metrics.golemTargetMismatches or 0)==0)
+end)
+
+test("text before zero HP and the later GMCP death share one armor and four expected NPCs", function()
+  liveGolemLeader();local e=gmcp.Chimera.Room.Entities.entities
+  kozojeb.onKill(e[5].name,false)
+  assert(kozojeb.G.job.deathCount==1 and kozojeb.G.job.expected==4)
+  e[5].hp=0;event()
+  assert(kozojeb.G.job.deathCount==1 and kozojeb.G.job.expected==4 and count("wez pancerz")==1)
+end)
+test("zero HP before a late death text after removal shares the original armor", function()
+  liveGolemLeader();local e=gmcp.Chimera.Room.Entities.entities
+  e[5].hp=0;event();local name=e[5].name;table.remove(e,5);event()
+  kozojeb.onKill(name,false);advance(.13)
+  assert(kozojeb.G.job.deathCount==1 and kozojeb.G.job.expected==4 and count("wez pancerz")==1)
+end)
+test("a repeated death description after removal cannot count a fifth golem or extra pickup", function()
+  liveGolemLeader();local npc=killGolem(1)
+  table.remove(gmcp.Chimera.Room.Entities.entities,5)
+  kozojeb.onKill(npc.name,false);advance(.13)
+  assert(kozojeb.G.job.deathCount==1 and kozojeb.G.job.expected==4 and count("wez pancerz")==1)
+end)
+test("two simultaneous identical death texts remain two deaths when GMCP later binds their IDs", function()
+  liveGolemLeader();local e=gmcp.Chimera.Room.Entities.entities
+  kozojeb.onKill(e[5].name,false);kozojeb.onKill(e[6].name,false)
+  assert(kozojeb.G.job.deathCount==2 and kozojeb.G.job.expected==4)
+  e[5].hp=0;e[6].hp=0;event()
+  kozojeb.onKill(e[6].name,false,e[6].id)
+  assert(kozojeb.G.job.deathCount==2)
+  pickup();pickup();assert(count("wez pancerz")==2 and kozojeb.G.job.picked==2)
+end)
+test("four identical simultaneous deaths queue four real armors without an extra expected fifth", function()
+  liveGolemLeader();local e=gmcp.Chimera.Room.Entities.entities
+  for i=5,8 do kozojeb.onKill(e[i].name,false) end
+  for i=5,8 do e[i].hp=0 end
+  event()
+  for i=6,8 do kozojeb.onKill(e[i].name,false,e[i].id) end
+  assert(kozojeb.G.job.deathCount==4 and kozojeb.G.job.expected==4)
+  for i=1,4 do pickup() end
+  assert(count("wez pancerz")==4 and kozojeb.G.job.picked==4)
+end)
+test("an ambiguous later death waits for actual new zero HP rather than repeating a removed NPC", function()
+  liveGolemLeader();local npc=killGolem(1)
+  table.remove(gmcp.Chimera.Room.Entities.entities,5);event()
+  kozojeb.onKill(npc.name,false)
+  assert(kozojeb.G.job.deathCount==1)
+  gmcp.Chimera.Room.Entities.entities[5].hp=0;event()
+  assert(kozojeb.G.job.deathCount==2 and kozojeb.G.job.expected==4)
+end)
+test("a new NPC entering the same battle expands the remembered population without double death arithmetic", function()
+  liveGolemLeader();killGolem(1)
+  gmcp.Chimera.Room.Entities.entities[#gmcp.Chimera.Room.Entities.entities+1]=
+    {id="N5",name="Porysowany golem",kind="npc",hp=100,maxhp=100}
+  event();assert(kozojeb.G.job.expected==5 and kozojeb.G.job.deathCount==1)
+end)
+test("fresh complete party removal releases departed members while retaining real full HP requirements", function()
+  cargoAtBase();local e=gmcp.Chimera.Room.Entities.entities
+  e[3].hp=999
+  kozojeb.recoveryCritical.gror=true;kozojeb.recoveryTired.gror="Gror";kozojeb.injuredTeamMember="Gror"
+  table.remove(e,1);gmcp.Chimera.Group.State.members={"L","M","S"}
+  event();event("gmcp.Chimera.Group.State")
+  for i=1,4 do finishArmor() end
+  assert(not kozojeb.recoveryReadiness() and not kozojeb.recoveryRoster.gror
+    and not kozojeb.recoveryCritical.gror and not kozojeb.recoveryTired.gror and not kozojeb.injuredTeamMember)
+  e[2].hp=1000;event();advance(4)
+  assert(kozojeb.mode~="heal_rest")
+end)
+test("an invisible party member still in an explicit complete named roster blocks recovery", function()
+  cargoAtBase();table.remove(gmcp.Chimera.Room.Entities.entities,1)
+  gmcp.Chimera.Group.State.members={{id="G",name="Gror"},{id="L",name="Yarrim"},
+    {id="M",name="Morrid"},{id="S",name="Yergo"}}
+  event();event("gmcp.Chimera.Group.State")
+  for i=1,4 do finishArmor() end
+  assert(not kozojeb.recoveryReadiness() and kozojeb.recoveryRoster.gror)
+end)
+test("a roster with unresolved IDs cannot remove a remembered missing party member", function()
+  cargoAtBase();table.remove(gmcp.Chimera.Room.Entities.entities,1)
+  gmcp.Chimera.Group.State.members={"NEWG","L","M","S"}
+  event();event("gmcp.Chimera.Group.State")
+  for i=1,4 do finishArmor() end
+  assert(not kozojeb.recoveryReadiness() and kozojeb.recoveryRoster.gror)
+end)
+test("missing group data and only refreshed entities cannot prune the recovery roster", function()
+  cargoAtBase();table.remove(gmcp.Chimera.Room.Entities.entities,1)
+  gmcp.Chimera.Group.State={leader="L"};event();event("gmcp.Chimera.Group.State")
+  for i=1,4 do finishArmor() end
+  assert(not kozojeb.recoveryReadiness() and kozojeb.recoveryRoster.gror)
+end)
+test("an older complete roster cannot prune members without a new authoritative group packet", function()
+  cargoAtBase();kozojeb.recoveryRoster.gror="Gror"
+  table.remove(gmcp.Chimera.Room.Entities.entities,1)
+  gmcp.Chimera.Group.State.members={"L","M","S"};event()
+  for i=1,4 do finishArmor() end
+  assert(not kozojeb.recoveryReadiness() and kozojeb.recoveryRoster.gror)
+end)
+test("the three fixed support players can leave and no longer stall a healed seven person party", function()
+  local e=sevenPlayers("L","prowadzacy")
+  for i=#e,1,-1 do if e[i].kind=="npc" then table.remove(e,i) end end
+  gmcp.Chimera.Combat.State={primary="",relations={}}
+  kozojeb.start();kozojeb.escape("test")
+  for i=#e,1,-1 do if e[i].id=="B" or e[i].id=="U" or e[i].id=="R" then table.remove(e,i) end end
+  gmcp.Chimera.Group.State.members={"G","L","M","S"}
+  gmcp.Chimera.Combat.State={primary="",relations={}}
+  for i=#e,1,-1 do if e[i].kind=="npc" then table.remove(e,i) end end
+  event();event("gmcp.Chimera.Group.State");event("gmcp.Chimera.Combat.State")
+  kozojeb.G.reset()
+  local ready,blockers=kozojeb.recoveryReadiness()
+  assert(ready,"blocker="..(blockers[1] and blockers[1].label or "none"))
+  assert(not kozojeb.recoveryRoster.brix and not kozojeb.recoveryRoster.gunz and not kozojeb.recoveryRoster.rodrick)
+end)
+test("a rejected wounded target is not retried by the HP chooser in the same room", function()
+  local e=weakestSetup();e[6].hp=30;e[7].hp=10
+  kozojeb.start();kozojeb.onAttackRejected();advance(.13)
+  assert(count("zabij metalowego golema")==1 and count("zabij kamiennego golema")==1)
+  for i=1,2000 do kozojeb.onGmcp("gmcp.Chimera.Room.Entities") end
+  advance(.13);assert(count("zabij metalowego golema")==1)
+end)
+test("the weakest HP chooser still skips a room over its ordinary patrol creature limit", function()
+  local e=weakestSetup();e[7].hp=10
+  kozojeb.command("golemy off");kozojeb.command("maxstworow 2");kozojeb.start()
+  assert(#attackCommands()==0 and kozojeb.limitRoom)
+end)
+
 print(string.format("%d simulations passed", total))

@@ -1,4 +1,4 @@
-# Chimera Kozojeb 2.9.14
+# Chimera Kozojeb 2.9.15
 
 [Pobierz najnowszą paczkę](https://github.com/gurninson-sketch/kozojeb/releases/latest/download/Chimera_Kozojeb.mpackage) · [Wydania](https://github.com/gurninson-sketch/kozojeb/releases)
 
@@ -69,6 +69,23 @@ Wyjście korzysta z istniejącej trasy patrolu i krótkiego odstępu, domyślnie
 
 Limit nie przerywa wcześniej wybranej walki, trwającego pościgu ani pełnej skonfigurowanej pauzy po zabiciu. Ręczna zmiana limitu przed wysłaniem ruchu powoduje ponowną ocenę; nie anuluje już wysłanego kierunku. `/kozojeb baza` zmienia bazę na bieżący pokój, ale kolejne `/kozojeb start` ponownie ustawia ją w miejscu uruchomienia.
 
+Po komunikacie `Kogo chcesz zaslonic?` bot od 2.9.15 wstrzymuje tę komendę najwyżej na 30 s. Zmiana napastników lub pokoju, zniknięcie postaci, korekta odmiany i potwierdzony sukces zwalniają blokadę wcześniej. Sama odmowa nie dowodzi złej odmiany: postać mogła wyjść lub przeciwnik zginąć przed odpowiedzią.
+
+## Wybór kolejnego przeciwnika
+
+Od 2.9.15 prowadzący domyślnie wybiera do nowego ataku dozwolonego NPC z najniższymi znanymi HP. Dzięki temu po zabiciu dotychczasowego celu może dobić przeciwnika wcześniej zranionego ciosem obszarowym. Przykład: pozostałe golemy mają 70, 20 i 90 HP — wybierany jest golem z 20 HP, jeżeli jego opis pozwala go jednoznacznie wskazać komendą. W logu pojawia się opis i odczyt `wybor HP: hp/maxhp`.
+
+```text
+/kozojeb celowanie hp
+/kozojeb celowanie kolejnosc
+```
+
+Pierwsza komenda włącza wybór według HP, druga przywraca dotychczasową kolejność gatunków i encji. Ustawienie jest zapisywane na profilu. Porównywane są pozostałe wartości `hp` z poprawnych par `hp/maxhp` kanału `Room.Entities`; przy równych HP niższy udział HP, a następnie dotychczasowa kolejność rozstrzygają remis. Skala zależy od serwera: z samych procentów skrypt nie odtwarza nieudostępnionych rzeczywistych punktów życia. Brak danych nie oznacza zerowych HP.
+
+Cel musi mieć obsługiwaną odmianę i jednoznaczny pełny opis. Jednakowe opisy, przestawione przymiotniki oraz krótszy opis pasujący też do dłuższego nie pozwalają udawać wyboru konkretnego ID przez ogólne `zabij golema`. Niejednoznaczni i nierozpoznani kandydaci nie są używani do optymalizacji; jeśli żaden kandydat się nie nadaje, pozostaje dotychczasowy wybór. Filtry gatunków i ignorowanych nazw, pierwszeństwo byka przed krową i kozła przed kozą oraz limit pokoju nadal obowiązują.
+
+Ocena następuje przy rozpoczynaniu nowego ataku oraz po pełnej ustawionej pauzie po zabiciu. Potwierdzony bieżący cel, pościg i walka już trwająca podczas startu lub wznowienia pozostają kontynuowane. Kolejne obrażenia innych NPC nie przełączają celu. Wspierający nadal korzystają z `wesprzyj` i rzeczywistego stanu walki prowadzącego; nie wybierają samodzielnie NPC ani nie wykonują nowej pętli ataków. Nie dodano stałego odpytywania HP ani analizy każdej linii obrażeń.
+
 ## Zasłony i HP
 
 Własne HP jest liczone z kompletnej pary `hp/maxhp` z jednego źródła GMCP. Niepełny odczyt nie łączy wartości z `Char.Vitals` i `Room.Entities`; jeśli oba źródła są niepełne, bot zachowuje ostatni poprawny wynik. Pełne, nowsze `Char.Vitals` nadal ma pierwszeństwo przed starszym odczytem encji.
@@ -137,6 +154,8 @@ Przy czterech golemach atakujących jednego gracza profile planują różne, **c
 
 Przy identycznych opisach numer odnosi się do pełnego opisu, np. `przed pierwszym kamiennym golemem`. Taka próba wymaga, aby wszystkie pasujące egzemplarze atakowały osłanianą osobę; przy różnych celach nie zgadujemy ID. Odpowiedź gry rezerwuje rzeczywiście wymienionego NPC. Niejednoznaczny opis stabilizuje pasujące egzemplarze, a inny lub nierozpoznany opis nie potwierdza ochrony przed planowanym ID. Rozbieżny selektor otrzymuje 15 s przerwy i krótką diagnostykę. Także ratunkowa zasłona najpierw dobiera konkretny cel; ewentualna ogólna komenda wymaga oceny przejęcia wszystkich napastników osoby. Plan dąży do jednego przeciwnika na obrońcę już przy wysokim HP. Czysty pokój z najwyżej czterema golemami, których nie jest więcej niż członków drużyny, może zostać przyjęty mimo zwykłego limitu celów 3. Mieszany pokój lub większa grupa przeciwników nie otrzymuje tego wyjątku.
 
+Od 2.9.15 także przestawiona kolejność przymiotników i dłuższe pasujące opisy są traktowane jako potencjalnie ta sama pula komendy. Numer w tej puli jest dopuszczalny wyłącznie wtedy, gdy wszyscy pasujący napastnicy atakują tę samą osobę. Wynik przypisuje się do faktycznego opisu z odpowiedzi gry. Gdy ofiary są różne, skrypt rezygnuje ze zgadywania celowanej zasłony.
+
 Po rozdzieleniu napastników bot może przenosić pojedynczego golema z osoby o niższym procencie HP na zdrowszego obrońcę. Domyślna różnica wynosi **10 punktów procentowych**; ustawienie `/kozojeb golemy roznicahp 10` przyjmuje wartości 5–30. Sama różnica procentów nie wystarcza: porównywalna rezerwa rzeczywistych punktów HP obrońcy musi być co najmniej o 15% większa. Zachowane są minimum własnego HP, limit napastników, gotowość szyku i stabilizacja niedawnych przejęć. Bezpieczna rotacja celowana może zastąpić zwykły wymóg poprawy presji o 15%, ponieważ jej celem jest wyrównanie HP w dalszej części walki. Brak gotowego obrońcy, opóźniony GMCP lub niejednoznaczny cel mogą opóźnić podział. To heurystyka, nie gwarancja równego HP w każdej rundzie. Rola `wsparcie` nadal nie wykonuje zasłon.
 
 Od 2.9.13 **prowadzący podnosi pancerz od razu po każdym potwierdzonym zabiciu golema**, także podczas dalszej walki. Używa `wez pancerz`, z potwierdzeniem podniesienia i pojedynczą kolejką dla równoczesnych zgonów. Powtórzenie komunikatu zabicia i późniejsza linia XP nie wysyłają kolejnego pobrania. Przejściowy brak przedmiotu dopuszcza jedną krótką powtórkę; brak odpowiedzi pozostaje zapisany jako niepewne podniesienie. Pilny odwrót ma pierwszeństwo. Po oczyszczeniu całego pokoju prowadzący wraca z drużyną przez dotychczasowe `/idz` do kozobazy. Tylko w bazie wykonuje kolejno `przeszukaj pancerz` → potwierdzenie `Przestajesz przeszukiwac ...` → `odloz pancerz` → potwierdzenie odłożenia.
@@ -163,6 +182,7 @@ Wznowienie patrolu wymaga obsłużenia pancerzy, obecności całej zapamiętanej
 - Od 2.9.7 po odwrocie każdy członek drużyny, także prowadzący, musi osiągnąć domyślnie **95% HP**. Ustawienie na prowadzącym: `/kozojeb powrothp 95`; `/kozojeb powrothp 100` wymaga pełnej regeneracji wszystkich. Próg jest zapisywany na profilu i musi być wyższy od obu progów odwrotu. Zmiana późniejszego progu odwrotu nie pozwala wznowić zadania poniżej niego. Ustawienia wspierających nie sterują wspólnym powrotem.
 - Jeśli od rozpoczęcia odwrotu postać spadnie poniżej swojego właściwego progu odwrotu (prowadzący: `prog`, pozostali: `progdruzyny` prowadzącego), wymaga rzeczywistych **100% HP** do końca tego leczenia i drogi powrotnej. Dotyczy również kolejnych rannych oraz zwykłej drogi do bazy, bez konieczności wystąpienia awaryjnego wyjścia. Pamięć obejmuje wszystkich takich członków i przeżywa rozłączenie. Obniżenie `powrothp` nie usuwa tego wymogu.
 - Warunek regeneracji używa pełnych par `hp/maxhp`, bez zaokrąglania w górę. Widoczne po zaokrągleniu 95% przy faktycznych 94,6% nie wystarcza; tak samo 99,6% nie oznacza pełnych HP po stanie krytycznym. Każda postać jest oceniana względem własnego maksimum. Osoba wskazana przy odwrocie nie ma pierwszeństwa przed innymi rannymi.
+- Od 2.9.15 świeży, kompletny skład `Group.State` pozwala przestać czekać na osobę, która rzeczywiście opuściła drużynę. Niewidoczny członek nadal figurujący w składzie pozostaje wymagany. Niepełne lub stare dane oraz nierozpoznane ID nie usuwają nikogo z oczekiwania.
 - Przed powrotem bot nadal wymaga zebrania wcześniej obecnych i nowo dołączających członków, znanych HP, odpowiedniego ruchu, sprawnego sprzętu oraz zakończenia walki. Brak postaci lub odczytu nie oznacza wyzdrowienia. Panel pokazuje osobno wszystkich blokujących powrót, z bieżącym i wymaganym HP, zmęczeniem lub brakiem w pokoju. `progdruzyny 0` nie wyłącza regeneracji całej drużyny.
 - Po drodze powrotnej prowadzący sprawdza te same warunki ponownie, ze świeżych danych przybycia. Obrażenia lub brakujący gracz zatrzymują wznowienie patrolu i przedłużają odpoczynek; atak nadal uruchamia dotychczasową ochronę i ewakuację. Sprawdzenie korzysta z istniejącego timera leczenia co 3 s i jednorazowego krótkiego uzgodnienia pakietów przybycia. Nie dodaje stałego odpytywania ani komunikacji między profilami.
 - Od 2.9.5 leczenie nie wyłącza ochrony drużyny. Świeże dane o ataku NPC na odpoczywającą drużynę uruchamiają awaryjne wyjście prowadzącego, także zanim HP stanie się krytyczne. Bot wybiera zwykłe wyjście zapisane na mapie, preferując pokój poza obszarem patrolu i kierunek inny niż ostatnia droga przybycia. Pomija miejsca odrzucone w tej ewakuacji oraz znane miejsce rozpoczęcia odwrotu. Nie korzysta z wymyślonych kierunków ani wyjść specjalnych.
@@ -180,7 +200,7 @@ Wznowienie patrolu wymaga obsłużenia pancerzy, obecności całej zapamiętanej
 
 ## Aktualizacje z GitHuba
 
-Jeśli masz już Kozojeba 2.8.1–2.9.13, wykonaj na **każdym profilu**:
+Jeśli masz już Kozojeba 2.8.1–2.9.14, wykonaj na **każdym profilu**:
 
 ```text
 /kozojeb stop
@@ -189,7 +209,7 @@ Jeśli masz już Kozojeba 2.8.1–2.9.13, wykonaj na **każdym profilu**:
 /kozojeb aktualizuj
 ```
 
-Poczekaj na zakończenie walki i ruchu oraz komunikat `Zainstalowano 2.9.14`. Sprawdź `/kozojeb status`; powinien pokazać wersję **2.9.14**. Wyłącz stary dodatkowy trigger pancerzy — podniesienia po każdym zabiciu są już wbudowane. Następnie uruchom `/kozojeb start` — najpierw na wspierających, potem na prowadzącym stojącym w bazie. To jednorazowy start po aktualizacji; późniejsze rozłączenia nie wymagają ręcznego wznowienia. Nie trzeba usuwać ani ręcznie instalować paczki; dotychczasowe ustawienia profili pozostają zachowane. Można przejść bezpośrednio z 2.9.2 do 2.9.14. Model ról sam uwzględni Brixa, Gunza i Rodricka jako wsparcie, bez przydzielania im zasłon. Profile już ustawione na `zaslony` korzystają z ochrony całej drużyny; rola `wsparcie` pozostaje drugą linią. Zwykły próg regeneracji wynosi domyślnie 95%; można go zmienić na prowadzącym przez `/kozojeb powrothp 95`. Tryb golemów wymaga osobnego włączenia i w swoim cyklu czeka na 100% całej drużyny.
+Poczekaj na zakończenie walki i ruchu oraz komunikat `Zainstalowano 2.9.15`. Sprawdź `/kozojeb status`; powinien pokazać wersję **2.9.15**. Wyłącz stary dodatkowy trigger pancerzy — podniesienia po każdym zabiciu są już wbudowane. Następnie uruchom `/kozojeb start` — najpierw na wspierających, potem na prowadzącym stojącym w bazie. To jednorazowy start po aktualizacji; późniejsze rozłączenia nie wymagają ręcznego wznowienia. Nie trzeba usuwać ani ręcznie instalować paczki; dotychczasowe ustawienia profili pozostają zachowane. Można przejść bezpośrednio z 2.9.2 do 2.9.15. Model ról sam uwzględni Brixa, Gunza i Rodricka jako wsparcie, bez przydzielania im zasłon. Profile już ustawione na `zaslony` korzystają z ochrony całej drużyny; rola `wsparcie` pozostaje drugą linią. Zwykły próg regeneracji wynosi domyślnie 95%; można go zmienić na prowadzącym przez `/kozojeb powrothp 95`. Tryb golemów wymaga osobnego włączenia i w swoim cyklu czeka na 100% całej drużyny.
 
 Przy paczce zbudowanej w tym repozytorium adres wydań jest wbudowany. W paczce przygotowanej bez adresu skonfiguruj na każdym profilu:
 
