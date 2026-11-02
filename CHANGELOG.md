@@ -1,5 +1,14 @@
 # Zmiany
 
+## 2.9.17
+
+- Wcześniejsze odciążanie rannych na golemach: w rotacji pierwszeństwo ma obrońca bez napastnika, zamiast nieco zdrowszej postaci już obciążonej NPC. Przy zachowanej skonfigurowanej różnicy procentowej wolny obrońca potrzebuje 5% przewagi porównywalnego zapasu punktów HP, zamiast 15%. Przejęcie drugiego NPC nadal wymaga 15%; ostatnie obrażenia, różne maksymalne HP i limit napastników pozostają uwzględnione.
+- Gdy podobne opisy golemów uniemożliwiają celowaną zasłonę, osoba mająca dokładnie jednego wyłącznego napastnika może być osłonięta przez `zaslon <osobe>`. Plan jest ponownie sprawdzany przed wysłaniem; drugi napastnik, wspólny cel NPC, niewystarczające HP, rola DPS lub nieświeże dane nie otrzymują tego obejścia. Komunikat `przed ciosami wrogow` daje krótkie okno na GMCP, bez fikcyjnego potwierdzenia konkretnego ID.
+- Pilna zasłona golemów spójnie omija także blokadę bezpośredniego powrotu NPC, a nie tylko rezerwację modułu. Granica to większy z progów własnego i drużynowego odwrotu plus 15 punktów procentowych, wraz z jej równością. Przy 50%/70% postać z 80–85% HP nie czeka z tego powodu pełnych 8 s. Pozostałe bramki bezpieczeństwa obowiązują. Po silnym ciosie prowadzący może rozważyć bezpieczną osłonę także powyżej zwykłego progu zasłon, zgodnie z aktywnym planem golemów.
+- Widoczna nieudana zasłona kolegi oznacza czasowo zajęty szyk tej postaci, bez rezerwowania NPC dla pozostałych. Zastępstwo korzysta z krótkiego, rozdzielonego oczekiwania. Duplikaty nie przedłużają blokady. Zmiana pokoju i sesji czyści rezerwacje od razu; spóźnione odpowiedzi z poprzedniego pokoju nie tworzą blokad ani mylnej diagnostyki innego NPC.
+- Zachowane role wsparcia, ręczne prowadzenie dowolną postacią, decyzja prowadzącego o odwrocie, cykl pancerzy i rzeczywiste 100% HP całej drużyny po golemach. Bez nowych stałych timerów, komunikacji między profilami i analizy każdej linii obrażeń.
+- 26 nowych symulacji: wcześniejsze odciążenie, wybór wolnego obrońcy, reakcja na silny cios, niejednoznaczne i nieznane formy NPC, świeża walidacja, wielu napastników i współdzielone relacje, różne pule HP, role i minimum HP, ręczny lider inny niż Yarrim, odpowiedzi ogólne i spóźnione, stabilizacja i jej pilna granica, zastępstwo po porażce, duplikaty, zmiana pokoju i sesji oraz 2000 identycznych aktualizacji. Razem 615 symulacji bota i 30 aktualizatora; dodatkowo rzeczywiste wzorce, SHA-256 i integralność oraz powtarzalność paczki.
+
 ## 2.9.16
 
 - Rola `zaslony` działa także na faktycznym prowadzącym przy ręcznym sterowaniu. W 2.9.15 taki profil czekał na innego lidera i nie wykonywał automatycznych zasłon; poprawka odpowiada odcinkowi ręcznego prowadzenia Yarrima z logów. Pozostaje w tej samej roli, osłania zagrożonych kolegów i korzysta z celowanych zasłon golemów.

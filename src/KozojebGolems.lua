@@ -3,7 +3,7 @@
 do
 local K = kozojeb
 local A = K.golemApi
-local G = {holds={}, failures={}, selectors={}, forms={}, combatEpoch=0}
+local G = {holds={}, failures={}, selectors={}, forms={}, unavailable={}, combatEpoch=0}
 K.G = G
 local ordinal = {"pierwszym", "drugim", "trzecim", "czwartym"}
 local function enabled() return K.config.golemsEnabled == true end
@@ -29,6 +29,7 @@ function G.cancel() cancel("timer"); cancel("shieldTimer"); cancel("lootTimer") 
 function G.resetCombat()
   cancel("shieldTimer")
   G.holds,G.failures,G.selectors,G.wait,G.planCache,G.combatRoom={},{},{},nil,nil,nil
+  G.unavailable={}
   G.mappingWarning=nil
   G.forms={}
   G.combatEpoch=G.combatEpoch+1
@@ -138,29 +139,60 @@ local function pruneLocks()
   for key,failure in pairs(G.failures) do
     if not active[failure.npcId] or failure.untilTime<=A.now() then G.failures[key]=nil end
   end
+  for id,deadline in pairs(G.unavailable) do
+    if deadline<=A.now() then G.unavailable[id]=nil end
+  end
 end
 local function selectedProjection(own, target, npc, rotation)
-  if not A.canShield(own) or not G.selector(npc.id,target) then return end
+  if not A.canShield(own) or tostring(own.id)==tostring(target.id) then return end
+  if not A.isSelf(own) and (G.unavailable[tostring(own.id)] or 0)>A.now() then return end
+  local snapshot=A.snapshot()
+  local incoming=snapshot.incoming[tostring(target.id)]
+  local generic=not G.selector(npc.id,target)
+  -- Ogolna komenda jest rownowazna wskazaniu ID tylko przy jednym
+  -- napastniku. Przy kilku nadal nie zgadujemy podzbioru przejecia.
+  if generic and (not incoming or incoming.count~=1) then return end
   local hp, ownHp = health(target), health(own)
   if not hp or not ownHp or ownHp < math.max(K.config.shieldSelfHp, K.config.escapeHp + 15)
       or ownHp <= 0 or hp <= 0 then return end
   if rotation then
     if ownHp - hp < K.config.golemHpGap then return end
     local ownBudget, targetBudget = A.pair(own, target)
-    if not ownBudget or ownBudget < targetBudget * 1.15 then return end
+    local ownIncoming=snapshot.incoming[tostring(own.id)]
+    local margin=not ownIncoming or ownIncoming.count==0
+    margin=margin and 1.05 or 1.15
+    if not ownBudget or ownBudget < targetBudget * margin then return end
   elseif ownHp + K.config.golemHpGap < hp then return end
-  local owners = A.snapshot().owners[tostring(npc.id)]
+  local owners = snapshot.owners[tostring(npc.id)]
   local owner = owners and next(owners)
   if owner ~= tostring(target.id) or next(owners, owner) ~= nil then return end
   local id=tostring(npc.id)
+  local hold=G.holds[id]
+  if hold and hold.confirming and hold.untilTime>A.now() then return end
   if not urgent(target) then
-    local hold,transfer,failure=G.holds[id],K.shieldTransfers[id],G.failures[id..":"..tostring(target.id)]
+    local transfer,failure=K.shieldTransfers[id],G.failures[id..":"..tostring(target.id)]
     if hold and hold.untilTime>A.now() then return end
     if transfer and transfer.untilTime>A.now() then return end
     if failure and failure.untilTime>A.now() then return end
   end
   if A.isSelf(own) and (K.shieldPositionUntil[A.form(target.name) or ""] or 0)>A.now() then return end
-  return A.projection(own, target, hp, tostring(npc.id), rotation)
+  return A.projection(own, target, hp, tostring(npc.id), rotation, urgent(target)),generic
+end
+local function candidate(own,target,npc,rotation)
+  local result,generic=selectedProjection(own,target,npc,rotation)
+  if result then
+    return {own=own,target=target,npcId=tostring(npc.id),rotation=rotation,generic=generic},result
+  end
+end
+function G.validatePlan(own,target,plan)
+  if not G.encounter() or not own or not target then return end
+  local npc=A.entity(plan.npcId)
+  if not npc or not golem(npc) then return end
+  local incoming=A.snapshot().incoming[tostring(target.id)]
+  if plan.generic and (not incoming or incoming.count~=1 or not incoming.npcs[tostring(npc.id)]) then return end
+  local result,generic=selectedProjection(own,target,npc,plan.rotation)
+  if generic and not plan.generic then return end
+  return result
 end
 function G.project(own, target)
   if not own or not target then return end
@@ -168,10 +200,9 @@ function G.project(own, target)
   local list = golems()
   for _, npc in ipairs(list) do
     if incoming and incoming.npcs[tostring(npc.id)] then
-      local result = selectedProjection(own, target, npc, false)
-      local rotation=false
-      if not result then result=selectedProjection(own,target,npc,true);rotation=true end
-      if result then return result,{npcId=tostring(npc.id),rotation=rotation} end
+      local plan,result=candidate(own,target,npc,false)
+      if not plan then plan,result=candidate(own,target,npc,true) end
+      if plan then return result,plan end
     end
   end
   -- Niejednoznaczne egzemplarze nie uzasadniaja oceny pojedynczego NPC
@@ -190,7 +221,7 @@ local function plans()
   end
   table.sort(parts)
   local key = table.concat({table.concat(parts,"|"),G.combatEpoch,K.lastHp,K.config.golemHpGap,
-    K.config.shieldSelfHp, K.config.shieldMaxAttackers, K.config.escapeHp,
+    K.config.shieldSelfHp, K.config.shieldMaxAttackers, K.config.escapeHp,K.config.teamEscapeHp,
     math.floor(A.now() * 2)}, ":")
   if G.planCache and G.planCache.key == key then return G.planCache.value,G.planCache.opening end
   K.metrics.golemPlans = (K.metrics.golemPlans or 0) + 1
@@ -226,9 +257,7 @@ local function plans()
       -- Niedostepny obronca nie przesuwa natychmiast pozostalych przydzialow.
       for i=1,math.min(#free,#available-1) do
         local own,npc=free[i],available[i]
-        if selectedProjection(own,leader,npc,false) then
-          assignments[tostring(own.id)]={own=own,target=leader,npcId=tostring(npc.id)}
-        end
+        assignments[tostring(own.id)]=candidate(own,leader,npc,false)
       end
       G.planCache={key=key,value=assignments,opening=true}
       return assignments,true
@@ -246,11 +275,12 @@ local function plans()
         if ownId ~= targetId and not assigned[ownId] and loads[targetId] > loads[ownId] + 1 then
           for _, npc in ipairs(npcs) do
             local id = tostring(npc.id)
-            if not used[id] and snapshot.incoming[targetId] and snapshot.incoming[targetId].npcs[id]
-                and selectedProjection(own, target, npc, false) then
+            local plan=not used[id] and snapshot.incoming[targetId] and snapshot.incoming[targetId].npcs[id]
+              and candidate(own,target,npc,false)
+            if plan then
               local score = (loads[targetId] - loads[ownId]) * 1000 + health(own) - health(target)
               if not best or score > best.score then
-                best = {own=own, target=target, npcId=id, score=score}
+                plan.score=score;best=plan
               end
             end
           end
@@ -271,11 +301,14 @@ local function plans()
       if own ~= target then
         for _, npc in ipairs(npcs) do
           local incoming = snapshot.incoming[tostring(target.id)]
-          if incoming and incoming.npcs[tostring(npc.id)]
-              and selectedProjection(own, target, npc, true) then
+          local plan,result
+          if incoming and incoming.npcs[tostring(npc.id)] then plan,result=candidate(own,target,npc,true) end
+          if plan then
             local score = health(own) - health(target)
-            if not best or score > best.score then
-              best = {own=own, target=target, npcId=tostring(npc.id), rotation=true, score=score}
+            local free=result.ownAttackers==0
+            if not best or free and not best.free or free==best.free
+                and (score>best.score or score==best.score and result.riskAfter<best.riskAfter) then
+              plan.score,plan.free,plan.riskAfter=score,free,result.riskAfter;best=plan
             end
           end
         end
@@ -308,7 +341,7 @@ function G.shield()
       table.sort(members,byName)
       local rank=0
       for i,member in ipairs(members) do if A.isSelf(member) then rank=i-1 break end end
-      local emergency=false
+      local emergency=next(G.unavailable)~=nil
       for _,member in ipairs(members) do if urgent(member) then emergency=true break end end
       local delay=emergency and (0.15+rank*0.15) or (0.9+rank*0.3)
       G.wait = {key=key, at=A.now() + delay}
@@ -333,9 +366,9 @@ function G.shield()
       for _, target in ipairs(targets) do
         if tostring(target.id) ~= tostring(own.id) then
           for _, npc in ipairs(list) do
-            local direct=selectedProjection(own,target,npc,false)
-            if direct or selectedProjection(own,target,npc,true) then
-              A.shield(target, health(target), 100, {npcId=tostring(npc.id),rotation=not direct})
+            local plan=candidate(own,target,npc,false) or candidate(own,target,npc,true)
+            if plan then
+              A.shield(target, health(target), 100, plan)
               return true
             end
           end
@@ -352,18 +385,39 @@ local function accusative(name)
   end
   return table.concat(words," ")
 end
-function G.onTeamCover(actor,form,description)
-  if not fresh() or K.config.role=="wsparcie" then return end
-  if G.combatRoom~=A.room() then G.resetCombat();G.combatRoom=A.room() end
-  local context=A.group()
+local function coverMembers(actor,form)
   local source,patient
-  for _,member in ipairs(context.members) do
+  for _,member in ipairs(A.group().members) do
     if A.normal(member.name)==A.normal(actor) then source=member end
     if A.normal(member.name)==A.normal(form) or A.form(member.name)==A.normal(form)
         or (A.normal(form)=="cie" and A.isSelf(member)) then patient=member end
   end
-  if not source or not patient then return end
+  return source,patient
+end
+local function confirmSingle(patient,expectedId)
+  local snapshot=A.snapshot()
+  local incoming=patient and snapshot.incoming[tostring(patient.id)]
+  if not incoming or incoming.count~=1 then return false end
+  local id=next(incoming.npcs)
+  local owners=snapshot.owners[id]
+  if expectedId and id~=expectedId or not owners or next(owners)~=tostring(patient.id)
+      or next(owners,next(owners))~=nil then return false end
+  local previous=G.holds[id]
+  if not previous or previous.untilTime<=A.now() then
+    -- "wrogow" nie identyfikuje NPC. To tylko krotkie okno na GMCP,
+    -- nie potwierdzenie przejecia ani osiem sekund stabilizacji ID.
+    G.holds[id]={untilTime=A.now()+0.5,confirming=true}
+  end
+  return true
+end
+function G.onTeamCover(actor,form,description)
+  if not fresh() or K.config.role=="wsparcie" then return end
+  if G.combatRoom~=A.room() then G.resetCombat();G.combatRoom=A.room() end
+  local source,patient=coverMembers(actor,form)
+  if not source or not patient or source==patient then return end
+  G.unavailable[tostring(source.id)]=nil
   local found=false
+  if A.normal(description)=="wrogow" then found=confirmSingle(patient) end
   for _,npc in ipairs(golems()) do
     if accusative(npc.name)==A.normal(description) or A.normal(npc.name)==A.normal(description) then
       G.holds[tostring(npc.id)]={untilTime=A.now()+K.config.shieldHold}
@@ -372,8 +426,29 @@ function G.onTeamCover(actor,form,description)
   end
   if found then G.combatEpoch=G.combatEpoch+1; G.planCache=nil; A.queue() end
 end
+function G.onTeamFailure(actor,form,description)
+  if K.config.role=="wsparcie" or not G.encounter() then return end
+  local source,patient=coverMembers(actor,form)
+  if not source or not patient or source==patient or A.isSelf(source) then return end
+  local found=false
+  for _,npc in ipairs(golems()) do
+    if accusative(npc.name)==A.normal(description) then found=true break end
+  end
+  if not found or (G.unavailable[tostring(source.id)] or 0)>A.now() then return end
+  -- Widoczna porazka zuzywa szyk tylko tej postaci. Nie rezerwuje NPC
+  -- dla pozostalych i nie wymaga raportu ani dodatkowego odpytywania.
+  G.unavailable[tostring(source.id)]=A.now()+10
+  G.combatEpoch=G.combatEpoch+1;G.planCache=nil;G.wait=nil;cancel("shieldTimer")
+  A.queue()
+end
 function G.onShieldResult(pending,succeeded,description)
   if not enabled() or not pending.golemNpcId then return end
+  if pending.room and pending.room~=A.room() then return false end
+  if pending.golemGeneric and A.normal(description)=="wrogow" then
+    if succeeded and pending.room==A.room() then confirmSingle(A.entity(pending.id),pending.golemNpcId) end
+    G.combatEpoch=G.combatEpoch+1;G.planCache=nil
+    return true
+  end
   local ids={}
   if description then
     for _,npc in ipairs(golems()) do
@@ -859,6 +934,9 @@ K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
 K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
   "^([A-Za-z-]+)(?: zrecznie)? zaslania (.+) przed ciosami ([^.,]+)[.,]",
   [[kozojeb.G.onTeamCover(matches[2],matches[3],matches[4])]])
+K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
+  "^([A-Za-z-]+) probuje zaslonic (.+) przed ciosami ([^.,]+), lecz",
+  [[kozojeb.G.onTeamFailure(matches[2],matches[3],matches[4])]])
 K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
   "^(.+) zbliza sie do powyginanego pancerza plytowego, podnosi go i wciska do",
   [[kozojeb.G.onConsumed(matches[2])]])

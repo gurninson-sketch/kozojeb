@@ -5900,4 +5900,206 @@ test("a manual in game leader uses targeted golem shields but no armor workflow"
   assert(count("wesprzyj")==0 and #attackCommands()==0);noMovement()
 end)
 
+local function reliefSetup(ambiguous,role)
+  golemSetup("G",role);golemRelations({"L","G","M","S"})
+  local e=gmcp.Chimera.Room.Entities.entities
+  e[1].hp=950;e[2].hp=900;e[3].hp=900;e[4].hp=850;e[6].hp=0
+  gmcp.Char.Vitals.hp=950
+  gmcp.Chimera.Combat.State.relations={{attacker="L",defender="N1"},
+    {attacker="N1",defender="L"},{attacker="N3",defender="M"},{attacker="N4",defender="S"}}
+  if ambiguous then
+    e[5].name="Nieforemny skrzypiacy golem";e[8].name="Skrzypiacy nieforemny golem"
+  end
+  kozojeb.command("progzaslony 80");kozojeb.command("progdruzyny 70")
+  return e
+end
+test("a newly free defender relieves 85 percent HP before the old 15 percent reserve gap",function()
+  reliefSetup();kozojeb.start()
+  assert(count("zaslon yerga przed zelaznym golemem")==1)
+  assert(kozojeb.shieldDecision.ownAttackers==0 and kozojeb.shieldDecision.maxOwnAttackers==1)
+  noMovement()
+end)
+test("a free defender has priority over a slightly healthier teammate already holding an NPC",function()
+  golemSetup("M");golemRelations({"L","G","M","S"})
+  local e=gmcp.Chimera.Room.Entities.entities;e[3].hp=950;e[4].hp=850;e[7].hp=0
+  gmcp.Char.Vitals.hp=950
+  gmcp.Chimera.Combat.State.relations={{attacker="L",defender="N1"},
+    {attacker="N1",defender="L"},{attacker="N2",defender="G"},{attacker="N4",defender="S"}}
+  kozojeb.start();assert(count("zaslon yerga przed zelaznym golemem")==1)
+  assert(kozojeb.shieldDecision.maxOwnAttackers==1);noMovement()
+end)
+test("a free actual leader protects a recent burst patient above the ordinary shield threshold",function()
+  golemSetup("L","prowadzacy",3);golemRelations({"G","M","S"})
+  kozojeb.command("progzaslony 80");kozojeb.command("progdruzyny 70");kozojeb.start()
+  assert(kozojeb.mode~="escape" and #shieldCommands()==0)
+  gmcp.Chimera.Room.Entities.entities[4].hp=840;event()
+  assert(kozojeb.mode~="escape" and kozojeb.mode~="heal_rest")
+  assert(count("zaslon yerga przed metalowym golemem")==1)
+  assert(kozojeb.shieldDecision.maxOwnAttackers==1)
+end)
+test("split adjective descriptions allow a safe general shield against the only attacker",function()
+  reliefSetup(true);kozojeb.start()
+  assert(count("zaslon yerga")==1 and #shieldCommands()==1)
+  assert(kozojeb.shieldPendingTarget.golemGeneric and kozojeb.shieldPendingTarget.golemNpcId=="N4")
+  assert(kozojeb.shieldDecision.maxOwnAttackers==1);noMovement()
+end)
+test("an unknown NPC grammatical form can still protect its single patient safely",function()
+  local e=reliefSetup();e[8].name="Golem z marmuru";kozojeb.start()
+  assert(count("zaslon yerga")==1 and #shieldCommands()==1);noMovement()
+end)
+test("ambiguous descriptions never fall back to taking two NPCs",function()
+  local e=reliefSetup(true);e[6].hp=100;e[6].name=e[5].name
+  gmcp.Chimera.Combat.State.relations[#gmcp.Chimera.Combat.State.relations+1]={attacker="N2",defender="S"}
+  kozojeb.start();advance(2)
+  assert(count("zaslon yerga")==0 and #shieldCommands()==0);noMovement()
+end)
+test("a saved general shield plan is rejected when a second attacker arrives",function()
+  local e=reliefSetup(true);kozojeb.shieldFormationReady=false;kozojeb.start()
+  local decision,plan=kozojeb.G.project(e[1],e[4]);assert(decision and plan.generic)
+  e[6].hp=100
+  gmcp.Chimera.Combat.State.relations[#gmcp.Chimera.Combat.State.relations+1]={attacker="N2",defender="S"}
+  event("gmcp.Chimera.Combat.State");kozojeb.shieldFormationReady=true
+  kozojeb.golemApi.shield(e[4],85,100,plan)
+  assert(#shieldCommands()==0);noMovement()
+end)
+test("a golem attacking several patients is not treated as one transferable attacker",function()
+  local e=reliefSetup(true)
+  gmcp.Chimera.Combat.State.relations[#gmcp.Chimera.Combat.State.relations+1]={attacker="N4",defender="L"}
+  kozojeb.start();assert(count("zaslon yerga")==0 and not kozojeb.G.project(e[1],e[4]));noMovement()
+end)
+test("a free defender with a smaller actual HP pool cannot exploit the easier rotation",function()
+  local e=reliefSetup(true);e[4].hp=1700;e[4].maxhp=2000
+  kozojeb.start();assert(count("zaslon yerga")==0 and not kozojeb.G.project(e[1],e[4]));noMovement()
+end)
+test("free relief still respects the configured percentage difference",function()
+  local e=reliefSetup(true);e[4].hp=900
+  kozojeb.start();assert(count("zaslon yerga")==0 and not kozojeb.G.project(e[1],e[4]));noMovement()
+end)
+test("taking a second NPC retains the larger actual HP reserve requirement",function()
+  local e=reliefSetup(true);e[6].hp=100
+  gmcp.Chimera.Combat.State.relations[#gmcp.Chimera.Combat.State.relations+1]={attacker="N2",defender="G"}
+  kozojeb.start();assert(#shieldCommands()==0 and not kozojeb.G.project(e[1],e[4]));noMovement()
+end)
+test("general golem relief preserves the minimum own HP and the DPS only role",function()
+  for _,role in ipairs({"zaslony","wsparcie"}) do
+    local e=reliefSetup(true,role)
+    if role=="zaslony" then e[1].hp=640;e[4].hp=400;gmcp.Char.Vitals.hp=640 end
+    kozojeb.start();advance(2)
+    assert(#shieldCommands()==0);noMovement()
+  end
+end)
+test("a manual leader other than Yarrim can use general relief without taking over movement",function()
+  golemSetup("M","zaslony");golemRelations({"L","G","M","S"})
+  local e=gmcp.Chimera.Room.Entities.entities
+  e[1].hp=900;e[2].hp=900;e[3].hp=950;e[4].hp=850;e[7].hp=0
+  e[5].name="Nieforemny skrzypiacy golem";e[8].name="Skrzypiacy nieforemny golem"
+  e[2].group_role="member";e[3].group_role="leader";gmcp.Char.Vitals.hp=950
+  gmcp.Chimera.Group.State.leader="M"
+  gmcp.Chimera.Combat.State.relations={{attacker="N1",defender="L"},
+    {attacker="N2",defender="G"},{attacker="N4",defender="S"}}
+  kozojeb.start();assert(kozojeb.mode=="manual_shields" and count("zaslon yerga")==1)
+  assert(not kozojeb.G.job);noMovement()
+end)
+test("a general success saying enemies waits briefly for GMCP without inventing an actual ID",function()
+  reliefSetup(true);kozojeb.start();shieldReply("Zaslaniasz Yerga przed ciosami wrogow.")
+  assert(not kozojeb.shieldPendingTarget and kozojeb.shieldRescue)
+  assert(kozojeb.G.holds.N4.confirming and kozojeb.G.holds.N4.untilTime<=clock+0.5)
+  assert(not kozojeb.shieldTransfers.N4 and (kozojeb.metrics.golemTargetMismatches or 0)==0)
+  advance(.51);assert(not kozojeb.G.holds.N4 or kozojeb.G.holds.N4.untilTime<=clock)
+end)
+test("a general success naming the actual golem stabilizes the reported attacker",function()
+  reliefSetup(true);kozojeb.start();shieldReply("Zaslaniasz Yerga przed ciosami skrzypiacego nieforemnego golema.")
+  assert(kozojeb.G.holds.N4 and not kozojeb.G.holds.N1 and not kozojeb.G.holds.N4.confirming)
+  assert((kozojeb.metrics.golemTargetMismatches or 0)==0)
+end)
+test("a shield answer arriving after movement cannot reserve a new room or report a false mismatch",function()
+  reliefSetup(true);kozojeb.start();local pending=kozojeb.shieldPendingTarget
+  room=1323;kozojeb.onRoomChanged("gmcp.Room.Info")
+  assert(kozojeb.G.onShieldResult(pending,true,"skrzypiacego nieforemnego golema")==false)
+  assert(next(kozojeb.G.holds)==nil and (kozojeb.metrics.golemTargetMismatches or 0)==0)
+end)
+test("a visible general success blocks duplicates only in the original short confirmation window",function()
+  reliefSetup(true);kozojeb.shieldFormationReady=false;kozojeb.start()
+  kozojeb.G.onTeamCover("Morrid","Yerga","wrogow")
+  local deadline=kozojeb.G.holds.N4.untilTime
+  kozojeb.shieldFormationReady=true;event();assert(#shieldCommands()==0)
+  advance(.12);kozojeb.G.onTeamCover("Morrid","Yerga","wrogow")
+  assert(kozojeb.G.holds.N4.untilTime==deadline)
+  advance(.51);event();assert(count("zaslon yerga")==1)
+end)
+test("a general success for several NPCs does not guess which attacker moved",function()
+  local e=reliefSetup(true);e[6].hp=100
+  gmcp.Chimera.Combat.State.relations[#gmcp.Chimera.Combat.State.relations+1]={attacker="N2",defender="S"}
+  kozojeb.shieldFormationReady=false;kozojeb.start()
+  kozojeb.G.onTeamCover("Morrid","Yerga","wrogow")
+  assert(not kozojeb.G.holds.N4 and not kozojeb.G.holds.N2)
+end)
+local function reverseRelief(hp)
+  golemSetup("G");golemRelations({"L","G","M","S"})
+  local e=gmcp.Chimera.Room.Entities.entities;e[2].hp=900;e[3].hp=900;e[4].hp=hp
+  kozojeb.command("progzaslony 80");kozojeb.command("progdruzyny 70")
+  kozojeb.shieldFormationReady=false;kozojeb.start()
+  kozojeb.shieldTransfers.N4={from="G",to="S",untilTime=clock+8}
+  kozojeb.G.holds.N4={untilTime=clock+8}
+  kozojeb.shieldFormationReady=true
+  return e
+end
+test("urgent golem relief bypasses reverse stabilization consistently at 80 and 85 percent",function()
+  for _,hp in ipairs({800,850}) do
+    reverseRelief(hp);event()
+    assert(count("zaslon yerga przed zelaznym golemem")==1);noMovement()
+  end
+end)
+test("above the urgent boundary golem reverse stabilization remains active until expiry",function()
+  reverseRelief(860);event();assert(#shieldCommands()==0)
+  advance(8.1);event();assert(count("zaslon yerga przed zelaznym golemem")==1);noMovement()
+end)
+test("urgent relief cannot override the limit on a third incoming NPC",function()
+  local e=reverseRelief(800)
+  gmcp.Chimera.Combat.State.relations[#gmcp.Chimera.Combat.State.relations+1]={attacker="N1",defender="G"}
+  event("gmcp.Chimera.Combat.State")
+  kozojeb.golemApi.shield(e[4],80,100,{npcId="N4",rotation=true})
+  assert(#shieldCommands()==0 and not kozojeb.G.project(e[1],e[4]));noMovement()
+end)
+test("a visible failed defender is replaced on a short stagger without reserving their NPC",function()
+  golemSetup("S",nil,3);golemRelations({"L","L","L"});kozojeb.start()
+  local original=kozojeb.G.wait.at
+  kozojeb.G.onTeamFailure("Gror","Yarrima","alabastrowego golema")
+  assert(kozojeb.G.unavailable.G and not kozojeb.G.holds.N1 and next(kozojeb.G.failures)==nil)
+  advance(1)
+  assert(clock<original and count("zaslon yarrima przed alabastrowym golemem")==1);noMovement()
+end)
+test("duplicate failure text cannot postpone the failed defender or reset the fallback repeatedly",function()
+  golemSetup("S",nil,3);golemRelations({"L","L","L"});kozojeb.start()
+  kozojeb.G.onTeamFailure("Gror","Yarrima","alabastrowego golema")
+  local deadline=kozojeb.G.unavailable.G
+  advance(.2);local wait=kozojeb.G.wait
+  kozojeb.G.onTeamFailure("Gror","Yarrima","alabastrowego golema")
+  assert(kozojeb.G.unavailable.G==deadline and kozojeb.G.wait==wait)
+end)
+test("unrelated failure text cannot block a teammate or trigger a replacement",function()
+  golemSetup("S",nil,3);golemRelations({"L","L","L"});kozojeb.start()
+  local wait=kozojeb.G.wait
+  for _,args in ipairs({{"Obcy","Yarrima","alabastrowego golema"},
+      {"Gror","Obcego","alabastrowego golema"},{"Gror","Yarrima","malego snotlinga"}}) do
+    kozojeb.G.onTeamFailure(args[1],args[2],args[3])
+  end
+  assert(next(kozojeb.G.unavailable)==nil and kozojeb.G.wait==wait)
+end)
+test("failed defender availability expires and cannot leak into the next room or session",function()
+  golemSetup("S",nil,3);golemRelations({"L","L","L"});kozojeb.start()
+  kozojeb.G.onTeamFailure("Gror","Yarrima","alabastrowego golema")
+  advance(10.1);kozojeb.G.shield();assert(not kozojeb.G.unavailable.G)
+  kozojeb.G.onTeamFailure("Gror","Yarrima","alabastrowego golema")
+  room=1323;kozojeb.onRoomChanged("gmcp.Room.Info");assert(next(kozojeb.G.unavailable)==nil)
+  kozojeb.onSessionEvent("sysDisconnectionEvent");assert(next(kozojeb.G.unavailable)==nil)
+end)
+test("two thousand identical updates keep general relief coalesced into one command",function()
+  reliefSetup(true);kozojeb.start();local before=kozojeb.metrics.golemPlans
+  for i=1,2000 do kozojeb.onGmcp("gmcp.Chimera.Room.Entities") end
+  advance(.13)
+  assert(count("zaslon yerga")==1 and kozojeb.metrics.golemPlans<=before+2);noMovement()
+  kozojeb.stop();local sent=#sends;advance(30);assert(#sends==sent)
+end)
+
 print(string.format("%d simulations passed", total))

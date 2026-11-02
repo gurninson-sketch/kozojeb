@@ -1,4 +1,4 @@
-# Chimera Kozojeb 2.9.16
+# Chimera Kozojeb 2.9.17
 
 [Pobierz najnowszą paczkę](https://github.com/gurninson-sketch/kozojeb/releases/latest/download/Chimera_Kozojeb.mpackage) · [Wydania](https://github.com/gurninson-sketch/kozojeb/releases)
 
@@ -35,7 +35,7 @@ Podgląd modelu: `/kozojeb druzyna role`. Gdy w przyszłości role się zmienią
 
 Zmiana roli zatrzymuje bota. Po skonfigurowaniu uruchom go przez `/kozojeb start` na każdym profilu. Wspierających można uruchomić przed prowadzącym. Bez widocznego, faktycznego prowadzącego czekają.
 
-Od **2.9.16** rola `zaslony` działa również na faktycznym prowadzącym drużynę, gdy chodzisz ręcznie. Na Yarrimie ustaw:
+Od **2.9.16** rola `zaslony` działa również na faktycznym prowadzącym drużynę, gdy chodzisz ręcznie. Na aktualnym prowadzącym, np. Yarrimie, ustaw:
 
 ```text
 /kozojeb rola zaslony
@@ -167,6 +167,12 @@ Przy czterech golemach atakujących jednego gracza profile planują różne, **c
 Przy identycznych opisach numer odnosi się do pełnego opisu, np. `przed pierwszym kamiennym golemem`. Taka próba wymaga, aby wszystkie pasujące egzemplarze atakowały osłanianą osobę; przy różnych celach nie zgadujemy ID. Odpowiedź gry rezerwuje rzeczywiście wymienionego NPC. Niejednoznaczny opis stabilizuje pasujące egzemplarze, a inny lub nierozpoznany opis nie potwierdza ochrony przed planowanym ID. Rozbieżny selektor otrzymuje 15 s przerwy i krótką diagnostykę. Także ratunkowa zasłona najpierw dobiera konkretny cel; ewentualna ogólna komenda wymaga oceny przejęcia wszystkich napastników osoby. Plan dąży do jednego przeciwnika na obrońcę już przy wysokim HP. Czysty pokój z najwyżej czterema golemami, których nie jest więcej niż członków drużyny, może zostać przyjęty mimo zwykłego limitu celów 3. Mieszany pokój lub większa grupa przeciwników nie otrzymuje tego wyjątku.
 
 Od 2.9.15 także przestawiona kolejność przymiotników i dłuższe pasujące opisy są traktowane jako potencjalnie ta sama pula komendy. Numer w tej puli jest dopuszczalny wyłącznie wtedy, gdy wszyscy pasujący napastnicy atakują tę samą osobę. Wynik przypisuje się do faktycznego opisu z odpowiedzi gry. Gdy ofiary są różne, skrypt rezygnuje ze zgadywania celowanej zasłony.
+
+Od **2.9.17** taka niejednoznaczność nie zatrzymuje ochrony osoby z dokładnie **jednym** napastnikiem NPC: możliwa jest ogólna komenda `zaslon <osobe>`. Przed wysłaniem bot ponownie sprawdza liczbę napastników, wyłączność celu NPC, HP obu osób, role i limit obciążenia. Pojawienie się drugiego napastnika unieważnia ten plan; bot nie przenosi oceny pojedynczego NPC na zasłonę przed kilkoma. Odpowiedź `przed ciosami wrogow` daje najwyżej 0,5 s na uzgodnienie GMCP, bez uznania planowanego ID za potwierdzone przejęcie. Zwykła odpowiedź zawierająca opis nadal stabilizuje faktycznie opisanego golema. Spóźniona odpowiedź z poprzedniego pokoju nie zapisuje blokad w nowym pokoju.
+
+Przy rotacji HP pierwszeństwo ma dostępny obrońca **bez napastnika**, także aktualny prowadzący. Zachowana jest skonfigurowana różnica procentowa HP, domyślnie 10 punktów. Wolny obrońca potrzebuje co najmniej 5% przewagi porównywalnego zapasu HP w punktach; przy przejmowaniu drugiego NPC nadal wymagane jest 15%. Zapas uwzględnia ostatnie obrażenia, więc sam wyższy procent postaci o mniejszej puli nie wystarcza. Pilna ochrona golemów używa spójnej granicy: większy z progów `prog` i `progdruzyny` plus 15 punktów procentowych. Przy ustawieniach 50%/70% obejmuje ona także 85% HP i może przerwać stabilizację przejętego NPC. Limit napastników, minimalne HP i gotowość szyku nadal obowiązują. Po silnym ciosie prowadzący rozważa dostępną ochronę golemów również powyżej zwykłego `progzaslony`, zanim zdecyduje o dodatkowym odwrocie z powodu braku rezerwy na następny cios.
+
+Widoczna w grze nieudana zasłona kolegi wyklucza go z nowych przydziałów przez najwyżej 10 s i skraca lokalne oczekiwanie na zastępstwo do 0,15–0,60 s zależnie od miejsca obrońcy. Nie rezerwuje napastnika dla całej drużyny. Duplikaty komunikatu nie przedłużają okna ani oczekiwania. Udana zasłona przywraca dostępność, a zmiana pokoju lub sesji czyści ten stan. To reakcja na komunikat gry, bez raportowania między profilami i bez nowej stałej pętli. Wymóg rzeczywistych 100% HP wszystkich po cyklu golemów pozostaje zachowany.
 
 Po rozdzieleniu napastników bot może przenosić pojedynczego golema z osoby o niższym procencie HP na zdrowszego obrońcę. Domyślna różnica wynosi **10 punktów procentowych**; ustawienie `/kozojeb golemy roznicahp 10` przyjmuje wartości 5–30. Sama różnica procentów nie wystarcza: porównywalna rezerwa rzeczywistych punktów HP obrońcy musi być co najmniej o 15% większa. Zachowane są minimum własnego HP, limit napastników, gotowość szyku i stabilizacja niedawnych przejęć. Bezpieczna rotacja celowana może zastąpić zwykły wymóg poprawy presji o 15%, ponieważ jej celem jest wyrównanie HP w dalszej części walki. Brak gotowego obrońcy, opóźniony GMCP lub niejednoznaczny cel mogą opóźnić podział. To heurystyka, nie gwarancja równego HP w każdej rundzie. Rola `wsparcie` nadal nie wykonuje zasłon.
 

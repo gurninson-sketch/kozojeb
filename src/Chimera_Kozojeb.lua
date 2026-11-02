@@ -54,7 +54,7 @@ end
 K.legacyImportTried = true
 K.initialized = false
 
-K.version = "2.9.16"
+K.version = "2.9.17"
 K.config = K.config or {
   chaseDelay = 0.20,
   patrolDelay = 0.70,
@@ -1926,7 +1926,7 @@ local function canShieldMember(member)
   return K.config.teamRoles[normal(member.name)] ~= "wsparcie"
 end
 
-local function shieldProjection(own, target, percent, npcId, rotation)
+local function shieldProjection(own, target, percent, npcId, rotation, urgentCover)
   if not own or not own.id or not target.id then return nil, "Brak identyfikatorow graczy" end
   if not canShieldMember(own) then return nil, "Rola wsparcia: bez zaslon" end
   local snapshot = combatSnapshot()
@@ -1957,7 +1957,8 @@ local function shieldProjection(own, target, percent, npcId, rotation)
   local ownAfter = pressure(afterCount) / ownBudget
   local worstAfter = math.max(ownAfter, pressure(targetIncoming.count - 1) / targetBudget)
   if worstAfter > before * 0.85 and not (npcId and rotation) then return nil, "Za maly zapas obrony po zaslonie" end
-  if reverse and percent >= math.min(100, K.config.escapeHp + 15) and worstAfter > before * 0.60 then
+  if reverse and not urgentCover and percent >= math.min(100, K.config.escapeHp + 15)
+      and worstAfter > before * 0.60 then
     return nil, "Stabilizacja po przejeciu NPC"
   end
   return {ownHp=ownHp, targetHp=targetHp, ownAttackers=ownIncoming.count,
@@ -2234,14 +2235,14 @@ local function tryShield(entity, hp, threshold, plan)
     if not decision then clearShieldTurn() return end
   end
   local selector, allowedIds
-  if plan then
+  if plan and not plan.generic then
     if K.G then selector, allowedIds = K.G.selector(plan.npcId, entity) end
     if not selector then clearShieldTurn() return end
   end
   local improves, reason
   if plan then
     local decision
-    decision, reason = shieldProjection(groupContext().self, entity, hp, plan.npcId, plan.rotation)
+    if K.G then decision, reason = K.G.validatePlan(groupContext().self, entity, plan) end
     K.shieldDecision, improves = decision, decision ~= nil
   else improves, reason = shieldImprovesSafety(entity, hp) end
   if not improves then
@@ -2295,6 +2296,7 @@ local function tryShield(entity, hp, threshold, plan)
   K.shieldLastTarget = target
   local request = reserveShieldRequest(entity, form, false)
   request.golemNpcId = plan and plan.npcId or nil
+  request.golemGeneric = plan and plan.generic or nil
   request.golemSelector = selector
   request.golemAllowedIds = allowedIds
   K.shieldBlockedReason = nil
@@ -2311,7 +2313,8 @@ local function tryShield(entity, hp, threshold, plan)
   local suffix = selector and (" przed " .. selector) or ""
   if plan then
     local npc=entityById(plan.npcId)
-    note("Golemy: celowana zaslona" .. suffix .. " (" .. (npc and npc.name or "brak opisu")
+    local kind=plan.generic and "zaslona przed jedynym napastnikiem" or "celowana zaslona"
+    note("Golemy: " .. kind .. suffix .. " (" .. (npc and npc.name or "brak opisu")
       .. "; ID " .. plan.npcId .. ").", "cyan")
   end
   send("zaslon " .. form .. suffix)
@@ -2765,7 +2768,8 @@ local function safetyCheck(urgentOnly, skipMovementWait)
         local hp = K.teamHealth[normal(member.name)]
         if not isSelf(member) and needsBurstReserve(member, hp, K.config.teamEscapeHp) then
           local pending = shieldRescueInFlight(member, hp)
-          local canShield = hp < K.config.teamShieldHp and K.lastHp >= K.config.shieldSelfHp
+          local golemShield=K.G and K.G.encounter()
+          local canShield = (golemShield or hp < K.config.teamShieldHp) and K.lastHp >= K.config.shieldSelfHp
             and K.shieldFormationReady and shieldPositionReady(member) and shieldImprovesSafety(member, hp)
           if not pending and not canShield then
             K.escape("Brak rezerwy HP na kolejny silny cios: " .. tostring(member.name) .. ".", member.name)
@@ -3784,6 +3788,7 @@ function K.onRoomChanged(eventName)
     cancelTimer("teamShieldTimer")
     clearShieldTurn()
     if previousRoom ~= currentRoom() then
+      if K.G then K.G.resetCombat() end
       K.previousRoom = previousRoom
       K.combatRoomReady = false
       K.roomCombatState = nil

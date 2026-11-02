@@ -91,6 +91,10 @@ for handler,examples in (
                      ("Gror","Yarrima","pekatego nieforemnego golema")),
                     ("Yergo zrecznie zaslania cie przed ciosami skrzypiacego golema.",
                      ("Yergo","cie","skrzypiacego golema"))]),
+    ("onTeamFailure",[("Yergo probuje zaslonic Yarrima przed ciosami zgrzytajacego nieforemnego golema, lecz nie jest w",
+                       ("Yergo","Yarrima","zgrzytajacego nieforemnego golema")),
+                      ("Yergo probuje zaslonic cie przed ciosami pekatego porysowanego golema, lecz nie jest w stanie",
+                       ("Yergo","cie","pekatego porysowanego golema"))]),
     ("onConsumed",[("Porysowany nieforemny golem zbliza sie do powyginanego pancerza plytowego, podnosi go i wciska do",
                     ("Porysowany nieforemny golem",))]),
 ):
