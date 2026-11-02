@@ -1,6 +1,7 @@
 """Run the Lua simulations and verify the reproducible release package."""
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -108,6 +109,24 @@ for test in ("roles.lua", "sha256.lua", "updater.lua"):
     subprocess.run([sys.executable, "tools/run_lua.py", f"tests/{test}"], cwd=ROOT, check=True)
 
 with tempfile.TemporaryDirectory() as directory:
+    env = dict(os.environ, KOZO_COMBAT_LOG_TEST_DIR=directory)
+    subprocess.run([sys.executable, "tools/run_lua.py", "tests/combat_log.lua"], cwd=ROOT, env=env, check=True)
+    records = []
+    for path in Path(directory).glob("*.jsonl*"):
+        data = path.read_bytes()
+        assert data.endswith(b"\n"), "Recorder left an incomplete JSON line"
+        for line in data.decode("utf-8").splitlines():
+            record = json.loads(line, parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)))
+            assert record["schema"] == 1 and isinstance(record["time"], (int, float))
+            if record["kind"] == "state":
+                assert all(isinstance(record[key], list) for key in ("members", "npcs", "covers", "relations"))
+                assert isinstance(record["shield"]["checks"], list)
+            records.append(record)
+    assert len(records) >= 20
+    assert {"state", "shield_sent", "shield_reply", "stop", "exit", "reload", "sysDisconnectionEvent"} <= {r["kind"] for r in records}
+print("Recorder JSONL structure, UTF-8, finite numbers and complete records passed")
+
+with tempfile.TemporaryDirectory() as directory:
     target = Path(directory)
     package = build("example/kozojeb", target)
     first = package.read_bytes()
@@ -120,7 +139,8 @@ with tempfile.TemporaryDirectory() as directory:
         scripts = root.findall(".//Script")
         assert len(scripts) == 3
         assert scripts[0].findtext("script") == ((ROOT / "src/Chimera_Kozojeb.lua").read_text()
-            + "\n" + (ROOT / "src/KozojebGolems.lua").read_text())
+            + "\n" + (ROOT / "src/KozojebGolems.lua").read_text()
+            + "\n" + (ROOT / "src/KozojebCombatLog.lua").read_text())
         assert 'local releaseRepository = "example/kozojeb"' in scripts[2].findtext("script")
         assert all(script.get("isActive") == "yes" for script in scripts)
         assert b'author = "Pipek (oryginalny KozoBot)"' in archive.read("config.lua")

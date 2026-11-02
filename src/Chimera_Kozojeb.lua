@@ -32,6 +32,8 @@
 
 kozojeb = kozojeb or {}
 local K = kozojeb
+if K.combatLog and K.combatLog.close then pcall(K.combatLog.close,"reload") end
+K.combatLog=nil
 -- Import z oryginalnego KozoBota nie zmienia jego autorstwa ani przestrzeni nazw.
 if not K.legacyImportTried and type(kozobot) == "table" then
   if kozobot.updater and type(kozobot.updater.cleanup) == "function" then pcall(kozobot.updater.cleanup) end
@@ -54,7 +56,7 @@ end
 K.legacyImportTried = true
 K.initialized = false
 
-K.version = "2.9.17"
+K.version = "2.9.18"
 K.config = K.config or {
   chaseDelay = 0.20,
   patrolDelay = 0.70,
@@ -144,6 +146,7 @@ local settingTypes = {
   escapeHp="number", teamEscapeHp="number", teamShieldHp="number", teamShieldInterval="number",
   maxCreatures="number", restAtMoves="number", resumeAtMoves="number", attackCommand="string",
   targetWeakest="boolean",
+  combatLogEnabled="boolean",
   targets="table", targetOrder="table", attackForms="table", teamMembers="table",
   shieldNameForms="table", teamRoles="table", ignoreNonTargets="boolean", ignoredNames="table",
   role="string", leaderName="string", leaderShieldHp="number", shieldSelfHp="number",
@@ -224,6 +227,7 @@ K.config.restAtMoves = tonumber(K.config.restAtMoves) or 25
 K.config.resumeAtMoves = tonumber(K.config.resumeAtMoves) or 55
 K.config.attackCommand = K.config.attackCommand or "zabij"
 K.config.targetWeakest = K.config.targetWeakest ~= false
+K.config.combatLogEnabled = K.config.combatLogEnabled ~= false
 K.config.maxCreatures = tonumber(K.config.maxCreatures) or 0
 K.config.targets = K.config.targets or K.config.animals or {
   koza = true, kon = true, krowa = true, jelen = true, koziol = true,
@@ -1759,6 +1763,7 @@ function K.escape(reason, injuredTeamMember)
     K.checkRecoveryThreat(false)
     return
   end
+  if K.combatLog then K.combatLog.mark("retreat",{reason=reason,patient=injuredTeamMember}) end
   updateVitals()
   K.recoveryCritical, K.recoveryOwnCritical, K.recoveryWaiters = {}, false, nil
   K.recoveryRoster = {}
@@ -2064,6 +2069,7 @@ local function armShieldPosition()
 end
 
 function K.onShieldPositionBlocked(form)
+  if K.combatLog then K.combatLog.mark("shield_position_blocked",{form=form}) end
   form = normal(form)
   local pending = K.shieldPendingTarget
   if not pending or normal(pending.form) ~= form then return end
@@ -2224,20 +2230,28 @@ function K.onTeamShield(actor, form)
 end
 
 local function tryShield(entity, hp, threshold, plan)
+  local function blocked(code,detail)
+    if K.combatLog then K.combatLog.reason(entity,plan and plan.npcId,code,plan and plan.rotation,detail) end
+    clearShieldTurn()
+  end
   if not K.enabled or threshold <= 0 or K.shieldTimer or K.shieldPendingTarget
-      or not K.shieldFormationReady then clearShieldTurn() return end
-  if K.shieldAwaitCombatRevision == K.combatRevision then clearShieldTurn() return end
-  if not hp or (not plan and hp >= threshold) or K.lastHp <= 0 or K.lastHp < K.config.shieldSelfHp then clearShieldTurn() return end
-  if not incomingNpc(entity) then clearShieldTurn() return end
+      or not K.shieldFormationReady then
+    local code=not K.enabled and "disabled" or threshold<=0 and "threshold_off" or K.shieldPendingTarget and "reply_pending"
+      or not K.shieldFormationReady and "formation_busy" or "shield_interval"
+    blocked(code);return
+  end
+  if K.shieldAwaitCombatRevision == K.combatRevision then blocked("await_combat_update");return end
+  if not hp or (not plan and hp >= threshold) or K.lastHp <= 0 or K.lastHp < K.config.shieldSelfHp then blocked("hp_threshold");return end
+  if not incomingNpc(entity) then blocked("no_npc");return end
   if not plan and K.G and K.G.encounter() then
     local decision
     decision, plan = K.G.project(groupContext().self, entity)
-    if not decision then clearShieldTurn() return end
+    if not decision then blocked("no_safe_golem_plan");return end
   end
   local selector, allowedIds
   if plan and not plan.generic then
     if K.G then selector, allowedIds = K.G.selector(plan.npcId, entity) end
-    if not selector then clearShieldTurn() return end
+    if not selector then blocked("selector_unavailable");return end
   end
   local improves, reason
   if plan then
@@ -2246,7 +2260,7 @@ local function tryShield(entity, hp, threshold, plan)
     K.shieldDecision, improves = decision, decision ~= nil
   else improves, reason = shieldImprovesSafety(entity, hp) end
   if not improves then
-    clearShieldTurn()
+    blocked("unsafe_projection",reason)
     K.shieldBlockedReason = reason
     K.metrics.shieldBlocked = K.metrics.shieldBlocked + 1
     return
@@ -2256,6 +2270,7 @@ local function tryShield(entity, hp, threshold, plan)
   local key = normal(target)
   local form = shieldNameForm(target)
   if not form then
+    if K.combatLog then K.combatLog.reason(entity,plan and plan.npcId,"name_form_missing") end
     if not K.shieldMissingForms[key] then
       K.shieldMissingForms[key] = true
       note("Brak biernika imienia " .. target .. ". Ustaw /kozojeb imie " .. target .. " <biernik>.", "yellow")
@@ -2269,6 +2284,7 @@ local function tryShield(entity, hp, threshold, plan)
         and sameShieldIncoming(rejected) then
       clearShieldTurn()
       K.shieldBlockedReason = "Chwilowa odmowa zaslony " .. form
+      if K.combatLog then K.combatLog.reason(entity,nil,"name_rejected",false,rejected.untilTime) end
       return
     end
     K.shieldRejectedForms[key] = nil
@@ -2276,6 +2292,7 @@ local function tryShield(entity, hp, threshold, plan)
   if (K.shieldPositionUntil[form] or 0) > now() then
     clearShieldTurn()
     K.shieldBlockedReason = "Odzyskiwanie pozycji przed " .. form
+    if K.combatLog then K.combatLog.reason(entity,nil,"position_blocked",false,K.shieldPositionUntil[form]) end
     return
   end
   local notice = K.teamShieldNotices[tostring(entity.id)]
@@ -2283,14 +2300,20 @@ local function tryShield(entity, hp, threshold, plan)
   if not plan and hp > urgentHp and not needsBurstReserve(entity, hp, urgentHp, true) then
     if notice and notice.id == tostring(entity.id) and notice.room == currentRoom()
         and now() < notice.deadline and sameShieldIncoming(notice) then
-      if deferShield(entity, "notice", notice.deadline) then return false, true end
+      if deferShield(entity, "notice", notice.deadline) then
+        if K.combatLog then K.combatLog.reason(entity,nil,"await_peer_cover",false,notice.deadline) end
+        return false, true
+      end
     else
       K.teamShieldNotices[tostring(entity.id)] = nil
       if K.shieldTurn and K.shieldTurn.kind == "notice" then clearShieldTurn() end
     end
     local rank = shieldTurnRank(entity, hp)
     if rank > 0 then
-      if deferShield(entity, "rank", now() + rank * 0.45) then return false, true end
+      if deferShield(entity, "rank", now() + rank * 0.45) then
+        if K.combatLog then K.combatLog.reason(entity,nil,"defender_turn",false,K.shieldTurn and K.shieldTurn.deadline) end
+        return false, true
+      end
     else clearShieldTurn() end
   else clearShieldTurn() end
   K.shieldLastTarget = target
@@ -2320,6 +2343,10 @@ local function tryShield(entity, hp, threshold, plan)
   send("zaslon " .. form .. suffix)
   K.sendingShield = nil
   K.metrics.shields = K.metrics.shields + 1
+  if K.combatLog then K.combatLog.mark("shield_sent",{target=tostring(entity.id),name=target,npc=plan and plan.npcId,
+    generic=plan and plan.generic or false,rotation=plan and plan.rotation or false,command="zaslon "..form..suffix,
+    target_percent=hp,threshold=threshold,own_hp=decision.ownHp,target_hp=decision.targetHp,
+    own_npc=decision.ownAttackers,target_npc=decision.targetAttackers,max_own_npc=decision.maxOwnAttackers}) end
   touchActivity()
   return true
 end
@@ -2327,6 +2354,7 @@ end
 function K.onShieldRejected()
   local pending = K.shieldPendingTarget
   if not pending then return end
+  if K.combatLog then K.combatLog.mark("shield_rejected",{target=pending.id,external=pending.external}) end
   if K.G and pending.golemNpcId and liveNpc(entityById(pending.golemNpcId))
       and entityById(pending.id) and sameShieldIncoming(pending) then K.G.onShieldResult(pending,false) end
   if not pending.external and not pending.golemNpcId then
@@ -2350,6 +2378,7 @@ function K.onShieldRejected()
 end
 
 function K.onShieldCooldown()
+  if K.combatLog then K.combatLog.mark("shield_cooldown",{}) end
   K.shieldPendingTarget, K.shieldRescue, K.shieldReplyToken = nil, nil, nil
   cancelTimer("shieldReplyTimer")
   waitForFormation()
@@ -2358,6 +2387,9 @@ end
 
 function K.onShieldResult(form, succeeded, description)
   local pending = K.shieldPendingTarget
+  if K.combatLog then K.combatLog.mark("shield_reply",{form=form,succeeded=succeeded,description=description,
+    target=pending and pending.id,planned_npc=pending and pending.golemNpcId,
+    request_room=pending and pending.room,external=pending and pending.external}) end
   local requestedRevision
   if pending and normal(pending.form) == normal(form) then
     local matched = true
@@ -2422,6 +2454,11 @@ local function maybeShieldTeamMember(coverOnly)
       local _, reserve = shieldHealthPair(own, entity)
       candidates[#candidates + 1] = {entity=entity, hp=hp, threshold=threshold,
         risk=reserve and pressure(incoming.count) / reserve or math.huge}
+      if K.combatLog then K.combatLog.reason(entity,nil,"candidate") end
+    elseif K.combatLog and not isSelf(entity) then
+      local reason=not own and "own_data_missing" or not hp and "unknown_hp" or not incoming and "no_npc"
+        or blockedByDeath and "leader_death_barrier" or "hp_above_threshold"
+      K.combatLog.reason(entity,nil,reason,false,threshold)
     end
   end
   table.sort(candidates, function(a, b)
@@ -2442,6 +2479,7 @@ local function maybeShieldTeamMember(coverOnly)
           return
         end
       end
+    elseif K.combatLog then K.combatLog.reason(candidate.entity,nil,"rescue_in_flight")
     end
   end
   clearShieldTurn()
@@ -3159,6 +3197,7 @@ end
 
 inspectRoom = function()
   if not K.enabled then return end
+  if K.combatLog then K.combatLog.beginDecision() end
   K.metrics.actions = K.metrics.actions + 1
   K.lastDecisionAt = now()
   if K.entitiesReady and K.sessionFresh.combat then combatSnapshot() end
@@ -3753,6 +3792,7 @@ function K.onPanicLanded()
 end
 
 function K.onRoomChanged(eventName)
+  if K.combatLog and eventName=="gmcp.Room.Info" then K.combatLog.packet(eventName) end
   if eventName == "gmcp.Room.Info" then K.lastGmcpAt, K.lastGmcpEvent = now(), eventName end
   invalidateState(true)
   local previousRoom = K.lastRoom
@@ -3875,6 +3915,7 @@ function K.onRoomChanged(eventName)
 end
 
 function K.onGmcp(eventName)
+  if K.combatLog then K.combatLog.packet(eventName) end
   K.lastGmcpAt, K.lastGmcpEvent = now(), eventName
   K.metrics.events = K.metrics.events + 1
   local healthEvent = eventName == "gmcp.Chimera.Room.Entities"
@@ -4198,6 +4239,7 @@ function K.onKill(name, confirmedByServer, observedId)
 end
 
 function K.stop(reason)
+  if K.combatLog then K.combatLog.close("stop",reason) end
   invalidateState(true)
   K.reconnectTask, K.reconnectWaitReason = nil, nil
   K.loginConflict = nil
@@ -4369,6 +4411,7 @@ function K.onLoginConflict()
 end
 
 function K.onSessionEvent(eventName)
+  if K.combatLog then K.combatLog.boundary(eventName) end
   if K.G then K.G.resetCombat() end
   invalidateState(true)
   K.shieldPendingTarget, K.shieldRescue, K.shieldReplyToken = nil, nil, nil
@@ -4921,6 +4964,10 @@ function K.status()
   statusLink("[ + ]", "minhpzaslony " .. math.min(100, K.config.shieldSelfHp + 5), "Zwieksz minimalne HP zaslaniajacego", "green")
   statusEndRow()
   statusRow("Gotowosc szyku", K.shieldFormationReady and "gotowy" or "czekam na gotowosc z serwera")
+  if K.combatLog then
+    statusRow("Zapis walki", (K.combatLog.fault and "blad zapisu" or K.config.combatLogEnabled and "wlaczony" or "wylaczony")
+      .. "; /kozojeb zapis status")
+  end
   statusPrefix("Golemy")
   statusLink(K.config.golemsEnabled and "[ WLACZONE ]" or "[ WYLACZONE ]",
     K.config.golemsEnabled and "golemy off" or "golemy on", "Tryb golemow: zaslony, pancerze i pelne HP", "cyan")
@@ -5146,6 +5193,7 @@ function K.help()
                               0 wylacza spowalnianie (zakres 0-10)
   <green>/kozojeb wydajnosc<reset>             liczniki GMCP, decyzji i komend
   <green>/kozojeb diagnostyka<reset>           stan i czas od GMCP, ciosu i postepu
+  <green>/kozojeb zapis on|off|status|teraz<reset> lokalny zapis walki i zaslon
   <green>/kozojeb golemy on|off<reset>         celowane zaslony golemow; prowadzacy
                               zbiera pancerze, wraca do bazy i leczy cala druzyne do 100%
   <green>/kozojeb golemy roznicahp 10<reset>   prog roznicy HP do rotacji zaslon (5-30)
@@ -5438,6 +5486,8 @@ local function executeCommand(arguments)
   action = normal(action or "status")
   if action == "wydajnosc" then
     K.performance()
+  elseif action == "zapis" and K.combatLog then
+    K.combatLog.command(rest)
   elseif action == "golemy" and K.G then
     K.G.command(rest)
   elseif action == "diagnostyka" then
@@ -5905,7 +5955,11 @@ for _, eventName in ipairs({"sysDisconnectionEvent", "sysConnectionEvent"}) do
   K.handlers.events[#K.handlers.events + 1] = registerAnonymousEventHandler(eventName, "kozojeb.onSessionEvent")
 end
 K.handlers.events[#K.handlers.events + 1] = registerAnonymousEventHandler("sysDataSendRequest", "kozojeb.onShieldCommand")
-K.handlers.events[#K.handlers.events + 1] = registerAnonymousEventHandler("sysExitEvent", "kozojeb.saveSettings")
+function K.onExit()
+  if K.combatLog then K.combatLog.close("exit") end
+  K.saveSettings()
+end
+K.handlers.events[#K.handlers.events + 1] = registerAnonymousEventHandler("sysExitEvent", "kozojeb.onExit")
 function K.onUninstall(_, packageName)
   if packageName ~= "Chimera_Kozojeb" then return end
   K.saveSettings()
@@ -5939,3 +5993,4 @@ K.golemApi = {
   ensureTarget=function() addCustomTarget("golem golema") end,
   heal=function() K.escapeTailSent=false; finishEscapeTail() end,
 }
+K.combatLogApi={now=now,note=note,room=currentRoom,normal=normal,isSelf=isSelf,combat=combatState,liveNpc=liveNpc}

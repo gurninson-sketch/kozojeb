@@ -1,5 +1,15 @@
 # Zmiany
 
+## 2.9.18
+
+- Automatyczny lokalny zapis HP, walki i zasłon do `kozojeb-walka.jsonl`, domyślnie włączony na aktywnych profilach. Komendy `/kozojeb zapis on|off|status|teraz`, zapis ustawienia oraz informacja w panelu i pomocy. Pełna ścieżka jest dostępna bez używania aliasu Lua.
+- Próbka obejmuje wszystkie rozpoznane postacie, pełne pary HP, oba odczyty drużynowe, źródło wyboru i czasy odbioru, NPC i ich faktyczne ataki, wybrany cel oraz osobne `covers`. Procentowe `Char.Vitals` bez maksimum jest opisane oddzielnie. Nie miesza skal HP, nie przypisuje ataku z samego `covers` i nie liczy martwego NPC jako napastnika.
+- Kontrole wykonywane przez istniejący algorytm zapisują przyczyny pominięcia kandydatów, także poza golemami: różnica i zapas HP, niejednoznaczny selektor, presja i limit, stabilizacja, szyk, oczekiwanie na wynik, kolejka obrońców, próg oraz brak NPC. Wysłanie zasłony, wynik, odmowa, widoczna zasłona lub porażka kolegi oraz faktyczny odwrót mają osobne znaczniki czasu. Rejestrator nie wywołuje dodatkowych ocen zasłon.
+- Najwyżej jedna zmieniona próbka na sekundę; duplikaty są pomijane, a plik jest zapisywany partiami do 5 s. Jednorazowe timery uruchamiają istniejące zdarzenia; bez odpytywania gry, analizy każdej linii obrażeń, IPC ani ciągłego wypisywania do konsoli. Limit pliku 8 MiB i jedna poprzednia część, ograniczone kolekcje i kontrola poprawności JSONL.
+- Stop, wyjście, przeładowanie i rozłączenie opróżniają bufor; po prawdziwym wznowieniu zapis wraca z nowymi czasami kanałów. Błąd otwarcia lub zapisu pliku jest zgłaszany raz, bez zatrzymywania bota i ciągłych ponowień. Zapis można ponownie włączyć po usunięciu problemu.
+- Zachowane dotychczasowe decyzje walki i ruchu, role, ręczne prowadzenie, parser HP oraz wymóg rzeczywistych 100% drużyny po golemach. Uaktualniona instrukcja instalacji i opis przewagi HP wolnego obrońcy z 2.9.17.
+- 35 symulacji rejestratora, dotychczasowe 615 bota i 30 aktualizatora: razem 680. Obejmują dostarczony format GMCP, skale i nowsze kanały, brak danych, martwych NPC, powody decyzji, 2000 pakietów, częsty strumień HP, brak pętli w spokoju, walkę przed pierwszym ciosem NPC, identyczne komendy przy zapisie on/off, rotację, błędy dysku, stop, wyjście, przeładowanie, automatyczne wznowienie, ograniczenia kolekcji i UTF-8. Dodatkowo walidacja JSONL, rzeczywiste wzorce, SHA-256 i powtarzalność paczki.
+
 ## 2.9.17
 
 - Wcześniejsze odciążanie rannych na golemach: w rotacji pierwszeństwo ma obrońca bez napastnika, zamiast nieco zdrowszej postaci już obciążonej NPC. Przy zachowanej skonfigurowanej różnicy procentowej wolny obrońca potrzebuje 5% przewagi porównywalnego zapasu punktów HP, zamiast 15%. Przejęcie drugiego NPC nadal wymaga 15%; ostatnie obrażenia, różne maksymalne HP i limit napastników pozostają uwzględnione.

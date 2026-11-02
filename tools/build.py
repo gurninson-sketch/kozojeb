@@ -18,6 +18,7 @@ def build(repository: str = "", output: Path | None = None) -> Path:
         raise ValueError("VERSION must contain major.minor.patch")
     core = (ROOT / "src/Chimera_Kozojeb.lua").read_text()
     core += "\n" + (ROOT / "src/KozojebGolems.lua").read_text()
+    core += "\n" + (ROOT / "src/KozojebCombatLog.lua").read_text()
     if f'K.version = "{version}"' not in core:
         raise ValueError("VERSION differs from the Lua core version")
     updater = (ROOT / "src/KozojebUpdater.lua").read_text().replace(

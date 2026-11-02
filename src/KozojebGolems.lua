@@ -144,39 +144,44 @@ local function pruneLocks()
   end
 end
 local function selectedProjection(own, target, npc, rotation)
-  if not A.canShield(own) or tostring(own.id)==tostring(target.id) then return end
-  if not A.isSelf(own) and (G.unavailable[tostring(own.id)] or 0)>A.now() then return end
+  local function blocked(code,detail)
+    if K.combatLog and A.isSelf(own) then K.combatLog.reason(target,npc.id,code,rotation,detail) end
+  end
+  if not A.canShield(own) or tostring(own.id)==tostring(target.id) then return blocked("role_or_self") end
+  if not A.isSelf(own) and (G.unavailable[tostring(own.id)] or 0)>A.now() then return blocked("peer_formation_busy") end
   local snapshot=A.snapshot()
   local incoming=snapshot.incoming[tostring(target.id)]
   local generic=not G.selector(npc.id,target)
   -- Ogolna komenda jest rownowazna wskazaniu ID tylko przy jednym
   -- napastniku. Przy kilku nadal nie zgadujemy podzbioru przejecia.
-  if generic and (not incoming or incoming.count~=1) then return end
+  if generic and (not incoming or incoming.count~=1) then return blocked("ambiguous_selector") end
   local hp, ownHp = health(target), health(own)
   if not hp or not ownHp or ownHp < math.max(K.config.shieldSelfHp, K.config.escapeHp + 15)
-      or ownHp <= 0 or hp <= 0 then return end
+      or ownHp <= 0 or hp <= 0 then return blocked("unknown_or_low_hp") end
   if rotation then
-    if ownHp - hp < K.config.golemHpGap then return end
+    if ownHp - hp < K.config.golemHpGap then return blocked("hp_gap") end
     local ownBudget, targetBudget = A.pair(own, target)
     local ownIncoming=snapshot.incoming[tostring(own.id)]
     local margin=not ownIncoming or ownIncoming.count==0
     margin=margin and 1.05 or 1.15
-    if not ownBudget or ownBudget < targetBudget * margin then return end
-  elseif ownHp + K.config.golemHpGap < hp then return end
+    if not ownBudget or ownBudget < targetBudget * margin then return blocked("hp_reserve") end
+  elseif ownHp + K.config.golemHpGap < hp then return blocked("own_hp_disadvantage") end
   local owners = snapshot.owners[tostring(npc.id)]
   local owner = owners and next(owners)
-  if owner ~= tostring(target.id) or next(owners, owner) ~= nil then return end
+  if owner ~= tostring(target.id) or next(owners, owner) ~= nil then return blocked("npc_not_exclusive") end
   local id=tostring(npc.id)
   local hold=G.holds[id]
-  if hold and hold.confirming and hold.untilTime>A.now() then return end
+  if hold and hold.confirming and hold.untilTime>A.now() then return blocked("await_cover_confirmation",hold.untilTime) end
   if not urgent(target) then
     local transfer,failure=K.shieldTransfers[id],G.failures[id..":"..tostring(target.id)]
-    if hold and hold.untilTime>A.now() then return end
-    if transfer and transfer.untilTime>A.now() then return end
-    if failure and failure.untilTime>A.now() then return end
+    if hold and hold.untilTime>A.now() then return blocked("cover_hold",hold.untilTime) end
+    if transfer and transfer.untilTime>A.now() then return blocked("transfer_hold",transfer.untilTime) end
+    if failure and failure.untilTime>A.now() then return blocked("previous_failure",failure.untilTime) end
   end
-  if A.isSelf(own) and (K.shieldPositionUntil[A.form(target.name) or ""] or 0)>A.now() then return end
-  return A.projection(own, target, hp, tostring(npc.id), rotation, urgent(target)),generic
+  if A.isSelf(own) and (K.shieldPositionUntil[A.form(target.name) or ""] or 0)>A.now() then return blocked("position_blocked") end
+  local result,reason=A.projection(own, target, hp, tostring(npc.id), rotation, urgent(target))
+  if not result then blocked("unsafe_projection",reason) end
+  return result,generic
 end
 local function candidate(own,target,npc,rotation)
   local result,generic=selectedProjection(own,target,npc,rotation)
@@ -321,7 +326,10 @@ local function plans()
 end
 function G.shield()
   if not G.encounter() then cancel("shieldTimer"); G.wait=nil; return false end
-  if A.isFollower() and K.config.role ~= "zaslony" then return true end
+  if A.isFollower() and K.config.role ~= "zaslony" then
+    if K.combatLog then K.combatLog.reason(nil,nil,"support_role") end
+    return true
+  end
   local own = A.group().self
   local assignments,opening = plans()
   local plan = own and assignments[tostring(own.id)]
@@ -345,6 +353,7 @@ function G.shield()
       for _,member in ipairs(members) do if urgent(member) then emergency=true break end end
       local delay=emergency and (0.15+rank*0.15) or (0.9+rank*0.3)
       G.wait = {key=key, at=A.now() + delay}
+      if K.combatLog then K.combatLog.reason(nil,nil,"golem_fallback_wait",false,G.wait.at) end
       local wait, generation = G.wait, K.generation
       G.shieldTimer = tempTimer(delay, function()
         G.shieldTimer=nil
@@ -374,7 +383,9 @@ function G.shield()
           end
         end
       end
+    elseif K.combatLog then K.combatLog.reason(nil,nil,"golem_fallback_wait",false,G.wait.at)
     end
+  elseif K.combatLog then K.combatLog.reason(nil,nil,"golem_no_safe_assignment")
   end
   return true
 end
@@ -424,7 +435,10 @@ function G.onTeamCover(actor,form,description)
       found=true
     end
   end
-  if found then G.combatEpoch=G.combatEpoch+1; G.planCache=nil; A.queue() end
+  if found then
+    if K.combatLog then K.combatLog.mark("peer_cover",{actor=actor,patient=tostring(patient.id),description=description}) end
+    G.combatEpoch=G.combatEpoch+1; G.planCache=nil; A.queue()
+  end
 end
 function G.onTeamFailure(actor,form,description)
   if K.config.role=="wsparcie" or not G.encounter() then return end
@@ -438,6 +452,7 @@ function G.onTeamFailure(actor,form,description)
   -- Widoczna porazka zuzywa szyk tylko tej postaci. Nie rezerwuje NPC
   -- dla pozostalych i nie wymaga raportu ani dodatkowego odpytywania.
   G.unavailable[tostring(source.id)]=A.now()+10
+  if K.combatLog then K.combatLog.mark("peer_failure",{actor=actor,patient=tostring(patient.id),description=description}) end
   G.combatEpoch=G.combatEpoch+1;G.planCache=nil;G.wait=nil;cancel("shieldTimer")
   A.queue()
 end

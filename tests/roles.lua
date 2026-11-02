@@ -3,8 +3,9 @@ local compile = loadstring or load
 local function loadCore()
   local main=assert(io.open(source,"r"))
   local module=assert(io.open("src/KozojebGolems.lua","r"))
-  local combined=main:read("*a") .. "\n" .. module:read("*a")
-  main:close();module:close()
+  local logger=assert(io.open("src/KozojebCombatLog.lua","r"))
+  local combined=main:read("*a") .. "\n" .. module:read("*a") .. "\n" .. logger:read("*a")
+  main:close();module:close();logger:close()
   assert(compile(combined, "@" .. source))()
 end
 local clock, serial, timers, sends, aliases, output, saved, room, triggers, sendHandlers
@@ -95,6 +96,7 @@ local function reset(role, leaderHp)
     },
   }
   loadCore()
+  kozojeb.config.combatLogEnabled=false -- oddzielne testy rejestratora wlaczaja zapis jawnie
   if role then kozojeb.command("rola " .. role) end
   sends, aliases = {}, {}
 end

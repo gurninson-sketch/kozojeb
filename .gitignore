@@ -7,6 +7,8 @@ __pycache__/
 *.txt
 *.msg
 *.mpackage
+*.jsonl
+*.jsonl.1
 *token*
 *secret*
 chimera_kozojeb_settings.lua

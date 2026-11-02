@@ -1,4 +1,4 @@
-# Chimera Kozojeb 2.9.17
+# Chimera Kozojeb 2.9.18
 
 [Pobierz najnowszą paczkę](https://github.com/gurninson-sketch/kozojeb/releases/latest/download/Chimera_Kozojeb.mpackage) · [Wydania](https://github.com/gurninson-sketch/kozojeb/releases)
 
@@ -174,7 +174,7 @@ Przy rotacji HP pierwszeństwo ma dostępny obrońca **bez napastnika**, także 
 
 Widoczna w grze nieudana zasłona kolegi wyklucza go z nowych przydziałów przez najwyżej 10 s i skraca lokalne oczekiwanie na zastępstwo do 0,15–0,60 s zależnie od miejsca obrońcy. Nie rezerwuje napastnika dla całej drużyny. Duplikaty komunikatu nie przedłużają okna ani oczekiwania. Udana zasłona przywraca dostępność, a zmiana pokoju lub sesji czyści ten stan. To reakcja na komunikat gry, bez raportowania między profilami i bez nowej stałej pętli. Wymóg rzeczywistych 100% HP wszystkich po cyklu golemów pozostaje zachowany.
 
-Po rozdzieleniu napastników bot może przenosić pojedynczego golema z osoby o niższym procencie HP na zdrowszego obrońcę. Domyślna różnica wynosi **10 punktów procentowych**; ustawienie `/kozojeb golemy roznicahp 10` przyjmuje wartości 5–30. Sama różnica procentów nie wystarcza: porównywalna rezerwa rzeczywistych punktów HP obrońcy musi być co najmniej o 15% większa. Zachowane są minimum własnego HP, limit napastników, gotowość szyku i stabilizacja niedawnych przejęć. Bezpieczna rotacja celowana może zastąpić zwykły wymóg poprawy presji o 15%, ponieważ jej celem jest wyrównanie HP w dalszej części walki. Brak gotowego obrońcy, opóźniony GMCP lub niejednoznaczny cel mogą opóźnić podział. To heurystyka, nie gwarancja równego HP w każdej rundzie. Rola `wsparcie` nadal nie wykonuje zasłon.
+Po rozdzieleniu napastników bot może przenosić pojedynczego golema z osoby o niższym procencie HP na zdrowszego obrońcę. Domyślna różnica wynosi **10 punktów procentowych**; ustawienie `/kozojeb golemy roznicahp 10` przyjmuje wartości 5–30. Sama różnica procentów nie wystarcza: porównywalna rezerwa punktów HP obrońcy musi być większa co najmniej o 5% przy przejęciu pierwszego NPC i o 15% przy drugim. Zachowane są minimum własnego HP, limit napastników, gotowość szyku i stabilizacja niedawnych przejęć. Bezpieczna rotacja celowana może zastąpić zwykły wymóg poprawy presji o 15%, ponieważ jej celem jest wyrównanie HP w dalszej części walki. Brak gotowego obrońcy, opóźniony GMCP lub niejednoznaczny cel mogą opóźnić podział. To heurystyka, nie gwarancja równego HP w każdej rundzie. Rola `wsparcie` nadal nie wykonuje zasłon.
 
 Od 2.9.13 **prowadzący podnosi pancerz od razu po każdym potwierdzonym zabiciu golema**, także podczas dalszej walki. Używa `wez pancerz`, z potwierdzeniem podniesienia i pojedynczą kolejką dla równoczesnych zgonów. Powtórzenie komunikatu zabicia i późniejsza linia XP nie wysyłają kolejnego pobrania. Przejściowy brak przedmiotu dopuszcza jedną krótką powtórkę; brak odpowiedzi pozostaje zapisany jako niepewne podniesienie. Pilny odwrót ma pierwszeństwo. Po oczyszczeniu całego pokoju prowadzący wraca z drużyną przez dotychczasowe `/idz` do kozobazy. Tylko w bazie wykonuje kolejno `przeszukaj pancerz` → potwierdzenie `Przestajesz przeszukiwac ...` → `odloz pancerz` → potwierdzenie odłożenia.
 
@@ -218,7 +218,7 @@ Wznowienie patrolu wymaga obsłużenia pancerzy, obecności całej zapamiętanej
 
 ## Aktualizacje z GitHuba
 
-Jeśli masz już Kozojeba 2.8.1–2.9.15, wykonaj na **każdym profilu**:
+Jeśli masz już Kozojeba 2.8.1–2.9.17, wykonaj na **każdym profilu**:
 
 ```text
 /kozojeb stop
@@ -227,7 +227,7 @@ Jeśli masz już Kozojeba 2.8.1–2.9.15, wykonaj na **każdym profilu**:
 /kozojeb aktualizuj
 ```
 
-Poczekaj na zakończenie walki i ruchu oraz komunikat `Zainstalowano 2.9.16`. Sprawdź `/kozojeb status`; powinien pokazać wersję **2.9.16**. Wyłącz stary dodatkowy trigger pancerzy — podniesienia po każdym zabiciu są już wbudowane. Następnie uruchom `/kozojeb start` — najpierw na wspierających, potem na prowadzącym stojącym w bazie. To jednorazowy start po aktualizacji; późniejsze rozłączenia nie wymagają ręcznego wznowienia. Nie trzeba usuwać ani ręcznie instalować paczki; dotychczasowe ustawienia profili pozostają zachowane. Można przejść bezpośrednio z 2.9.2 do 2.9.16. Model ról sam uwzględni Brixa, Gunza i Rodricka jako wsparcie, bez przydzielania im zasłon. Profile już ustawione na `zaslony` korzystają z ochrony całej drużyny; rola `wsparcie` pozostaje drugą linią. Zwykły próg regeneracji wynosi domyślnie 95%; można go zmienić na prowadzącym przez `/kozojeb powrothp 95`. Tryb golemów wymaga osobnego włączenia i w swoim cyklu czeka na 100% całej drużyny.
+Poczekaj na zakończenie walki i ruchu oraz komunikat `Zainstalowano 2.9.18`. Sprawdź `/kozojeb status`; powinien pokazać wersję **2.9.18**. Wyłącz stary dodatkowy trigger pancerzy — podniesienia po każdym zabiciu są już wbudowane. Następnie uruchom `/kozojeb start` — najpierw na wspierających, potem na prowadzącym stojącym w bazie. To jednorazowy start po aktualizacji; późniejsze rozłączenia nie wymagają ręcznego wznowienia. Nie trzeba usuwać ani ręcznie instalować paczki; dotychczasowe ustawienia profili pozostają zachowane. Można przejść bezpośrednio z 2.9.2 do 2.9.18. Model ról sam uwzględni Brixa, Gunza i Rodricka jako wsparcie, bez przydzielania im zasłon. Profile już ustawione na `zaslony` korzystają z ochrony całej drużyny; rola `wsparcie` pozostaje drugą linią. Zwykły próg regeneracji wynosi domyślnie 95%; można go zmienić na prowadzącym przez `/kozojeb powrothp 95`. Tryb golemów wymaga osobnego włączenia i w swoim cyklu czeka na 100% całej drużyny.
 
 Przy paczce zbudowanej w tym repozytorium adres wydań jest wbudowany. W paczce przygotowanej bez adresu skonfiguruj na każdym profilu:
 
@@ -280,6 +280,30 @@ Po pustych pełnych okrążeniach patrol stopniowo zwalnia. Domyślny maksymalny
 ```
 
 `0` wyłącza zwalnianie. `wydajnosc` wypisuje liczniki zdarzeń, decyzji, przeliczeń, ataków i ich ponowień, powrotów watchdogu oraz oczekiwań na restart od załadowania skryptu; nie jest pomiarem całkowitego CPU Mudleta. Nie uruchamia nagrywania pakietów, pętli odpytywania, testów sieciowych ani zapisu logu na dysk. Dane obserwacji są ograniczone do widocznych członków drużyny i NPC bieżącego pokoju.
+
+## Zapis HP, walki i zasłon — od 2.9.18
+
+Zapis jest domyślnie **włączony** na każdym profilu i działa przy uruchomionym bocie podczas walki, odwrotu i leczenia, także w roli `wsparcie` oraz przy ręcznym prowadzeniu z automatycznymi zasłonami. Ustawienie jest zapisywane osobno na profilu. Nie wymaga aliasu `lua` ani dodatkowego odpytywania serwera.
+
+```text
+/kozojeb zapis status
+/kozojeb zapis teraz
+/kozojeb zapis off
+/kozojeb zapis on
+```
+
+`status` pokazuje stan rejestratora i pełne ścieżki plików. `teraz` zapisuje pojedynczy stan na żądanie, również przy zatrzymanym bocie lub wyłączonym zapisie automatycznym. `off` opróżnia bufor i wyłącza dalsze automatyczne zapisy. Pliki znajdują się w katalogu bieżącego profilu Mudleta:
+
+- `kozojeb-walka.jsonl` — bieżące dane;
+- `kozojeb-walka.jsonl.1` — poprzednia część, jeśli nastąpiła rotacja.
+
+Limit wynosi **8 MiB na plik**, zachowywana jest jedna poprzednia część. Kolejna rotacja zastępuje starszą kopię. Do analizy dołącz oba istniejące pliki z każdego badanego profilu oraz zwykły log tekstowy. Pliki nie są automatycznie wysyłane ani umieszczane w repozytorium.
+
+Każdy wiersz JSONL jest osobnym rekordem ze znacznikiem czasu odbiorcy, wersją i sesją. Zmieniony stan jest zapisywany najwyżej **raz na sekundę**; identyczne stany są pomijane. To próbkowanie, więc nie zachowuje każdej pośredniej zmiany HP między próbkami. Osobne zdarzenia wysłania zasłony, odpowiedzi gry, odmowy, widocznego zastępstwa i faktycznego odwrotu mają własne czasy niezależnie od tego limitu. Dane trafiają na dysk partiami, najpóźniej po 5 s; zwykły stop, wyjście, przeładowanie i rozłączenie opróżniają bufor. Awaryjne zamknięcie procesu może utracić ostatnią buforowaną partię.
+
+Zapis obejmuje HP i maksymalne HP wszystkich rozpoznanych członków, procent bez zaokrąglenia, oddzielne wartości `Group.State` i `Room.Entities`, stany postaci, napastników NPC i ich HP, wybrany cel, surowe relacje `covers`, tryb, rolę, progi oraz lokalną gotowość szyku. Własne procentowe `Char.Vitals.hp` bez `maxhp` jest oznaczane osobno jako `hp_percent`; nie zostaje potraktowane jak punkty HP ani nie zmienia działania parsera bojowego. Czasy odbioru, wiek i gotowość kanałów pomagają odróżnić bieżący odczyt od starego. `covers` nie zastępuje relacji ataków NPC.
+
+Kontrole faktycznie wykonane przez ten profil mają kody przyczyn: m.in. `hp_gap`, `hp_reserve`, `ambiguous_selector`, `unsafe_projection`, `cover_hold`, `transfer_hold`, `formation_busy`, `reply_pending`, `defender_turn`, `hp_above_threshold` i `no_npc`. To ślad rozważanych kandydatów, nie symulacja dodatkowych decyzji. Zasłona innego celu może pozostawić wpisy wcześniejszych odrzuconych kandydatów. Zapis przechowuje najwyżej 24 członków, 32 NPC i 64 kontrole na próbkę; pole `truncated` oznacza ograniczenie rozmiaru. Nie zmienia komend, ról, prowadzenia, progów odwrotu ani wymagań regeneracji. Błąd pliku wyłącza rejestrator do ponownego `zapis on`, zgłasza jedną informację i pozostawia bota w pracy.
 
 `/kozojeb diagnostyka` pokazuje te liczniki oraz bieżący tryb, rolę, pokój, ID celu, gotowość danych i oczekujący ruch. Podaje czas od ostatniego odebranego GMCP, własnego ciosu, postępu bota i decyzji. Watchdog zapisuje ten sam krótki stan przed rozpoczęciem powrotu. Identyczny pakiet GMCP aktualizuje czas odbioru, lecz nie udaje postępu. Diagnostyka działa na żądanie lub przy faktycznym zastoju; nie dodaje timera, odpytywania ani rejestratora pakietów. Sam taki zapis nie rozstrzyga przyczyny zerwania TCP.
 
