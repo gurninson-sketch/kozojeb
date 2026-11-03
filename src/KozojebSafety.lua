@@ -2,7 +2,7 @@
 -- Zdarzenia korzystaja z istniejacej kolejki; bez stalego odpytywania.
 do
 local K,A=kozojeb,kozojeb.golemApi
-local S={known={},deathRevisions={},lightStatus="niepotwierdzone"}
+local S={known={},deathRevisions={},lightStatus="brak potwierdzonej ciemnosci"}
 K.S=S
 function S.anonymous(name)
   local value=A.normal(name)
@@ -58,7 +58,7 @@ function S.onTeamDeath(name)
 end
 function S.lightAttempt()
   if not K.config.lightEnabled or not K.enabled or K.sessionBlocked or S.lightPending
-      or S.lightConfirmed and not S.blind then return end
+      or not S.blind or S.blind.room~=A.room() then return end
   if S.lightAt and A.now()-S.lightAt<30 then return end
   local token={}
   S.lightAt=A.now();S.lightPending=token;S.lightStatus="czekam na potwierdzenie"
@@ -79,14 +79,23 @@ function S.onLight()
   S.lightRevision=K.sourceRevisions.entities
   mark("light_confirmed",{});if K.enabled then A.queue() end
 end
-function S.onAttack(actor,defended)
-  if not K.enabled or K.sessionBlocked or not S.anonymous(actor) then return end
-  local own=A.group().self
-  if A.normal(defended)~="cie" or not own then return end
+-- Same braki danych albo anonimowy napastnik nie dowodza ciemnosci.
+-- Reagujemy, gdy swieze encje nie pozwalaja rozpoznac zadnej postaci/NPC.
+local function visibility()
+  local hidden=false
+  for _,entity in ipairs(A.entities()) do
+    if entity.kind=="player" or entity.kind=="npc" then
+      if not S.anonymous(entity.name) then return true,false end
+      hidden=true
+    end
+  end
+  return false,hidden
+end
+local function lostVisibility()
   if not S.blind then
     S.blind={room=A.room(),at=A.now()};S.lightConfirmed=false;S.lightStatus="utrata widocznosci"
-    A.note("Atak bez rozpoznanego przeciwnika. Potrzebne wlasne swiatlo; /kozojeb swiatlo on wlacza jego obsluge.","red")
-    mark("unresolved_attack",{actor=actor,target=tostring(own.id)})
+    A.note("Brak widocznosci w tym pokoju. /kozojeb swiatlo on pozwala zapalic wlasne swiatlo.","red")
+    mark("visibility_lost",{})
     if not A.isFollower() and not K.roomChangePending
         and (K.mode=="patrol" or K.mode=="combat" or K.mode=="chase") then
       if K.moveTimer then pcall(killTimer,K.moveTimer);K.moveTimer=nil end
@@ -95,6 +104,12 @@ function S.onAttack(actor,defended)
     A.queue()
   end
   S.lightAttempt()
+end
+function S.onAttack(actor,defended)
+  if not K.enabled or K.sessionBlocked or not S.anonymous(actor) then return end
+  if A.normal(defended)~="cie" or not A.group().self then return end
+  local _,hidden=visibility()
+  if hidden then lostVisibility() end
   if K.combatLog then K.combatLog.request() end
 end
 function S.onLinkdead(name)
@@ -162,16 +177,21 @@ function S.observe(event)
   if count>=32 or event=="gmcp.Chimera.Group.State" then
     for id in pairs(S.known) do if not currentIds[id] then S.known[id]=nil end end
   end
-  if S.blind and event=="gmcp.Chimera.Room.Entities" then
-    local recognized=false
-    for _,entity in ipairs(A.entities()) do
-      if not A.isSelf(entity) and (entity.kind=="npc" or entity.kind=="player") and not S.anonymous(entity.name) then recognized=true end
-    end
-    if recognized or (S.lightConfirmed and K.sourceRevisions.entities>(S.lightRevision or math.huge)
-        and own and not S.anonymous(own.name)) then
-      S.blind=nil;S.visibilityWait=nil;mark("visibility_restored",{});A.queue()
+  if K.enabled and (event=="gmcp.Chimera.Room.Entities" or event==nil) then
+    local visible,hidden=visibility()
+    if hidden then lostVisibility()
+    elseif visible then
+      local wasBlind=S.blind~=nil
+      S.cancel();S.blind=nil;S.visibilityWait=nil;S.lightStatus="widocznosc dostepna"
+      if wasBlind then mark("visibility_restored",{});A.queue() end
     end
   end
+end
+function S.roomChanged()
+  if S.blind and S.blind.room~=A.room() then
+    S.cancel();S.blind=nil;S.visibilityWait=nil;S.lightStatus="brak potwierdzonej ciemnosci"
+  end
+  if K.entitiesReady then S.observe("gmcp.Chimera.Room.Entities") end
 end
 function S.firstDeath()
   local names={};for name in pairs(K.config.teamDeaths) do names[#names+1]=name end
@@ -185,11 +205,11 @@ end
 function S.inspect()
   if not S.blind or A.isFollower() or K.mode=="escape" or K.mode=="heal_rest" or K.mode=="recovery_return" then return true end
   S.visibilityWait="Brak rozpoznania otoczenia; sprawdz swiatlo"
-  S.lightAttempt();return false
+  return false
 end
 function S.session()
   S.cancel();S.known={};S.deathRevisions={};S.profile=nil;S.lightConfirmed=nil;S.lightAt=nil
-  S.lightStatus="niepotwierdzone";S.blind=nil;S.visibilityWait=nil
+  S.lightStatus="brak potwierdzonej ciemnosci";S.blind=nil;S.visibilityWait=nil
   S.groupAt=nil;S.entitiesAt=nil;S.lastLinkdead=nil
 end
 function S.started()
@@ -234,7 +254,7 @@ function S.command(rest)
   if value=="on" or value=="off" then
     K.config.lightEnabled=value=="on"
     S.cancel();S.lightAt=nil
-    A.note("Wlasne swiatlo: "..(K.config.lightEnabled and "wlaczone" or "wylaczone").."; "..K.config.lightCommand..".","green")
+    A.note("Automatyczne swiatlo w ciemnosci: "..(K.config.lightEnabled and "wlaczone" or "wylaczone").."; "..K.config.lightCommand..".","green")
     if K.config.lightEnabled then S.lightAttempt() end
   elseif value:match("^komenda%s+") then
     local command=rest:match("^%S+%s+(.+)$")

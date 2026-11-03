@@ -329,7 +329,9 @@ test("the recorder retains the known profile name when darkness replaces it with
   assert(l.lastSnapshot.profile=="Morrid" and member(l,"M").name=="Ktos");noMovement()
 end)
 test("visibility and light status are recorded with an unresolved text attack",function()
-  local l=setup("M","wsparcie");kozojeb.start();kozojeb.onTeamCombat("Ktos","cie",true);advance(.21)
+  local l,e=setup("M","wsparcie");kozojeb.start()
+  e[2].name="Ktos";gmcp.Chimera.Room.Entities.entities={e[2]};event()
+  kozojeb.onTeamCombat("Ktos","cie",true);advance(.21)
   assert(l.lastSnapshot.safety.visibility_lost and not l.lastSnapshot.safety.light_enabled)
   assert(l.lastSnapshot.safety.light_status=="utrata widocznosci");noMovement()
 end)
@@ -340,7 +342,8 @@ test("a follower records team death without marking an independent retreat",func
   assert(not data:find('"kind":"retreat"',1,true));noMovement()
 end)
 test("many identical anonymous attack packets keep the sample rate bounded",function()
-  local l=setup("M","wsparcie");kozojeb.start()
+  local l,e=setup("M","wsparcie");kozojeb.start()
+  e[2].name="Ktos";gmcp.Chimera.Room.Entities.entities={e[2]};event()
   for i=1,2000 do kozojeb.onTeamCombat("Ktos","cie",true) end
   advance(.21);assert(l.samples==1)
   local samples=l.samples

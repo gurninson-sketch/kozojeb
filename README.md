@@ -1,4 +1,4 @@
-# Chimera Kozojeb 2.9.20
+# Chimera Kozojeb 2.9.21
 
 [Pobierz najnowszą paczkę](https://github.com/gurninson-sketch/kozojeb/releases/latest/download/Chimera_Kozojeb.mpackage) · [Wydania](https://github.com/gurninson-sketch/kozojeb/releases)
 
@@ -37,16 +37,16 @@ Zmiana roli zatrzymuje bota. Po skonfigurowaniu uruchom go przez `/kozojeb start
 
 ### Światło i zgon członka drużyny — od 2.9.20
 
-Każda postać powinna mieć własną sprawną lampę i paliwo. Zniknięcie jedynego nosiciela światła może pozostawić pozostałych w ciemności. Opcjonalną obsługę włącz na **każdym profilu**:
+Zniknięcie jedynego nosiciela światła może pozostawić pozostałych w ciemności. Opcjonalna obsługa pozwala postaci zapalić własną lampę z paliwem dopiero przy wykrytej utracie widoczności. W jasnych pokojach naturalne światło lub lampa kolegi wystarczają. Obsługę można włączyć na każdym profilu:
 
 ```text
 /kozojeb swiatlo on
 /kozojeb swiatlo status
 ```
 
-Domyślna komenda to `zapal lampe`; można zapisać inną pojedynczą komendę przez `/kozojeb swiatlo komenda zapal pochodnie`. Bot próbuje zapalić własne światło po starcie i ponownym połączeniu. Czeka 3 s na potwierdzenie. Brak lampy, paliwa lub odpowiedzi daje jeden komunikat; nie tworzy pętli ponowień. Nowy anonimowy atak dopuszcza kolejną próbę najwyżej raz na 30 s. Obsługa nie kupuje lamp ani paliwa. Wyłączenie: `/kozojeb swiatlo off`.
+Domyślna komenda to `zapal lampe`; można zapisać inną pojedynczą komendę przez `/kozojeb swiatlo komenda zapal pochodnie`. Od **2.9.21** sam start, reconnect i włączenie opcji w jasnym pokoju nie zapalają lampy ani nie wymagają jej potwierdzenia. Próba następuje dopiero, gdy aktualne encje GMCP są anonimowe i nie ma rozpoznanej postaci ani NPC. Brak danych i sam anonimowy napastnik w widocznym pokoju nie wystarczają do uruchomienia lampy. Bot czeka 3 s na potwierdzenie próby. Brak lampy, paliwa lub odpowiedzi daje jeden komunikat; nie tworzy pętli ponowień. Kolejne zdarzenie braku widoczności dopuszcza próbę najwyżej raz na 30 s. Obsługa nie kupuje lamp ani paliwa. Wyłączenie: `/kozojeb swiatlo off`.
 
-Atak opisany jako `Ktos ATAKUJE CIE!` wstrzymuje nowy patrol i usuwa jeszcze niewysłany zwykły krok prowadzącego. Zasłony wymagają rozpoznanej postaci oraz NPC, a pilny wspólny odwrót nadal działa według dotychczasowych progów. Samo wysłanie komendy światła nie oznacza odzyskania widoczności: potrzebny jest świeży odczyt rozpoznanych encji. Wspierający nie wychodzą samodzielnie.
+Potwierdzona utrata widoczności w danym pokoju wstrzymuje nowy patrol i usuwa jeszcze niewysłany zwykły krok prowadzącego. Zasłony wymagają rozpoznanej postaci oraz NPC, a pilny wspólny odwrót nadal działa według dotychczasowych progów. Samo wysłanie komendy światła nie oznacza odzyskania widoczności: potrzebny jest świeży odczyt rozpoznanych encji. Może go zapewnić światło dzienne lub lampa kolegi; własna lampa nie jest wymagana. Jasny pusty pokój z rozpoznaną własną postacią również zwalnia oczekiwanie. Zmiana pokoju usuwa poprzednią blokadę i oczekiwanie na lampę; nowy pokój jest oceniany osobno. Wspierający nie wychodzą samodzielnie.
 
 Potwierdzony zgon członka, rozpoznany duch, stan `dead`/`ghost` lub poprawna para HP z zerową wartością uruchamia na profilu `prowadzacy` wspólny odwrót i blokuje wznowienie patrolu z uszczuploną drużyną. Blokada przeżywa przeładowanie paczki i rozłączenie. Powrót żywej postaci potwierdzają świeże kanały drużyny i pokoju; przed patrolem wymaga ona 100% HP. Jeśli świadomie zmniejszasz skład, usuń zmarłą postać z drużyny w grze i poza walką wpisz na faktycznym prowadzącym `/kozojeb druzyna gotowa`. Komenda wymaga kompletnego, widocznego i żywego składu. Ręczny prowadzący w roli `zaslony` nadal sam decyduje o odwrocie.
 
@@ -235,7 +235,7 @@ Wznowienie patrolu wymaga obsłużenia pancerzy, obecności całej zapamiętanej
 
 ## Aktualizacje z GitHuba
 
-Jeśli masz już Kozojeba 2.8.1–2.9.19, wykonaj na **każdym profilu**:
+Jeśli masz już Kozojeba 2.8.1–2.9.20, wykonaj na **każdym profilu**:
 
 ```text
 /kozojeb stop
@@ -244,7 +244,7 @@ Jeśli masz już Kozojeba 2.8.1–2.9.19, wykonaj na **każdym profilu**:
 /kozojeb aktualizuj
 ```
 
-Poczekaj na zakończenie walki i ruchu oraz komunikat `Zainstalowano 2.9.20`. Sprawdź `/kozojeb status`; powinien pokazać wersję **2.9.20**. Wyłącz stary dodatkowy trigger pancerzy — podniesienia po każdym zabiciu są już wbudowane. Skontroluj `/kozojeb druzyna role` na każdym profilu; domyślnie nie ma przypisań zależnych od imion. Własne role profili i inne własne modele pozostają zapisane. Opcjonalnie włącz `/kozojeb swiatlo on`, zapewniając każdej postaci własną lampę i paliwo. Następnie uruchom `/kozojeb start` — najpierw na wspierających, potem na prowadzącym stojącym w bazie. To jednorazowy start po aktualizacji; późniejsze rozłączenia nie wymagają ręcznego wznowienia. Nie trzeba usuwać ani ręcznie instalować paczki; można przejść bezpośrednio z 2.9.2 do 2.9.20. Zwykły próg regeneracji wynosi domyślnie 95%; można go zmienić przez `/kozojeb powrothp 95`. Tryb golemów wymaga osobnego włączenia i w swoim cyklu czeka na 100% całej drużyny.
+Poczekaj na zakończenie walki i ruchu oraz komunikat `Zainstalowano 2.9.21`. Sprawdź `/kozojeb status`; powinien pokazać wersję **2.9.21**. Wyłącz stary dodatkowy trigger pancerzy — podniesienia po każdym zabiciu są już wbudowane. Skontroluj `/kozojeb druzyna role` na każdym profilu; domyślnie nie ma przypisań zależnych od imion. Własne role profili i inne własne modele pozostają zapisane. Opcjonalnie włącz `/kozojeb swiatlo on` na postaciach z lampą i paliwem; opcja działa tylko przy wykrytej utracie widoczności. Następnie uruchom `/kozojeb start` — najpierw na wspierających, potem na prowadzącym stojącym w bazie. To jednorazowy start po aktualizacji; późniejsze rozłączenia nie wymagają ręcznego wznowienia. Nie trzeba usuwać ani ręcznie instalować paczki; można przejść bezpośrednio z 2.9.2 do 2.9.21. Zwykły próg regeneracji wynosi domyślnie 95%; można go zmienić przez `/kozojeb powrothp 95`. Tryb golemów wymaga osobnego włączenia i w swoim cyklu czeka na 100% całej drużyny.
 
 Przy paczce zbudowanej w tym repozytorium adres wydań jest wbudowany. W paczce przygotowanej bez adresu skonfiguruj na każdym profilu:
 

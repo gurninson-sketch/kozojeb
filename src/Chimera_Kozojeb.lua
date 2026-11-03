@@ -58,7 +58,7 @@ end
 K.legacyImportTried = true
 K.initialized = false
 
-K.version = "2.9.20"
+K.version = "2.9.21"
 K.config = K.config or {
   chaseDelay = 0.20,
   patrolDelay = 0.70,
@@ -3970,6 +3970,7 @@ function K.onRoomChanged(eventName)
       K.healthHistory, K.shieldTransfers = {}, {}
       K.previousIncoming, K.transferRevision = nil, nil
       K.deadNpcIds = {}
+      if K.S and K.S.roomChanged then K.S.roomChanged() end
     end
     if mapperSync then
       K.metrics.roomSyncs=(K.metrics.roomSyncs or 0)+1
@@ -5366,7 +5367,7 @@ function K.help()
   <green>/kozojeb diagnostyka<reset>           stan i czas od GMCP, ciosu i postepu
   <green>/kozojeb zapis on|off|status|teraz<reset> lokalny zapis walki i zaslon
   <green>/kozojeb swiatlo on|off|status<reset> opcjonalne wlasne swiatlo;
-                              kazda postac potrzebuje lampy i paliwa
+                              tylko przy wykrytym braku widocznosci
   <green>/kozojeb swiatlo komenda zapal lampe<reset> jedna komenda zapalenia
   <green>/kozojeb golemy on|off<reset>         celowane zaslony golemow; prowadzacy
                               zbiera pancerze, wraca do bazy i leczy cala druzyne do 100%

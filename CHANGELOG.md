@@ -1,5 +1,12 @@
 # Zmiany
 
+## 2.9.21
+
+- Hotfix obsługi światła z 2.9.20: sama włączona opcja, start i reconnect nie zapalają lampy ani nie wymagają jej potwierdzenia w jasnym pokoju. Próba następuje dopiero po utracie widoczności potwierdzonej anonimowymi encjami GMCP bez rozpoznanej postaci lub NPC. Brak pakietu i anonimowy napastnik w widocznym otoczeniu nie są traktowane jako ciemność.
+- Światło naturalne albo lampa innego członka wystarczają do normalnej pracy. Świeży widoczny pusty pokój z własną postacią zwalnia blokadę bez potwierdzania własnej lampy i anuluje oczekujący komunikat o jej braku. Stan ciemnego pokoju i timer lampy nie przechodzą na inną lokację; nowy pokój jest oceniany osobno.
+- Zachowane ograniczenie próby do raz na 30 s, brak pętli ponowień i samodzielnego ruchu wspierających. Kontrola HP, zasłony, odwrót, role, blokada po zgonie i cykl golemów pozostają aktywne.
+- 9 nowych symulacji: jasny start i odpoczynek bez lampy, jasny reconnect, brak encji, anonimowy atak w widocznym pokoju, ciemny start, włączenie opcji dopiero w ciemności, jasny pusty pokój bez własnego potwierdzenia, zmiana pokoju oraz wspólne światło. Razem 640 symulacji bota, 60 bezpieczeństwa, 54 rejestratora i 30 aktualizatora; dodatkowo rzeczywiste triggery, SHA-256, JSONL oraz powtarzalność paczki.
+
 ## 2.9.20
 
 - Utrata widocznego prowadzącego nie blokuje już odczytu własnych HP ani zasłon pozostałych widocznych członków rzeczywistej drużyny. Rola `zaslony` zachowuje ochronę również po zniknięciu lidera, a `wsparcie` pozostaje DPS. Wspierający nie powtarzają starego celu i nie rozpoczynają własnego ruchu, odwrotu ani raportowania. HP zerowe nadal zatrzymuje profil.
