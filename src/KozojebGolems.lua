@@ -3,7 +3,7 @@
 do
 local K = kozojeb
 local A = K.golemApi
-local G = {holds={}, failures={}, selectors={}, forms={}, unavailable={}, combatEpoch=0}
+local G = {holds={}, confirmations={}, failures={}, selectors={}, forms={}, unavailable={}, combatEpoch=0}
 K.G = G
 local ordinal = {"pierwszym", "drugim", "trzecim", "czwartym"}
 local function enabled() return K.config.golemsEnabled == true end
@@ -25,14 +25,81 @@ end
 local function cancel(name)
   if G[name] then pcall(killTimer, G[name]); G[name] = nil end
 end
-function G.cancel() cancel("timer"); cancel("shieldTimer"); cancel("lootTimer") end
+function G.cancel() cancel("timer"); cancel("shieldTimer"); cancel("lootTimer"); cancel("coverTimer");G.coverDeadline=nil end
 function G.resetCombat()
   cancel("shieldTimer")
+  cancel("coverTimer");G.coverDeadline=nil;G.confirmations={}
   G.holds,G.failures,G.selectors,G.wait,G.planCache,G.combatRoom={},{},{},nil,nil,nil
   G.unavailable={}
   G.mappingWarning=nil
   G.forms={}
   G.combatEpoch=G.combatEpoch+1
+end
+local function soleOwner(snapshot,id)
+  local owners=snapshot.owners[id]
+  local owner=owners and next(owners)
+  if owner and next(owners,owner)==nil then return owner end
+end
+local function resolveCovers(snapshot)
+  local time,changed=A.now(),false
+  for key,pending in pairs(G.confirmations) do
+    local resolved,alive=false,false
+    for _,id in ipairs(pending.ids) do
+      local transfer=K.shieldTransfers[id]
+      if golem(A.entity(id)) then alive=true end
+      if soleOwner(snapshot,id)==pending.guard and transfer and transfer.from==pending.patient
+          and transfer.to==pending.guard and (transfer.at or transfer.untilTime-K.config.shieldHold)>=pending.at-0.5 then
+        G.holds[id]={untilTime=transfer.untilTime,patient=pending.patient,guard=pending.guard}
+        resolved=true
+      end
+    end
+    if resolved or not alive or pending.untilTime<=time then G.confirmations[key]=nil;changed=true end
+  end
+  if changed then G.planCache=nil;G.combatEpoch=G.combatEpoch+1 end
+end
+local function armCoverTimer()
+  local deadline,time=nil,A.now()
+  for _,pending in pairs(G.confirmations) do
+    if pending.untilTime>time and (not deadline or pending.untilTime<deadline) then deadline=pending.untilTime end
+  end
+  for _,hold in pairs(G.holds) do
+    if hold.pendingUntil and hold.pendingUntil>time and (not deadline or hold.pendingUntil<deadline) then deadline=hold.pendingUntil end
+  end
+  if not deadline then cancel("coverTimer");G.coverDeadline=nil;return end
+  if G.coverTimer and G.coverDeadline<=deadline then return end
+  cancel("coverTimer");G.coverDeadline=deadline
+  local generation=K.generation
+  G.coverTimer=tempTimer(math.max(0.01,deadline-time),function()
+    G.coverTimer=nil;G.coverDeadline=nil
+    if K.enabled and generation==K.generation and fresh() then
+      G.planCache=nil;G.combatEpoch=G.combatEpoch+1;A.queue()
+    end
+  end)
+end
+local function reserveCover(ids,source,patient,general)
+  if not source or not patient or #ids==0 then return false end
+  local time,guard,target=A.now(),tostring(source.id),tostring(patient.id)
+  if #ids==1 then
+    local id=ids[1];local previous=G.holds[id]
+    if previous and previous.guard==guard and previous.patient==target and (previous.pendingUntil or 0)>time then return false end
+    G.holds[id]={untilTime=time+math.max(0.5,general and 0.5 or K.config.shieldHold),pendingUntil=time+0.5,
+      patient=target,guard=guard,confirming=general or nil}
+  elseif not general then
+    table.sort(ids)
+    local key=guard..":"..target..":"..table.concat(ids,",")
+    if G.confirmations[key] and G.confirmations[key].untilTime>time then return false end
+    local count=0
+    for oldKey,pending in pairs(G.confirmations) do
+      if pending.untilTime<=time then G.confirmations[oldKey]=nil else count=count+1 end
+    end
+    if count>=32 then return false end
+    -- Opis wielu egzemplarzy nie rezerwuje kazdego na osiem sekund.
+    -- Tylko faktyczne przejecie w GMCP rozstrzyga dluga stabilizacje ID.
+    G.confirmations[key]={ids=ids,guard=guard,patient=target,at=time,untilTime=time+0.5}
+    resolveCovers(A.snapshot())
+  else return false end
+  armCoverTimer()
+  return true
 end
 function G.reset() G.cancel(); G.job=nil; G.resetCombat() end
 local function later(seconds, callback)
@@ -131,6 +198,7 @@ function G.selector(id,target)
   return phrase,allowed
 end
 local function pruneLocks()
+  resolveCovers(A.snapshot())
   local active={}
   for _,npc in ipairs(golems()) do active[tostring(npc.id)]=true end
   for id,hold in pairs(G.holds) do
@@ -141,6 +209,17 @@ local function pruneLocks()
   end
   for id,deadline in pairs(G.unavailable) do
     if deadline<=A.now() then G.unavailable[id]=nil end
+  end
+  armCoverTimer()
+end
+local function coverDeadline(id,target)
+  local hold=G.holds[id]
+  if hold and hold.patient==tostring(target.id) and (hold.pendingUntil or 0)>A.now() then return hold.pendingUntil end
+  if hold and hold.confirming and hold.untilTime>A.now() then return hold.untilTime end
+  for _,pending in pairs(G.confirmations) do
+    if pending.patient==tostring(target.id) and pending.untilTime>A.now() then
+      for _,candidateId in ipairs(pending.ids) do if candidateId==id then return pending.untilTime end end
+    end
   end
 end
 local function selectedProjection(own, target, npc, rotation)
@@ -171,7 +250,10 @@ local function selectedProjection(own, target, npc, rotation)
   if owner ~= tostring(target.id) or next(owners, owner) ~= nil then return blocked("npc_not_exclusive") end
   local id=tostring(npc.id)
   local hold=G.holds[id]
-  if hold and hold.confirming and hold.untilTime>A.now() then return blocked("await_cover_confirmation",hold.untilTime) end
+  -- Potwierdzenie sukcesu kolegi poprzedza czasem pakiet zmiany celu.
+  -- Pilny HP omija dluga stabilizacje, ale nie to krotkie uzgodnienie.
+  local confirming=coverDeadline(id,target)
+  if confirming then return blocked("await_cover_confirmation",confirming) end
   if not urgent(target) then
     local transfer,failure=K.shieldTransfers[id],G.failures[id..":"..tostring(target.id)]
     if hold and hold.untilTime>A.now() then return blocked("cover_hold",hold.untilTime) end
@@ -201,10 +283,14 @@ function G.validatePlan(own,target,plan)
 end
 function G.project(own, target)
   if not own or not target then return end
-  local incoming = A.snapshot().incoming[tostring(target.id)]
+  local snapshot=A.snapshot()
+  resolveCovers(snapshot)
+  local incoming = snapshot.incoming[tostring(target.id)]
   local list = golems()
+  local confirming=false
   for _, npc in ipairs(list) do
     if incoming and incoming.npcs[tostring(npc.id)] then
+      if coverDeadline(tostring(npc.id),target) then confirming=true end
       local plan,result=candidate(own,target,npc,false)
       if not plan then plan,result=candidate(own,target,npc,true) end
       if plan then return result,plan end
@@ -212,7 +298,7 @@ function G.project(own, target)
   end
   -- Niejednoznaczne egzemplarze nie uzasadniaja oceny pojedynczego NPC
   -- przy ogolnej komendzie: wowczas liczymy mozliwe przejecie wszystkich.
-  if A.canShield(own) then return A.projection(own,target,health(target)) end
+  if not confirming and A.canShield(own) then return A.projection(own,target,health(target)) end
 end
 local function plans()
   pruneLocks()
@@ -346,7 +432,13 @@ function G.shield()
       for _,member in ipairs(A.group().members) do
         if A.canShield(member) then members[#members+1]=member end
       end
-      table.sort(members,byName)
+      local snapshot=A.snapshot()
+      table.sort(members,function(a,b)
+        local first,second=snapshot.incoming[tostring(a.id)],snapshot.incoming[tostring(b.id)]
+        local freeA,freeB=not first or first.count==0,not second or second.count==0
+        if freeA~=freeB then return freeA end
+        return byName(a,b)
+      end)
       local rank=0
       for i,member in ipairs(members) do if A.isSelf(member) then rank=i-1 break end end
       local emergency=next(G.unavailable)~=nil
@@ -405,7 +497,7 @@ local function coverMembers(actor,form)
   end
   return source,patient
 end
-local function confirmSingle(patient,expectedId)
+local function confirmSingle(patient,expectedId,source)
   local snapshot=A.snapshot()
   local incoming=patient and snapshot.incoming[tostring(patient.id)]
   if not incoming or incoming.count~=1 then return false end
@@ -413,13 +505,7 @@ local function confirmSingle(patient,expectedId)
   local owners=snapshot.owners[id]
   if expectedId and id~=expectedId or not owners or next(owners)~=tostring(patient.id)
       or next(owners,next(owners))~=nil then return false end
-  local previous=G.holds[id]
-  if not previous or previous.untilTime<=A.now() then
-    -- "wrogow" nie identyfikuje NPC. To tylko krotkie okno na GMCP,
-    -- nie potwierdzenie przejecia ani osiem sekund stabilizacji ID.
-    G.holds[id]={untilTime=A.now()+0.5,confirming=true}
-  end
-  return true
+  return reserveCover({id},source,patient,true)
 end
 function G.onTeamCover(actor,form,description)
   if not fresh() or K.config.role=="wsparcie" then return end
@@ -428,13 +514,14 @@ function G.onTeamCover(actor,form,description)
   if not source or not patient or source==patient then return end
   G.unavailable[tostring(source.id)]=nil
   local found=false
-  if A.normal(description)=="wrogow" then found=confirmSingle(patient) end
+  if A.normal(description)=="wrogow" then found=confirmSingle(patient,nil,source) end
+  local ids={}
   for _,npc in ipairs(golems()) do
     if accusative(npc.name)==A.normal(description) or A.normal(npc.name)==A.normal(description) then
-      G.holds[tostring(npc.id)]={untilTime=A.now()+K.config.shieldHold}
-      found=true
+      ids[#ids+1]=tostring(npc.id)
     end
   end
+  if #ids>0 then found=reserveCover(ids,source,patient) end
   if found then
     if K.combatLog then K.combatLog.mark("peer_cover",{actor=actor,patient=tostring(patient.id),description=description}) end
     G.combatEpoch=G.combatEpoch+1; G.planCache=nil; A.queue()
@@ -460,7 +547,7 @@ function G.onShieldResult(pending,succeeded,description)
   if not enabled() or not pending.golemNpcId then return end
   if pending.room and pending.room~=A.room() then return false end
   if pending.golemGeneric and A.normal(description)=="wrogow" then
-    if succeeded and pending.room==A.room() then confirmSingle(A.entity(pending.id),pending.golemNpcId) end
+    if succeeded and pending.room==A.room() then confirmSingle(A.entity(pending.id),pending.golemNpcId,A.group().self) end
     G.combatEpoch=G.combatEpoch+1;G.planCache=nil
     return true
   end
@@ -473,9 +560,9 @@ function G.onShieldResult(pending,succeeded,description)
   local matched=false
   for _,id in ipairs(ids) do
     if id==pending.golemNpcId or pending.golemAllowedIds and pending.golemAllowedIds[id] then matched=true end
-    if succeeded then G.holds[id]={untilTime=A.now()+K.config.shieldHold}
-    else G.failures[id..":"..tostring(pending.id)]={npcId=id,untilTime=A.now()+15} end
+    if not succeeded then G.failures[id..":"..tostring(pending.id)]={npcId=id,untilTime=A.now()+15} end
   end
+  if succeeded then reserveCover(ids,A.group().self,A.entity(pending.id)) end
   if not matched then
     K.metrics.golemTargetMismatches=(K.metrics.golemTargetMismatches or 0)+1
     if pending.golemSelector then G.selectors[pending.golemSelector]=A.now()+15 end
@@ -952,6 +1039,9 @@ K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
 K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
   "^([A-Za-z-]+) probuje zaslonic (.+) przed ciosami ([^.,]+), lecz",
   [[kozojeb.G.onTeamFailure(matches[2],matches[3],matches[4])]])
+K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
+  "^([A-Za-z-]+) probuje cie zaslonic przed ciosami ([^.,]+), lecz",
+  [[kozojeb.G.onTeamFailure(matches[2],"cie",matches[3])]])
 K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
   "^(.+) zbliza sie do powyginanego pancerza plytowego, podnosi go i wciska do",
   [[kozojeb.G.onConsumed(matches[2])]])

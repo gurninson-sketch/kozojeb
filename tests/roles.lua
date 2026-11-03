@@ -6104,4 +6104,230 @@ test("two thousand identical updates keep general relief coalesced into one comm
   kozojeb.stop();local sent=#sends;advance(30);assert(#sends==sent)
 end)
 
+test("urgent golem rescue waits for the successful free defender's GMCP before duplicating",function()
+  golemSetup("M");golemRelations({"L","G","M","S"})
+  local e=gmcp.Chimera.Room.Entities.entities;e[6].hp=0;e[4].hp=750
+  kozojeb.config.escapeHp=50;kozojeb.config.teamEscapeHp=70
+  kozojeb.shieldFormationReady=false;kozojeb.start()
+  kozojeb.G.onTeamCover("Gror","Yerga","zelaznego golema")
+  kozojeb.shieldFormationReady=true;advance(.25)
+  assert(#shieldCommands()==0 and not kozojeb.G.project(e[3],e[4]))
+  golemRelations({"L","G","M","G"});event("gmcp.Chimera.Combat.State");advance(1)
+  assert(#shieldCommands()==0);noMovement()
+end)
+test("a missing transfer packet cannot block an urgent patient indefinitely",function()
+  golemSetup("M");golemRelations({"L","G","M","S"})
+  local e=gmcp.Chimera.Room.Entities.entities;e[6].hp=0;e[4].hp=750
+  kozojeb.config.escapeHp=50;kozojeb.config.teamEscapeHp=70
+  kozojeb.shieldFormationReady=false;kozojeb.start()
+  kozojeb.G.onTeamCover("Gror","Yerga","zelaznego golema")
+  kozojeb.shieldFormationReady=true;advance(.25);assert(#shieldCommands()==0)
+  advance(1.3);assert(count("zaslon yerga przed zelaznym golemem")==1);noMovement()
+end)
+test("a duplicate successful notice preserves the original short deadline",function()
+  reliefSetup();kozojeb.shieldFormationReady=false;kozojeb.start()
+  kozojeb.G.onTeamCover("Morrid","Yerga","zelaznego golema")
+  local deadline=kozojeb.G.holds.N4.pendingUntil;advance(.1)
+  for i=1,2000 do kozojeb.G.onTeamCover("Morrid","Yerga","zelaznego golema") end
+  assert(kozojeb.G.holds.N4.pendingUntil==deadline and kozojeb.G.coverTimer)
+  kozojeb.stop();advance(1);assert(not kozojeb.G.coverTimer)
+end)
+test("identical descriptions stabilize only the actually transferred NPC",function()
+  golemSetup("S");golemRelations({"L","L","G","M"})
+  local e=gmcp.Chimera.Room.Entities.entities;e[5].name="Kamienny golem";e[6].name="Kamienny golem";e[2].hp=800
+  kozojeb.shieldFormationReady=false;kozojeb.start()
+  kozojeb.G.onTeamCover("Morrid","Yarrima","kamiennego golema")
+  assert(not kozojeb.G.holds.N1 and not kozojeb.G.holds.N2 and not kozojeb.G.project(e[4],e[2]))
+  gmcp.Chimera.Combat.State.relations={{attacker="L",defender="N1"},{attacker="N1",defender="M"},
+    {attacker="N2",defender="L"},{attacker="N3",defender="G"},{attacker="N4",defender="M"}}
+  event("gmcp.Chimera.Combat.State")
+  assert(kozojeb.G.holds.N1 and not kozojeb.G.holds.N2 and next(kozojeb.G.confirmations)==nil)
+  local decision,plan=kozojeb.G.project(e[4],e[2]);assert(decision and plan and plan.npcId=="N2")
+end)
+test("an ambiguous success without an actual transfer has no eight second lock",function()
+  golemSetup("S");golemRelations({"L","L","G","M"})
+  local e=gmcp.Chimera.Room.Entities.entities;e[5].name="Kamienny golem";e[6].name="Kamienny golem"
+  kozojeb.shieldFormationReady=false;kozojeb.start()
+  kozojeb.G.onTeamCover("Morrid","Yarrima","kamiennego golema")
+  advance(.7)
+  assert(next(kozojeb.G.confirmations)==nil and not kozojeb.G.holds.N1 and not kozojeb.G.holds.N2)
+end)
+test("GMCP before the ambiguous success leaves the other identical attacker available",function()
+  golemSetup("S");golemRelations({"L","L","G","M"})
+  local e=gmcp.Chimera.Room.Entities.entities;e[5].name="Kamienny golem";e[6].name="Kamienny golem";e[2].hp=800
+  kozojeb.shieldFormationReady=false;kozojeb.start()
+  gmcp.Chimera.Combat.State.relations={{attacker="N1",defender="M"},{attacker="N2",defender="L"},
+    {attacker="N3",defender="G"},{attacker="N4",defender="M"}}
+  event("gmcp.Chimera.Combat.State")
+  kozojeb.G.onTeamCover("Morrid","Yarrima","kamiennego golema")
+  assert(kozojeb.G.holds.N1 and not kozojeb.G.holds.N2 and kozojeb.G.project(e[4],e[2]))
+end)
+test("the protected actual leader recognizes a teammate's failed cover using cie",function()
+  golemSetup("L","prowadzacy");golemRelations({"L","L","L","L"});kozojeb.start()
+  kozojeb.G.onTeamFailure("Yergo","cie","alabastrowego golema")
+  assert(kozojeb.G.unavailable.S and not kozojeb.G.holds.N1)
+end)
+test("room and session changes cancel unresolved ambiguous cover confirmations",function()
+  for _,action in ipairs({"room","disconnect"}) do
+    golemSetup("S");kozojeb.shieldFormationReady=false;kozojeb.start()
+    kozojeb.G.onTeamCover("Morrid","Yarrima","kamiennego golema")
+    assert(next(kozojeb.G.confirmations) and kozojeb.G.coverTimer)
+    if action=="room" then room=1323;kozojeb.onRoomChanged("gmcp.Room.Info")
+    else kozojeb.onSessionEvent("sysDisconnectionEvent") end
+    assert(next(kozojeb.G.confirmations)==nil and not kozojeb.G.coverTimer)
+  end
+end)
+test("a free replacement gets the fallback turn before an occupied healthier defender",function()
+  local waits={}
+  for _,id in ipairs({"G","M"}) do
+    golemSetup(id);golemRelations({"G","L","M","S"})
+    local e=gmcp.Chimera.Room.Entities.entities;e[3].hp=950;e[4].hp=750;e[6].hp=0;e[7].hp=0
+    gmcp.Char.Vitals.hp=id=="M" and 950 or 1000
+    kozojeb.config.escapeHp=50;kozojeb.config.teamEscapeHp=70
+    kozojeb.start();assert(#shieldCommands()==0 and kozojeb.G.wait)
+    waits[id]=kozojeb.G.wait.at
+  end
+  assert(waits.M<waits.G)
+end)
+local function interruptedRetreat()
+  setupLeader();kozojeb.setRooms({1322,1323});kozojeb.start()
+  room=1323;kozojeb.onRoomChanged("gmcp.Room.Info");event();event("gmcp.Chimera.Combat.State")
+  kozojeb.escape("symulacja odwrotu")
+  assert(kozojeb.mode=="escape" and aliases[#aliases]=="/idz 1322")
+  return #aliases
+end
+test("an attacked walker waits for room confirmation before resuming a retreat",function()
+  local before=interruptedRetreat();kozojeb.onWalkerAttackStop();advance(.4)
+  assert(#aliases==before and kozojeb.escapeWalkerStop)
+  room=1324;kozojeb.onRoomChanged("gmcp.Room.Info");advance(.4)
+  assert(#aliases==before)
+  event();assert(#aliases==before+1 and not kozojeb.escapeWalkerStop and kozojeb.metrics.walkerResumes==1)
+  assert(kozojeb.escapeAttempts==1)
+end)
+test("a stop notification after room confirmation also resumes once",function()
+  local before=interruptedRetreat()
+  room=1324;kozojeb.onRoomChanged("gmcp.Room.Info");event();event("gmcp.Chimera.Combat.State")
+  kozojeb.onWalkerAttackStop();advance(.4)
+  assert(#aliases==before+1 and not kozojeb.escapeWalkerStop)
+end)
+test("repeated walker stop messages cannot flood retries or postpone the original deadline",function()
+  local before=interruptedRetreat();kozojeb.onWalkerAttackStop();local deadline=kozojeb.escapeWalkerStop.deadline
+  for i=1,2000 do kozojeb.onWalkerAttackStop() end
+  advance(1);assert(#aliases==before and kozojeb.escapeWalkerStop.deadline==deadline)
+  advance(11.1);assert(#aliases==before+1 and kozojeb.escapeAttempts==2)
+  advance(24.1);assert(not kozojeb.enabled)
+end)
+test("followers and a manually controlled leader never restart the walker",function()
+  for _,role in ipairs({"wsparcie","zaslony"}) do
+    reset(role);kozojeb.start();kozojeb.mode="escape"
+    kozojeb.onWalkerAttackStop();advance(1)
+    assert(#aliases==0 and not kozojeb.escapeWalkerStop and not kozojeb.escapeResumeTimer)
+  end
+end)
+test("stop and disconnect cancel an already scheduled walker recovery",function()
+  for _,action in ipairs({"stop","disconnect"}) do
+    local before=interruptedRetreat();kozojeb.onWalkerAttackStop()
+    if action=="stop" then kozojeb.stop() else kozojeb.onSessionEvent("sysDisconnectionEvent") end
+    advance(1);assert(#aliases==before and not kozojeb.escapeWalkerStop and not kozojeb.escapeResumeTimer)
+  end
+end)
+test("arrival at base cancels an interrupted walker without an extra route command",function()
+  local before=interruptedRetreat();kozojeb.onWalkerAttackStop()
+  gmcp.Chimera.Combat.State={primary="",relations={}}
+  room=1322;kozojeb.onRoomChanged("gmcp.Room.Info");event();event("gmcp.Chimera.Combat.State");advance(.4)
+  assert(#aliases==before and kozojeb.mode=="heal_rest" and not kozojeb.escapeResumeTimer)
+end)
+
+local function lateMapperStep()
+  crowdedPatrol(7,true)
+  gmcp.Chimera.Room.Entities.room="origin-room"
+  gmcp.Chimera.Combat.State.room="origin-room"
+  advance(.21);assert(kozojeb.roomChangePending and kozojeb.moveSnapshot.roomKey=="origin-room")
+  kozojeb.onRoomChanged("gmcp.Room.Info")
+  assert(kozojeb.roomChangePending and kozojeb.roomSyncTimer)
+end
+local function nextRoomPackets()
+  local e=gmcp.Chimera.Room.Entities.entities
+  while #e>3 do table.remove(e) end
+  e[4]={id="NEW",name="Duzy snotling",kind="npc",hp=100,maxhp=100}
+  gmcp.Chimera.Room.Entities.room="next-room"
+  gmcp.Chimera.Combat.State={room="next-room",primary="NEW",relations={{attacker="S",defender="NEW"},{attacker="NEW",defender="S"}}}
+end
+test("room info before the mapper position cannot cause a false crowded-room retreat",function()
+  lateMapperStep();nextRoomPackets()
+  kozojeb.onGmcp("gmcp.Chimera.Room.Entities")
+  local receivedRevision=kozojeb.dataRevision
+  kozojeb.onGmcp("gmcp.Chimera.Combat.State")
+  room=1323;advance(.07)
+  assert(not kozojeb.roomChangePending and not kozojeb.limitRoom and kozojeb.entitiesReady)
+  assert(kozojeb.sourceRevisions.entities==receivedRevision and kozojeb.combatRoomReady)
+  advance(13);assert(#aliases==0 and kozojeb.mode=="combat" and kozojeb.currentTargetId=="NEW")
+end)
+test("the next actual entity packet can settle an earlier room info before a new map event",function()
+  lateMapperStep();nextRoomPackets();room=1323
+  event();event("gmcp.Chimera.Combat.State");advance(.3)
+  assert(not kozojeb.limitRoom and not kozojeb.roomChangePending and kozojeb.entitiesReady and #aliases==0)
+end)
+test("a mapper slower than the short deferral is settled by the next GMCP event",function()
+  lateMapperStep();advance(.2);assert(kozojeb.roomChangePending and not kozojeb.roomSyncTimer)
+  room=1323;event("gmcp.Chimera.Group.State")
+  assert(not kozojeb.limitRoom and not kozojeb.entitiesReady and count("zabij snotlinga")==0)
+  nextRoomPackets();event();event("gmcp.Chimera.Combat.State")
+  assert(kozojeb.currentTargetId=="NEW" and #aliases==0)
+end)
+test("a different raw room hash alone does not acknowledge an unchanged map position",function()
+  lateMapperStep();nextRoomPackets();event();advance(.2)
+  assert(kozojeb.roomChangePending and kozojeb.limitRoom and count("e")==1 and count("zabij snotlinga")==0)
+end)
+test("the crowded exit watchdog rechecks actual map progress instead of sending the party home",function()
+  crowdedPatrol(7,true);gmcp.Chimera.Room.Entities.room="origin-room";advance(.21)
+  room=1323;nextRoomPackets();advance(12.1)
+  assert(not kozojeb.limitRoom and not kozojeb.roomChangePending and #aliases==0 and kozojeb.mode=="patrol")
+  event();event("gmcp.Chimera.Combat.State");assert(kozojeb.currentTargetId=="NEW")
+end)
+test("stop and disconnect cancel a deferred mapper confirmation",function()
+  for _,action in ipairs({"stop","disconnect"}) do
+    lateMapperStep();local before=#sends
+    if action=="stop" then kozojeb.stop() else kozojeb.onSessionEvent("sysDisconnectionEvent") end
+    room=1323;advance(.3)
+    assert(#sends==before and #aliases==0 and not kozojeb.roomSyncTimer)
+  end
+end)
+local function partialRescue()
+  setupLeader();local e=gmcp.Chimera.Room.Entities.entities
+  e[1].hp=2000;e[1].maxhp=2000;gmcp.Char.Vitals.hp=2000;gmcp.Char.Vitals.maxhp=2000
+  e[3].hp=1880;e[3].maxhp=1880
+  e[5]={id="X",name="Silny ork",kind="npc",hp=1000,maxhp=1000}
+  gmcp.Chimera.Combat.State={primary="N",relations={{attacker="S",defender="N"},{attacker="N",defender="M"},{attacker="X",defender="M"}}}
+  kozojeb.config.teamShieldHp=80;kozojeb.config.teamEscapeHp=70;kozojeb.start()
+  room=1323;kozojeb.onRoomChanged("gmcp.Room.Info");e[3].hp=1440
+  event("gmcp.Chimera.Combat.State");event()
+  assert(count("zaslon morrida")==1 and kozojeb.mode=="combat")
+  kozojeb.onShieldResult("Morrida",true,"malego snotlinga")
+  gmcp.Chimera.Combat.State.relations={{attacker="S",defender="N"},{attacker="N",defender="S"},{attacker="X",defender="M"}}
+  event("gmcp.Chimera.Combat.State")
+  return e
+end
+test("a confirmed partial rescue waits briefly for the teammate taking the remaining NPC",function()
+  partialRescue();assert(kozojeb.mode=="combat" and #aliases==0 and kozojeb.shieldRescue)
+  kozojeb.onTeamShield("Yarrim","Morrida")
+  gmcp.Chimera.Combat.State.relations={{attacker="S",defender="N"},{attacker="N",defender="S"},{attacker="X",defender="L"}}
+  event("gmcp.Chimera.Combat.State");advance(.6)
+  assert(kozojeb.mode=="combat" and #aliases==0)
+end)
+test("partial rescue grace expires when no teammate completes the protection",function()
+  partialRescue();advance(.6)
+  assert(kozojeb.mode=="escape" and aliases[#aliases]=="/idz 1322")
+end)
+test("partial rescue grace never delays retreat below the team HP threshold",function()
+  local e=partialRescue();e[3].hp=1200;event()
+  assert(kozojeb.mode=="escape" and aliases[#aliases]=="/idz 1322")
+end)
+test("a new attacker is not treated as a surviving subset of the successful rescue",function()
+  local e=partialRescue();e[6]={id="Y",name="Nowy ork",kind="npc",hp=1000,maxhp=1000}
+  gmcp.Chimera.Combat.State.relations={{attacker="S",defender="N"},{attacker="N",defender="S"},{attacker="Y",defender="M"}}
+  event();event("gmcp.Chimera.Combat.State")
+  assert(kozojeb.mode=="escape" and #aliases==1)
+end)
+
 print(string.format("%d simulations passed", total))

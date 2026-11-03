@@ -56,7 +56,7 @@ end
 K.legacyImportTried = true
 K.initialized = false
 
-K.version = "2.9.18"
+K.version = "2.9.19"
 K.config = K.config or {
   chaseDelay = 0.20,
   patrolDelay = 0.70,
@@ -431,6 +431,7 @@ K.movementKnown, K.movementRevision = false, nil
 K.teamMoves = {}
 K.recoveryTired = {}
 K.movementRest, K.moveSnapshot, K.teamStep = nil, nil, nil
+K.escapeWalkerStop, K.escapeLastProgressAt = nil, nil
 K.regroupFailures = 0
 K.emptyRounds, K.patrolRoundKills, K.emptyPatrolDelay = 0, 0, 0
 K.metrics = {events=0, actions=0, scheduled=0, coalesced=0, health=0,
@@ -659,12 +660,12 @@ end
 local function cancelAllTimers()
   if K.G then K.G.cancel() end
   for _, name in ipairs({
-    "actionTimer", "moveTimer", "restTimer", "escapeTimer", "killTimer",
+    "actionTimer", "moveTimer", "roomSyncTimer", "restTimer", "escapeTimer", "killTimer",
     "returnTimer", "healTimer", "recoveryTimer",
     "panicTimer",
     "idleTimer", "idleReturnTimer",
     "focusTimer", "pendingFleeTimer", "targetLostTimer",
-    "killConfirmTimer", "escapeWatchTimer", "shieldTimer", "herbTimer",
+    "killConfirmTimer", "escapeWatchTimer", "escapeResumeTimer", "shieldTimer", "herbTimer",
     "supportTimer", "supportHintTimer", "shieldTurnTimer", "teamShieldTimer", "reconnectTimer",
     "movementRestTimer", "teamStepTimer",
   }) do
@@ -674,6 +675,7 @@ local function cancelAllTimers()
   K.chaseMovePending = false
   K.pendingFleeName = nil
   K.idleAliasActive = false
+  K.escapeWalkerStop, K.escapeLastProgressAt = nil, nil
   K.shieldLastTarget = nil
   K.supportCombatHint = nil
   K.supportDeathBarrier = nil
@@ -1754,6 +1756,42 @@ local function sendEscapeAttempt()
   later("escapeWatchTimer", K.config.escapeRetryDelay, sendEscapeAttempt)
 end
 
+function K.resumeStoppedEscape()
+  local stopped=K.escapeWalkerStop
+  if not stopped or not K.enabled or isFollower() or K.sessionBlocked or K.mode~="escape" then return end
+  if currentRoom()==escapeDestination() then K.escapeWalkerStop=nil;finishEscapeTail();return end
+  if K.movementRest then K.armMovementRest();return end
+  local progressed=stopped.progress or currentRoom()~=stopped.room
+  if progressed and K.entitiesReady and not K.roomChangePending then
+    K.escapeWalkerStop=nil
+    cancelTimer("escapeWatchTimer")
+    -- Potwierdzony postep nie jest nieudana proba trasy. Ponowienia
+    -- bez zmiany pokoju nadal podlegaja zwyklemu limitowi i watchdogowi.
+    K.escapeAttempts=0
+    K.metrics.walkerResumes=(K.metrics.walkerResumes or 0)+1
+    if K.combatLog then K.combatLog.mark("escape_walker_resume",{room=currentRoom()}) end
+    sendEscapeAttempt()
+  elseif now()>=stopped.deadline then
+    K.escapeWalkerStop=nil
+    sendEscapeAttempt()
+  else
+    later("escapeWatchTimer",stopped.deadline-now(),K.resumeStoppedEscape)
+  end
+end
+
+function K.onWalkerAttackStop()
+  if not K.enabled or isFollower() or K.sessionBlocked or K.mode~="escape" or K.recoveryEmergency
+      or K.escapeWalkerStop or K.movementRest then return end
+  local time=now()
+  K.escapeWalkerStop={room=currentRoom(),deadline=time+K.config.escapeRetryDelay,
+    progress=K.escapeLastProgressAt and time-K.escapeLastProgressAt<=0.5}
+  if K.combatLog then K.combatLog.mark("escape_walker_stop",{}) end
+  cancelTimer("escapeWatchTimer")
+  -- Komunikat o ataku moze poprzedzac potwierdzenie juz wyslanego kroku.
+  -- Nie wysylamy nastepnego ruchu ze starego pokoju.
+  later("escapeResumeTimer",0.35,K.resumeStoppedEscape)
+end
+
 function K.escape(reason, injuredTeamMember)
   -- Kazda droga do odwrotu, takze tekstowe triggery "ranny" i "niemoc",
   -- konczy sie tutaj. Wspierajacy nigdy nie uruchamiaja wlasnego /idz,
@@ -1869,7 +1907,7 @@ local function combatSnapshot()
       if old and old.untilTime > time then transfers[npc] = old end
       if origin and target and origin ~= target
           and next(owners, target) == nil and next(previous, origin) == nil then
-        transfers[npc] = {from=origin, to=target, untilTime=time + K.config.shieldHold}
+        transfers[npc] = {from=origin, to=target, at=time, untilTime=time + K.config.shieldHold}
       end
     end
     K.shieldTransfers = transfers
@@ -2038,10 +2076,16 @@ local function shieldRescueInFlight(entity, hp)
   end
   if not record or not record.ratio then return false end
   local ratio = shieldTargetRatio(entity)
+  local incoming=combatSnapshot().incoming[id]
+  local consistent=incoming and incoming.count>0 and incoming.count<=record.count
+    and (incoming.count==record.count or record.confirmed)
+  if consistent then
+    for npc in pairs(incoming.npcs) do if not record.npcs[npc] then consistent=false;break end end
+  end
   if record.room ~= currentRoom() or now() >= record.deadline
       or not hp or hp < K.config.teamEscapeHp or not ratio
       or (ratio < record.ratio - 0.000000001 and needsBurstReserve(entity, hp, K.config.teamEscapeHp, true))
-      or not sameShieldIncoming(record) then
+      or not consistent then
     if K.shieldRescue == record then K.shieldRescue = nil
     else K.teamShieldNotices[id] = nil end
     return false
@@ -2224,7 +2268,7 @@ function K.onTeamShield(actor, form)
   local previous = K.teamShieldNotices[tostring(target.id)]
   local deadline = previous and sameShieldIncoming(previous) and previous.deadline or now() + 0.5
   K.teamShieldNotices[tostring(target.id)] = {id=tostring(target.id), count=incoming.count, npcs=incoming.npcs,
-    ratio=shieldTargetRatio(target), room=currentRoom(), deadline=deadline}
+    ratio=shieldTargetRatio(target), room=currentRoom(), deadline=deadline,confirmed=true}
   armTeamShieldNotices()
   queueInspection(inspectRoom)
 end
@@ -2400,6 +2444,7 @@ function K.onShieldResult(form, succeeded, description)
     K.shieldReplyToken = nil
     if succeeded and matched and not pending.conflicted and pending.ratio and pending.count > 0 then
       pending.deadline = math.min(pending.deadline, now() + 0.5)
+      pending.confirmed = true
       K.shieldRescue = pending
       armShieldReply(math.max(0, pending.deadline - now()), function()
         if K.shieldRescue == pending then K.shieldRescue = nil end
@@ -3454,7 +3499,9 @@ patrolStep = function(delayOverride)
         -- kierunkow; po czasie przekazujemy ruch procedurze odwrotu /idz.
         later("moveTimer", K.config.escapeRetryDelay, function()
           if K.enabled and K.mode == "patrol" and K.limitRoom == skipped and K.roomChangePending then
-            K.escape("Brak potwierdzenia wyjscia z zatloczonego pokoju.")
+            if currentRoom()~=room and K.moveSnapshot then
+              K.onRoomChanged("mapper_sync")
+            else K.escape("Brak potwierdzenia wyjscia z zatloczonego pokoju.") end
           end
         end)
       elseif skipped then K.patrolMovePending = false end
@@ -3796,14 +3843,34 @@ function K.onRoomChanged(eventName)
   if eventName == "gmcp.Room.Info" then K.lastGmcpAt, K.lastGmcpEvent = now(), eventName end
   invalidateState(true)
   local previousRoom = K.lastRoom
-  if eventName == "gmcp.Room.Info" then
-    if K.limitRoom and K.limitRoom.room == currentRoom() and K.roomChangePending then
+  local mapperSync=eventName=="mapper_sync"
+  local step=K.moveSnapshot
+  if mapperSync and (not K.roomChangePending or not step or step.from==currentRoom()) then return end
+  if eventName == "gmcp.Room.Info" or mapperSync then
+    if K.roomChangePending and ((K.limitRoom and K.limitRoom.room==currentRoom()) or (step and step.from==currentRoom())) then
       -- Powtorzony opis tego samego pokoju nie potwierdza przejscia i nie
       -- moze odblokowac drugiego kierunku przed wynikiem pierwszego.
       K.sessionFresh.room = true
+      if step then
+        step.roomInfoPending=true
+        if not K.roomSyncTimer then
+          later("roomSyncTimer",0.05,function()
+            if K.moveSnapshot==step and K.roomChangePending and step.from~=currentRoom() then
+              K.onRoomChanged("mapper_sync")
+            end
+          end)
+        end
+      end
       return
     end
-    local step = K.moveSnapshot
+    cancelTimer("roomSyncTimer")
+    local packet=step and step.packetEntities
+    local ch=gmcp and gmcp.Chimera or {}
+    local rawEntities=ch.Room and ch.Room.Entities or {}
+    local rawCombat=ch.Combat and ch.Combat.State or {}
+    local knownEntities=step and step.from~=currentRoom() and packet and step.roomKey and packet.key
+      and packet.key~=step.roomKey and rawEntities.room==packet.key or false
+    local knownCombat=knownEntities and K.combatRoomReady and K.sessionFresh.combat and rawCombat.room==packet.key or false
     if K.limitRoom and K.limitRoom.room ~= currentRoom() then
       cancelTimer("moveTimer")
       K.limitRoom, K.limitNoticeRoom = nil, nil
@@ -3816,10 +3883,14 @@ function K.onRoomChanged(eventName)
       K.moveSnapshot = nil
     end
     K.sessionFresh.room = true
-    K.sessionFresh.entities = false
+    K.sessionFresh.entities = knownEntities
     K.roomChangePending = false
     K.sentDirection = nil
-    K.entitiesReady = false
+    K.entitiesReady = knownEntities
+    if knownEntities then
+      K.sourceRevisions.entities=packet.revision
+      K.vitalsSource="entities";K.vitalsRevision=K.vitalsRevision+1
+    end
     K.patrolMovePending = false
     K.chaseMovePending = false
     K.failedTargetIds = {}
@@ -3830,7 +3901,7 @@ function K.onRoomChanged(eventName)
     if previousRoom ~= currentRoom() then
       if K.G then K.G.resetCombat() end
       K.previousRoom = previousRoom
-      K.combatRoomReady = false
+      K.combatRoomReady = knownCombat
       K.roomCombatState = nil
       K.shieldBlockedReason = nil
       K.recentTarget, K.supportDeathBarrier = nil, nil
@@ -3840,6 +3911,10 @@ function K.onRoomChanged(eventName)
       K.healthHistory, K.shieldTransfers = {}, {}
       K.previousIncoming, K.transferRevision = nil, nil
       K.deadNpcIds = {}
+    end
+    if mapperSync then
+      K.metrics.roomSyncs=(K.metrics.roomSyncs or 0)+1
+      if K.combatLog then K.combatLog.mark("room_sync",{from=step.from,to=currentRoom(),entities=knownEntities}) end
     end
   end
   if not K.enabled then return end
@@ -3869,10 +3944,16 @@ function K.onRoomChanged(eventName)
   touchActivity()
   if K.pursuitOriginRoom and room and not K.roomSet[room] then K.pursuitLeftArea = true end
   if K.mode == "escape" then
+    if changedRoom then K.escapeLastProgressAt=now() end
     if K.recoveryEmergency then
       K.recoveryEmergencyStep()
     elseif room == escapeDestination() then
+      K.escapeWalkerStop=nil
+      cancelTimer("escapeResumeTimer")
       finishEscapeTail()
+    elseif K.escapeWalkerStop then
+      if changedRoom then K.escapeWalkerStop.progress=true end
+      later("escapeResumeTimer",0.35,K.resumeStoppedEscape)
     else
       -- Dopoki /idz robi postep, przesuwamy watchdog. Ponowienie nastepuje
       -- dopiero po pelnym okresie bez zmiany pokoju.
@@ -3915,12 +3996,20 @@ function K.onRoomChanged(eventName)
 end
 
 function K.onGmcp(eventName)
+  local step=K.moveSnapshot
+  if K.roomChangePending and step and step.roomInfoPending and step.from~=currentRoom() then
+    K.onRoomChanged("mapper_sync")
+  end
   if K.combatLog then K.combatLog.packet(eventName) end
   K.lastGmcpAt, K.lastGmcpEvent = now(), eventName
   K.metrics.events = K.metrics.events + 1
   local healthEvent = eventName == "gmcp.Chimera.Room.Entities"
     or eventName == "gmcp.Char.Vitals" or eventName == "gmcp.Chimera.Group.State"
   invalidateState(healthEvent, eventName)
+  if eventName=="gmcp.Chimera.Room.Entities" and K.roomChangePending and K.moveSnapshot then
+    local packet=gmcp and gmcp.Chimera and gmcp.Chimera.Room and gmcp.Chimera.Room.Entities
+    K.moveSnapshot.packetEntities={key=type(packet)=="table" and packet.room,revision=K.dataRevision}
+  end
   if eventName == "gmcp.Chimera.Room.Entities" and not K.roomChangePending then
     K.entitiesReady = true
     K.sessionFresh.entities = true
@@ -3977,6 +4066,10 @@ function K.onGmcp(eventName)
   if eventName == "gmcp.Char.Vitals" then K.sessionFresh.vitals = true end
   if K.reconnectTask then K.tryResumeAfterReconnect() return end
   if not K.enabled then return end
+  if K.escapeWalkerStop and K.mode=="escape" and K.entitiesReady and not K.roomChangePending
+      and not K.escapeResumeTimer then
+    later("escapeResumeTimer",0.05,K.resumeStoppedEscape)
+  end
   if K.movementRest and K.tryResumeMovement then
     K.tryResumeMovement()
     K.armMovementRest()
@@ -4529,7 +4622,9 @@ function K.prepareMovement(command, regroup)
       roster[normal(member.name)] = {name=trim(member.name), id=tostring(member.id)}
     end
   end
-  K.moveSnapshot = {from=currentRoom(), command=command, roster=roster, regroup=regroup, mode=K.mode}
+  local packet=gmcp and gmcp.Chimera and gmcp.Chimera.Room and gmcp.Chimera.Room.Entities
+  K.moveSnapshot = {from=currentRoom(), command=command, roster=roster, regroup=regroup, mode=K.mode,
+    roomKey=type(packet)=="table" and packet.room}
   return true
 end
 
@@ -4549,9 +4644,10 @@ end
 
 local function holdMovement(rest)
   K.movementRest = rest
+  K.escapeWalkerStop=nil
   K.teamStep, K.route = nil, nil
   for _, timer in ipairs({"moveTimer", "returnTimer", "idleReturnTimer", "panicTimer",
-      "escapeWatchTimer", "recoveryTimer", "teamStepTimer"}) do cancelTimer(timer) end
+      "escapeWatchTimer", "escapeResumeTimer", "recoveryTimer", "teamStepTimer"}) do cancelTimer(timer) end
   K.patrolMovePending, K.chaseMovePending = false, false
   K.metrics.movementRests = K.metrics.movementRests + 1
   note(rest.reason .. " Wstrzymuje ruch; wznowie automatycznie po odpoczynku.", "yellow")
@@ -4580,7 +4676,10 @@ function K.onMovementExhausted()
   -- Odmowa nie oznacza zmiany pokoju ani blednego wyjscia na mapie.
   if K.roomChangePending and step and step.from == currentRoom() then
     K.roomChangePending, K.sentDirection = false, nil
-    K.entitiesReady = true
+    -- Room.Info mogl juz zapowiedziec nowy pokoj przed aktualizacja mapy.
+    -- Odmowa nie przywraca wtedy starych encji jako swiezego odczytu.
+    K.entitiesReady = not step.roomInfoPending
+    cancelTimer("roomSyncTimer")
     K.moveSnapshot = nil
     if K.limitRoom then K.limitRoom.attempts = math.max(0, K.limitRoom.attempts - 1) end
     invalidateState(true)
@@ -5459,6 +5558,9 @@ function K.performance()
     note("Plany zaslon golemow: " .. (m.golemPlans or 0) .. "; inne NPC w odpowiedzi: "
       .. (m.golemTargetMismatches or 0) .. "; przejete komendy pancerzy: " .. (m.golemObservedLoot or 0) .. ".")
   end
+  note("Wznowienia chodzika po ataku podczas odwrotu: " .. (m.walkerResumes or 0)
+    .. "; uzgodnienia opoznionej pozycji mapy: " .. (m.roomSyncs or 0) .. ".")
+  if K.combatLog then K.combatLog.showPerformance() end
 end
 
 function K.diagnostics(reason)
@@ -5889,6 +5991,8 @@ K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
   [[kozojeb.onMovementExhausted()]])
 K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
   "^Nie widzisz zadnego wyjscia prowadzacego na .+\\.$", [[kozojeb.onMoveRejected()]])
+K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
+  "^\\(Chimera\\) Chodzik zatrzymany: atak\\.$", [[kozojeb.onWalkerAttackStop()]])
 K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
   "^(?:Podaj swoje imie:|Witaj, .+ Podaj haslo do konta:|Twoja postac jest juz w grze\\.).*",
   [[kozojeb.onSessionEvent("login")]])

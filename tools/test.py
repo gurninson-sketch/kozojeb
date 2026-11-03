@@ -105,6 +105,15 @@ for handler,examples in (
         match=re.match(json.loads(registered.group(1)),line)
         assert match and match.groups()==groups, "Wrong golem event: " + line
 
+protected_failure=re.search(r'tempRegexTrigger\(\s*("(?:\\.|[^"\\])*"),\s*\[\[kozojeb\.G\.onTeamFailure\(matches\[2\],"cie",matches\[3\]\)',golems_source)
+assert protected_failure, "Missing protected player's word order in failed cover"
+match=re.match(json.loads(protected_failure.group(1)),
+    "Yergo probuje cie zaslonic przed ciosami porysowanego nieforemnego golema, lecz nie jest w stanie tego uczynic.")
+assert match and match.groups()==("Yergo","porysowanego nieforemnego golema")
+walker_stop=re.search(r'tempRegexTrigger\(\s*("(?:\\.|[^"\\])*"),\s*\[\[kozojeb\.onWalkerAttackStop\(\)\]\]',source)
+assert walker_stop and re.fullmatch(json.loads(walker_stop.group(1)),"(Chimera) Chodzik zatrzymany: atak.")
+assert not re.fullmatch(json.loads(walker_stop.group(1)),"(Chimera) Chodzik zatrzymany: recznie.")
+
 for test in ("roles.lua", "sha256.lua", "updater.lua"):
     subprocess.run([sys.executable, "tools/run_lua.py", f"tests/{test}"], cwd=ROOT, check=True)
 

@@ -2,7 +2,7 @@
 do
 local K,A=kozojeb,kozojeb.combatLogApi
 local L={received={},buffer={},bufferBytes=0,records=0,samples=0,writes=0,dropped=0,
-  maxBytes=8*1024*1024,interval=1,flushDelay=5,session=A.now()}
+  maxBytes=8*1024*1024,interval=1,flushDelay=5,session=A.now(),timing={}}
 K.combatLog=L
 local arrayMeta={}
 local function array() return setmetatable({},arrayMeta) end
@@ -10,6 +10,44 @@ local function tab(value) return type(value)=="table" and value or {} end
 local function number(value)
   local n=tonumber(value)
   if n and n==n and n~=math.huge and n~=-math.huge then return n end
+end
+local function measured(kind,cpu,wall)
+  local stat=L.timing[kind]
+  if not stat then stat={count=0,cpu=0,wall=0,maxCpu=0,maxWall=0,cpuWindow={},wallWindow={}};L.timing[kind]=stat end
+  cpu,wall=math.max(0,cpu),math.max(0,wall)
+  stat.count=stat.count+1;stat.cpu=stat.cpu+cpu;stat.wall=stat.wall+wall
+  stat.maxCpu=math.max(stat.maxCpu,cpu);stat.maxWall=math.max(stat.maxWall,wall)
+  local slot=(stat.count-1)%128+1
+  stat.cpuWindow[slot],stat.wallWindow[slot]=cpu,wall
+end
+function L.performance(percentiles)
+  local result={window=128}
+  local function p95(values)
+    local copy={};for i,value in ipairs(values) do copy[i]=value end
+    table.sort(copy);return copy[math.ceil(#copy*0.95)] or 0
+  end
+  for _,kind in ipairs({"capture","flush"}) do
+    local stat=L.timing[kind]
+    local row={count=stat and stat.count or 0,cpu_avg_ms=0,wall_avg_ms=0,cpu_max_ms=0,wall_max_ms=0}
+    if stat then
+      row.cpu_avg_ms=stat.cpu/stat.count;row.wall_avg_ms=stat.wall/stat.count
+      row.cpu_max_ms=stat.maxCpu;row.wall_max_ms=stat.maxWall
+    end
+    if percentiles then
+      row.cpu_p95_ms=stat and p95(stat.cpuWindow) or 0;row.wall_p95_ms=stat and p95(stat.wallWindow) or 0
+    end
+    result[kind]=row
+  end
+  return result
+end
+function L.showPerformance()
+  local report=L.performance(true)
+  for _,kind in ipairs({"capture","flush"}) do
+    local s=report[kind]
+    A.note(string.format("Zapis walki - %s (%d): CPU sr./p95/max %.3f/%.3f/%.3f ms; czas sr./p95/max %.3f/%.3f/%.3f ms.",
+      kind=="capture" and "przygotowanie" or "plik",s.count,s.cpu_avg_ms,s.cpu_p95_ms,s.cpu_max_ms,
+      s.wall_avg_ms,s.wall_p95_ms,s.wall_max_ms),"cyan")
+  end
 end
 local function text(value,limit)
   if value==nil then return nil end
@@ -62,6 +100,7 @@ end
 function L.flush()
   cancel("flushTimer")
   if #L.buffer==0 or L.fault then return end
+  local cpu,wall=os.clock(),A.now()
   local file
   local ok=pcall(function()
     local path,backup=paths()
@@ -77,6 +116,7 @@ function L.flush()
     assert(file:close());file=nil
   end)
   if file then pcall(function() file:close() end) end
+  measured("flush",(os.clock()-cpu)*1000,(A.now()-wall)*1000)
   if not ok then failed();return end
   L.writes=L.writes+1;L.buffer={};L.bufferBytes=0
 end
@@ -211,6 +251,9 @@ local function snapshot()
     members=members,npcs=npcs,relations=relations,covers=covers,truncated=truncated or L.checksTruncated or false,
     ready={entities=K.entitiesReady,combat=K.combatRoomReady,session_blocked=K.sessionBlocked,
       room_pending=K.roomChangePending,combat_source=K.combatRoomReady and K.sessionFresh.combat and "GMCP" or "text_or_unknown"},
+    movement={from=K.moveSnapshot and K.moveSnapshot.from,direction=text(K.sentDirection),
+      limit_room=K.limitRoom and K.limitRoom.room,limit_count=K.limitRoom and K.limitRoom.count,
+      limit_attempts=K.limitRoom and K.limitRoom.attempts,walker_stopped=K.escapeWalkerStop~=nil},
     char_vitals={hp_points=charHealth,hp_percent=charPercent,fatigue=number(vitals.fatigue)},
     shield={formation_ready=K.shieldFormationReady,self_control_percent=K.lastHp,pending=pending and text(pending.id),
       pending_until=pending and pending.deadline,await_combat_revision=K.shieldAwaitCombatRevision,
@@ -223,6 +266,9 @@ local function snapshot()
 end
 function L.capture(force,cause)
   if L.fault or not force and not recording() then return end
+  local cpu,wall=os.clock(),A.now()
+  local flushCpu=L.timing.flush and L.timing.flush.cpu or 0
+  local flushWall=L.timing.flush and L.timing.flush.wall or 0
   local written=false
   local ok=pcall(function()
     L.samples=L.samples+1;L.lastSampleAt=A.now()
@@ -238,12 +284,19 @@ function L.capture(force,cause)
     for _,name in ipairs({"entities","group","combat","char","room"}) do
       local at=L.received[name]
       local freshKey=name=="char" and "vitals" or name
-      state.sources[name]={received=at,seen=at~=nil,fresh=K.sessionFresh[freshKey]==true,age=at and math.max(0,A.now()-at),
+      local age=at and math.max(0,A.now()-at)
+      state.sources[name]={received=at,seen=at~=nil,fresh=K.sessionFresh[freshKey]==true,age=age,recent=age~=nil and age<=15,
         revision=name=="combat" and K.combatRevision or K.sourceRevisions[name]}
     end
+    -- Metryki z zakonczonych operacji nie zmieniaja odcisku stanu gry.
+    state.recorder_performance=L.performance(false)
     written=append(state)
     if written then L.lastSnapshot=state end
   end)
+  -- Flush moze wystapic wewnatrz append; jego czasu nie liczymy drugi raz
+  -- jako przygotowania probki. Nie obejmuje to calego procesu Mudleta.
+  measured("capture",(os.clock()-cpu)*1000-((L.timing.flush and L.timing.flush.cpu or 0)-flushCpu),
+    (A.now()-wall)*1000-((L.timing.flush and L.timing.flush.wall or 0)-flushWall))
   if not ok then failed() end
   return ok and written
 end
@@ -314,6 +367,7 @@ function L.command(rest)
     A.note("Zapis walki: "..(L.fault and "blad zapisu" or K.config.combatLogEnabled and "wlaczony" or "wylaczony")
       .."; rekordy "..L.records..", partie zapisu "..L.writes..", pominiete "..L.dropped..".","cyan")
     if ok then A.note("Pliki: "..path.." oraz "..backup.." (po rotacji). Limit 8 MiB na plik.","cyan") end
+    L.showPerformance()
   else A.note("Uzycie: /kozojeb zapis on|off|status|teraz.","yellow") end
 end
 end

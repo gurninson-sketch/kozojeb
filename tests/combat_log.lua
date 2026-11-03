@@ -268,6 +268,61 @@ test("ignored follower retreat requests are not logged as actual team retreats",
   kozojeb.escape("ignored follower retreat");l.flush()
   assert(not read(l.path):find('"kind":"retreat"',1,true));noMovement()
 end)
+test("performance is available before the first sample without writing or sending",function()
+  local l=setup();local p=l.performance(true)
+  assert(p.capture.count==0 and p.flush.count==0 and p.capture.cpu_p95_ms==0)
+  kozojeb.command("wydajnosc");kozojeb.command("zapis status")
+  assert(l.records==0 and l.writes==0 and #sends==0 and #aliases==0)
+end)
+test("CPU and wall measurements have a bounded recent window",function()
+  local l=setup()
+  for i=1,200 do l.capture(true) end
+  local p=l.performance(true)
+  assert(p.capture.count==200 and #l.timing.capture.cpuWindow==128 and #l.timing.capture.wallWindow==128)
+  assert(p.capture.cpu_avg_ms>=0 and p.capture.cpu_p95_ms<=p.capture.cpu_max_ms and p.flush.count>=1)
+  assert(p.capture.wall_avg_ms==0 and #sends==0 and #aliases==0)
+end)
+test("nested flush time is measured once and not attributed to preparing the sample",function()
+  local l=setup();local realOpen,realClock=io.open,os.clock;local cpu=0
+  os.clock=function() cpu=cpu+0.0001;return cpu end
+  io.open=function(path,mode)
+    local f=realOpen(path,mode)
+    if f and path==l.path and mode=="ab" then
+      return {seek=function(_,where) return f:seek(where) end,
+        write=function(_,data) clock=clock+0.02;cpu=cpu+0.003;return f:write(data) end,
+        close=function() return f:close() end}
+    end
+    return f
+  end
+  for i=1,20 do l.capture(true);if l.writes>0 then break end end
+  io.open,os.clock=realOpen,realClock
+  local p=l.performance(true)
+  assert(p.flush.count==1 and math.abs(p.flush.wall_avg_ms-20)<0.001)
+  assert(p.flush.cpu_avg_ms>=3 and p.capture.cpu_max_ms<1 and p.capture.wall_max_ms<0.001)
+end)
+test("recorded performance describes previous completed work without changing deduplication",function()
+  local l=setup();l.capture(true);local before=l.records
+  assert(l.lastSnapshot.recorder_performance.capture.count==0)
+  clock=1;l.capture(false);assert(l.records==before)
+  l.capture(true);assert(l.lastSnapshot.recorder_performance.capture.count==2)
+  assert(not l.lastSnapshot.recorder_performance.capture.cpuWindow)
+end)
+test("a received but old source is distinguishable from a recent packet",function()
+  local l=setup();kozojeb.onGmcp("gmcp.Char.Vitals");l.capture(true)
+  assert(l.lastSnapshot.sources.char.fresh and l.lastSnapshot.sources.char.recent)
+  clock=20;l.capture(true)
+  assert(l.lastSnapshot.sources.char.fresh and not l.lastSnapshot.sources.char.recent and l.lastSnapshot.sources.char.age==20)
+end)
+test("turning automatic recording off leaves performance collection idle",function()
+  local l=setup();kozojeb.command("zapis off")
+  for i=1,20 do kozojeb.onGmcp("gmcp.Char.Vitals");advance(.1) end
+  assert(l.performance().capture.count==0 and l.performance().flush.count==0 and l.records==0)
+end)
+test("performance queries do not flush a pending combat buffer",function()
+  local l=setup();l.capture(true);local records,bytes,writes=l.records,l.bufferBytes,l.writes
+  l.showPerformance();kozojeb.command("wydajnosc")
+  assert(l.records==records and l.bufferBytes==bytes and l.writes==writes and #sends==0 and #aliases==0)
+end)
 print(string.format("%d combat recorder simulations passed",total))
 ]====]
 assert((loadstring or load)(header..cases,"@tests/combat_log.lua"))()
