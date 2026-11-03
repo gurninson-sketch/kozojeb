@@ -114,7 +114,23 @@ walker_stop=re.search(r'tempRegexTrigger\(\s*("(?:\\.|[^"\\])*"),\s*\[\[kozojeb\
 assert walker_stop and re.fullmatch(json.loads(walker_stop.group(1)),"(Chimera) Chodzik zatrzymany: atak.")
 assert not re.fullmatch(json.loads(walker_stop.group(1)),"(Chimera) Chodzik zatrzymany: recznie.")
 
-for test in ("roles.lua", "sha256.lua", "updater.lua"):
+safety_source = (ROOT / "src/KozojebSafety.lua").read_text()
+light_patterns = re.findall(r'tempRegexTrigger\(("(?:\\.|[^"\\])*"),\[\[kozojeb\.S\.onLight\(\)\]\]', safety_source)
+for line in ("Zapalasz lampe.", "Zapalasz olejna lampe.", "Zapalasz pochodnie.",
+             "Zapalasz latarnie.", "Olejna zapalona lampa jest juz zapalona."):
+    assert any(re.fullmatch(json.loads(pattern), line) for pattern in light_patterns), "Missing light acknowledgement: " + line
+assert not any(re.fullmatch(json.loads(pattern), "Gror zapala lampe.") for pattern in light_patterns)
+covers_source = (ROOT / "src/KozojebCovers.lua").read_text()
+general_cover = re.search(r'tempRegexTrigger\(\s*("(?:\\.|[^"\\])*"),\s*\[\[kozojeb\.C\.onTeamCover', covers_source)
+assert general_cover
+for line, groups in (("Morrid zaslania Yarrima przed ciosami bladego zwinnego ozywienca.",
+                      ("Morrid", "Yarrima", "bladego zwinnego ozywienca")),
+                     ("Yergo zrecznie zaslania cie przed ciosami brutalnego smierdzacego orka.",
+                      ("Yergo", "cie", "brutalnego smierdzacego orka"))):
+    match = re.match(json.loads(general_cover.group(1)), line)
+    assert match and match.groups() == groups
+
+for test in ("roles.lua", "team_safety.lua", "sha256.lua", "updater.lua"):
     subprocess.run([sys.executable, "tools/run_lua.py", f"tests/{test}"], cwd=ROOT, check=True)
 
 with tempfile.TemporaryDirectory() as directory:
@@ -149,6 +165,8 @@ with tempfile.TemporaryDirectory() as directory:
         assert len(scripts) == 3
         assert scripts[0].findtext("script") == ((ROOT / "src/Chimera_Kozojeb.lua").read_text()
             + "\n" + (ROOT / "src/KozojebGolems.lua").read_text()
+            + "\n" + (ROOT / "src/KozojebCovers.lua").read_text()
+            + "\n" + (ROOT / "src/KozojebSafety.lua").read_text()
             + "\n" + (ROOT / "src/KozojebCombatLog.lua").read_text())
         assert 'local releaseRepository = "example/kozojeb"' in scripts[2].findtext("script")
         assert all(script.get("isActive") == "yes" for script in scripts)

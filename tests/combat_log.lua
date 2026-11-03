@@ -96,6 +96,8 @@ test("a busy HP stream produces at most one automatic snapshot per second",funct
 end)
 test("peaceful patrol data does not arm a permanent logging loop",function()
   local l=setup("M","wsparcie");gmcp.Chimera.Combat.State={primary="",relations={}}
+  gmcp.Chimera.Room.Entities.entities[1].hp=1900
+  gmcp.Chimera.Group.State.members[1].hp=1900
   kozojeb.start();event();assert(not l.sampleTimer and not l.flushTimer and l.records==0)
 end)
 test("outgoing party combat is recorded even before the NPC returns an attack",function()
@@ -267,6 +269,87 @@ test("ignored follower retreat requests are not logged as actual team retreats",
   local l=setup("M","wsparcie");kozojeb.start();advance(.21)
   kozojeb.escape("ignored follower retreat");l.flush()
   assert(not read(l.path):find('"kind":"retreat"',1,true));noMovement()
+end)
+test("raw group members remain in the recording when their room entity disappears",function()
+  local l,e=setup("M","wsparcie");table.remove(e,1)
+  kozojeb.start();advance(.21)
+  assert(member(l,"L").hp==1680 and member(l,"L").maxhp==1900 and not member(l,"L").visible)
+  assert(not l.lastSnapshot.safety.leader_present and l.lastSnapshot.safety.wait_reason);noMovement()
+end)
+test("the follower control HP is current without a visible leader",function()
+  local l,e=setup("M","wsparcie");table.remove(e,1)
+  e[1].hp=190;gmcp.Chimera.Group.State.members[2].hp=190;gmcp.Char.Vitals.hp=10
+  kozojeb.start();advance(.21)
+  assert(member(l,"M").hp==190 and l.lastSnapshot.shield.self_control_percent==10);noMovement()
+end)
+test("unknown incoming attackers trigger a sample without inventing recognized NPCs",function()
+  local l,e=setup("M","wsparcie");table.remove(e,6);table.remove(e,5)
+  for _,m in ipairs(e) do m.hp=m.maxhp end
+  for _,m in ipairs(gmcp.Chimera.Group.State.members) do m.hp=m.maxhp end
+  gmcp.Chimera.Combat.State={primary="unknown",relations={{attacker="unknown",defender="M"}}}
+  kozojeb.start();advance(.21)
+  assert(l.records==1 and member(l,"M").npc_count==0 and #member(l,"M").unresolved_incoming==1)
+  assert(member(l,"M").unresolved_incoming[1]=="unknown" and l.lastSnapshot.safety.unresolved_incoming==1);noMovement()
+end)
+test("duplicate unknown attack edges have a single unresolved count",function()
+  local l=setup("M","wsparcie")
+  gmcp.Chimera.Combat.State={relations={{attacker="unknown",defender="M"},{attacker="unknown",defender="M"}}}
+  kozojeb.start();advance(.21)
+  assert(#member(l,"M").unresolved_incoming==1 and member(l,"M").npc_count==0);noMovement()
+end)
+test("an unknown outgoing target is recorded before its entity is available",function()
+  local l,e=setup("M","wsparcie");table.remove(e,6);table.remove(e,5)
+  for _,m in ipairs(e) do m.hp=m.maxhp end
+  for _,m in ipairs(gmcp.Chimera.Group.State.members) do m.hp=m.maxhp end
+  gmcp.Chimera.Combat.State={relations={{attacker="M",defender="unknown"}}}
+  kozojeb.start();advance(.21)
+  assert(l.records==1 and #l.lastSnapshot.relations==1 and member(l,"M").npc_count==0);noMovement()
+end)
+test("a newer wounded percentage vital records the state before raw entity HP changes",function()
+  local l,e=setup("M","wsparcie")
+  for _,m in ipairs(e) do if m.kind=="player" then m.hp=m.maxhp end end
+  for _,m in ipairs(gmcp.Chimera.Group.State.members) do m.hp=m.maxhp end
+  gmcp.Chimera.Combat.State={relations={}};kozojeb.start();advance(.21);assert(l.records==0)
+  gmcp.Char.Vitals.hp=10;event("gmcp.Char.Vitals");advance(1.01)
+  assert(l.lastSnapshot.char_vitals.hp_percent==10 and l.lastSnapshot.shield.self_control_percent==100)
+  assert(member(l,"M").hp==1900 and member(l,"M").maxhp==1900);noMovement()
+end)
+test("a wounded own vital with its own maximum is recorded outside recognized combat",function()
+  local l,e=setup("M","wsparcie")
+  for _,m in ipairs(e) do if m.kind=="player" then m.hp=m.maxhp end end
+  for _,m in ipairs(gmcp.Chimera.Group.State.members) do m.hp=m.maxhp end
+  gmcp.Chimera.Combat.State={relations={}};gmcp.Char.Vitals={hp=10,maxhp=100}
+  event("gmcp.Char.Vitals");kozojeb.start();advance(.21)
+  assert(l.lastSnapshot.char_vitals.hp_points.hp==10 and l.lastSnapshot.shield.self_control_percent==10);noMovement()
+end)
+test("the recorder retains the known profile name when darkness replaces it with Ktos",function()
+  local l,e=setup("M","wsparcie");kozojeb.start();advance(.21)
+  e[2].name="Ktos";gmcp.Chimera.Group.State.members[2].name="Ktos"
+  event();event("gmcp.Chimera.Group.State");advance(1.01)
+  assert(l.lastSnapshot.profile=="Morrid" and member(l,"M").name=="Ktos");noMovement()
+end)
+test("visibility and light status are recorded with an unresolved text attack",function()
+  local l=setup("M","wsparcie");kozojeb.start();kozojeb.onTeamCombat("Ktos","cie",true);advance(.21)
+  assert(l.lastSnapshot.safety.visibility_lost and not l.lastSnapshot.safety.light_enabled)
+  assert(l.lastSnapshot.safety.light_status=="utrata widocznosci");noMovement()
+end)
+test("a follower records team death without marking an independent retreat",function()
+  local l=setup("M","wsparcie");kozojeb.start();kozojeb.onKill("Yergo",true);advance(.21);l.flush()
+  local data=read(l.path)
+  assert(l.lastSnapshot.safety.death_hold and data:find('"kind":"team_death"',1,true))
+  assert(not data:find('"kind":"retreat"',1,true));noMovement()
+end)
+test("many identical anonymous attack packets keep the sample rate bounded",function()
+  local l=setup("M","wsparcie");kozojeb.start()
+  for i=1,2000 do kozojeb.onTeamCombat("Ktos","cie",true) end
+  advance(.21);assert(l.samples==1)
+  local samples=l.samples
+  advance(2);assert(l.samples==samples and not l.sampleTimer);noMovement()
+end)
+test("anonymous combat recording stops cleanly on disconnect",function()
+  local l=setup("M","wsparcie");kozojeb.start();kozojeb.onTeamCombat("Ktos","cie",true);advance(.21)
+  kozojeb.onSessionEvent("sysDisconnectionEvent");local before=l.records
+  advance(2);assert(l.records==before and not l.sampleTimer and not l.flushTimer)
 end)
 test("performance is available before the first sample without writing or sending",function()
   local l=setup();local p=l.performance(true)

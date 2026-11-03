@@ -4,8 +4,11 @@ local function loadCore()
   local main=assert(io.open(source,"r"))
   local module=assert(io.open("src/KozojebGolems.lua","r"))
   local logger=assert(io.open("src/KozojebCombatLog.lua","r"))
-  local combined=main:read("*a") .. "\n" .. module:read("*a") .. "\n" .. logger:read("*a")
-  main:close();module:close();logger:close()
+  local covers=assert(io.open("src/KozojebCovers.lua","r"))
+  local safety=assert(io.open("src/KozojebSafety.lua","r"))
+  local combined=main:read("*a") .. "\n" .. module:read("*a") .. "\n" .. covers:read("*a")
+    .. "\n" .. safety:read("*a") .. "\n" .. logger:read("*a")
+  main:close();module:close();covers:close();safety:close();logger:close()
   assert(compile(combined, "@" .. source))()
 end
 local clock, serial, timers, sends, aliases, output, saved, room, triggers, sendHandlers
@@ -3258,7 +3261,8 @@ test("a more exposed teammate outranks a lower percentage leader", function()
   e[7]={id="V",name="Czwarty snotling",kind="npc",hp=100,maxhp=100}
   gmcp.Chimera.Combat.State.relations={{attacker="S",defender="N"},
     {attacker="N",defender="M"},{attacker="T",defender="M"},{attacker="U",defender="M"},{attacker="V",defender="L"}}
-  kozojeb.start();assert(count("zaslon morrida")==1 and count("zaslon yarrima")==0);noMovement()
+  kozojeb.start();advance(.5)
+  assert(count("zaslon morrida")==1 and count("zaslon yarrima")==0);noMovement()
 end)
 
 test("an insufficient real HP pool cannot take over a teammate's attacker", function()
@@ -4329,6 +4333,7 @@ end)
 
 local function multiShieldSnapshot(number, ownHp, leaderHp)
   reset("zaslony")
+  kozojeb.config.targetedShieldsEnabled=false -- te przypadki sprawdzaja ogolna komende
   local e=gmcp.Chimera.Room.Entities.entities
   e[1].hp,e[1].maxhp=ownHp or 1000,1000
   gmcp.Char.Vitals.hp,gmcp.Char.Vitals.maxhp=e[1].hp,1000
@@ -4387,6 +4392,7 @@ end)
 
 test("an unsafe multi attacker rescue returns the retreat decision to the leader", function()
   setupLeader()
+  kozojeb.config.targetedShieldsEnabled=false
   local e=gmcp.Chimera.Room.Entities.entities
   e[3].hp=60
   e[5]={id="T",name="Drugi snotling",kind="npc",hp=100,maxhp=100}
@@ -5259,6 +5265,7 @@ end)
 
 local function sevenPlayers(selfId,role)
   golemSetup(selfId or "G",role)
+  kozojeb.config.teamRoles={brix="wsparcie",gunz="wsparcie",rodrick="wsparcie"}
   local e=gmcp.Chimera.Room.Entities.entities
   for _,item in ipairs({{"B","Brix"},{"U","Gunz"},{"R","Rodrick"}}) do
     e[#e+1]={id=item[1],name=item[2],kind="player",hp=1000,maxhp=1000,group_role="member"}
@@ -5310,6 +5317,7 @@ test("the DPS only profiles never shield or move even in a seven player golem ba
 end)
 test("a DPS only teammate does not reserve a turn outside golem mode", function()
   reset("zaslony",60)
+  kozojeb.config.teamRoles.gunz="wsparcie"
   local e=gmcp.Chimera.Room.Entities.entities
   e[#e+1]={id="Z",name="Gunz",kind="player",group_role="member",hp=3000,maxhp=3000}
   gmcp.Chimera.Group.State.members[#gmcp.Chimera.Group.State.members+1]="Z"
@@ -5324,7 +5332,8 @@ test("the actual leader may defend even if their previous roster role was DPS on
 end)
 test("team role changes persist independently from automatic roster detection", function()
   reset("zaslony")
-  assert(kozojeb.config.teamRoles.brix=="wsparcie")
+  assert(next(kozojeb.config.teamRoles)==nil)
+  kozojeb.command("druzyna rola Gunz wsparcie")
   kozojeb.command("druzyna rola Brix zaslony")
   kozojeb.command("druzyna rola Rodrick auto")
   kozojeb.command("druzyna auto")
@@ -5334,6 +5343,7 @@ test("team role changes persist independently from automatic roster detection", 
 end)
 test("invalid team role commands preserve the roster and configured roles", function()
   reset("zaslony");kozojeb.config.teamMembers.morrid=true
+  kozojeb.config.teamRoles.brix="wsparcie"
   for _,command in ipairs({"druzyna rola","druzyna rola Brix magic","druzyna rola Gunz","druzyna rola Rodrick wsparcie extra"}) do
     kozojeb.command(command)
   end
@@ -5845,9 +5855,10 @@ test("a manual leader without an actual party does not adopt stale member roles"
   manualCoverSetup();gmcp.Chimera.Group.State={members={}};kozojeb.start()
   assert(kozojeb.mode=="support_wait" and #sends==0);noMovement()
 end)
-test("ambiguous leadership cannot activate manual leader shields", function()
+test("ambiguous leadership preserves member protection without activating manual leader mode", function()
   local e=manualCoverSetup();gmcp.Chimera.Group.State.leader=nil;e[2].group_role="leader"
-  kozojeb.start();assert(kozojeb.mode=="support_wait" and #sends==0)
+  kozojeb.start();assert(kozojeb.mode=="support_wait" and count("zaslon yarrima")==1)
+  assert(count("wesprzyj")==0);noMovement()
 end)
 test("the DPS only role remains without shields when manually leading", function()
   manualCoverSetup();kozojeb.command("rola wsparcie");kozojeb.start()

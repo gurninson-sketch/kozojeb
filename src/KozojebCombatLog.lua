@@ -166,7 +166,6 @@ local function snapshot()
   end
   local cached=K.groupContextCache
   if cached then
-    roster={}
     for _,member in ipairs(cached.members) do roster[tostring(member.id)]=true end
   end
   for id,entity in pairs(index) do
@@ -196,7 +195,7 @@ local function snapshot()
     local row={id=text(id),name=text(entity.name or raw.name or raw.desc or id),self=own or false,
       here=raw.here,visible=index[id]~=nil,hp=value and value.hp,maxhp=value and value.maxhp,
       percent=value and value.percent,hp_source=value and source,group_hp=fromGroup,entities_hp=fromEntity,
-      stamina=number(raw.stamina),maxstamina=number(raw.maxstamina),states=states,incoming=array()}
+      stamina=number(raw.stamina),maxstamina=number(raw.maxstamina),states=states,incoming=array(),unresolved_incoming=array()}
     members[#members+1]=row
   end
   ordered(members,"id")
@@ -204,6 +203,8 @@ local function snapshot()
   for _,member in ipairs(members) do byMember[member.id]=member end
   local incomingSeen={}
   local active=A.liveNpc(index[tostring(combat.primary)]) and true or false
+  if combat.primary and tostring(combat.primary)~="" and not index[tostring(combat.primary)] then active=true end
+  local unresolved=0
   for i,relation in ipairs(tab(combat.relations)) do
     if i>128 then truncated=true;break end
     local attacker,defender=text(relation.attacker),text(relation.defender)
@@ -214,10 +215,16 @@ local function snapshot()
     if byMember[tostring(relation.attacker)] and A.liveNpc(index[tostring(relation.defender)]) then active=true end
     if A.liveNpc(npc) and target and not incomingSeen[edge] then
       incomingSeen[edge]=true;target.incoming[#target.incoming+1]=text(npc.id)
+    elseif target and not index[tostring(relation.attacker)] and attacker and attacker~=""
+        and not byMember[tostring(relation.attacker)] and not incomingSeen[edge] then
+      incomingSeen[edge]=true;target.unresolved_incoming[#target.unresolved_incoming+1]=attacker
+      unresolved=unresolved+1;active=true
     end
+    if byMember[tostring(relation.attacker)] and defender and defender~="" and not index[tostring(relation.defender)] then active=true end
   end
   for _,member in ipairs(members) do
     table.sort(member.incoming);member.npc_count=#member.incoming
+    table.sort(member.unresolved_incoming)
     if member.npc_count>0 then active=true end
   end
   local npcIds={}
@@ -246,7 +253,7 @@ local function snapshot()
   local own=ownId and byMember[ownId]
   local state={kind="state",role=K.config.role,enabled=K.enabled,mode=K.mode,map_room=A.room(),
     entities_room=text(entities.room),combat_room=text(rawCombat.room),leader=text(cached and cached.actualLeader and cached.actualLeader.id or group.leader),
-    primary=text(combat.primary),selected_target=text(K.currentTargetId),profile=own and own.name,
+    primary=text(combat.primary),selected_target=text(K.currentTargetId),profile=K.S and K.S.profile or own and own.name,
     cargo_phase=K.G and K.G.job and K.G.job.phase,
     members=members,npcs=npcs,relations=relations,covers=covers,truncated=truncated or L.checksTruncated or false,
     ready={entities=K.entitiesReady,combat=K.combatRoomReady,session_blocked=K.sessionBlocked,
@@ -254,6 +261,10 @@ local function snapshot()
     movement={from=K.moveSnapshot and K.moveSnapshot.from,direction=text(K.sentDirection),
       limit_room=K.limitRoom and K.limitRoom.room,limit_count=K.limitRoom and K.limitRoom.count,
       limit_attempts=K.limitRoom and K.limitRoom.attempts,walker_stopped=K.escapeWalkerStop~=nil},
+    safety={unresolved_incoming=unresolved,visibility_lost=K.S and K.S.blind~=nil or false,
+      leader_present=cached and cached.actualLeader~=nil or false,wait_reason=text(K.supportWaitReason),
+      death_hold=K.S and K.S.firstDeath()~=nil or false,light_enabled=K.config.lightEnabled,
+      light_status=K.S and text(K.S.lightStatus)},
     char_vitals={hp_points=charHealth,hp_percent=charPercent,fatigue=number(vitals.fatigue)},
     shield={formation_ready=K.shieldFormationReady,self_control_percent=K.lastHp,pending=pending and text(pending.id),
       pending_until=pending and pending.deadline,await_combat_revision=K.shieldAwaitCombatRevision,
@@ -262,7 +273,9 @@ local function snapshot()
     settings={own_min=K.config.shieldSelfHp,team_shield=K.config.teamShieldHp,leader_shield=K.config.leaderShieldHp,
       own_retreat=K.config.escapeHp,team_retreat=K.config.teamEscapeHp,max_npc=K.config.shieldMaxAttackers,
       hold=K.config.shieldHold,golems=K.config.golemsEnabled,hp_gap=K.config.golemHpGap}}
-  return state,active
+  local wounded=(charPercent and charPercent<100) or (charHealth and charHealth.percent<100) or false
+  for _,member in ipairs(members) do if member.percent and member.percent<100 then wounded=true end end
+  return state,active or wounded or (K.S and K.S.blind~=nil) or false
 end
 function L.capture(force,cause)
   if L.fault or not force and not recording() then return end
@@ -305,8 +318,13 @@ local packetNames={["gmcp.Chimera.Room.Entities"]="entities",["gmcp.Chimera.Grou
 function L.request()
   if not recording() or not K.enabled or L.sampleTimer then return end
   local combat=tab(A.combat())
+  local vitals=tab(tab(tab(gmcp).Char).Vitals)
+  local percent=not vitals.maxhp and not vitals.max_hp and number(vitals.hp)
+  local woundedPercent=percent and percent>=0 and percent<100
   if not L.active and not next(tab(combat.relations)) and (not combat.primary or combat.primary=="")
-      and K.mode~="heal_rest" and K.mode~="escape" and K.mode~="recovery_return" and K.mode~="golem_loot" then return end
+      and K.mode~="heal_rest" and K.mode~="escape" and K.mode~="recovery_return" and K.mode~="golem_loot"
+      and not (K.S and K.S.blind) and not woundedPercent
+      and not (K.lastHp<100 or K.teamSeenCount>0 and K.teamLowestHp<100) then return end
   local delay=math.max(0.2,L.interval-(A.now()-(L.lastSampleAt or -L.interval)))
   L.sampleTimer=tempTimer(delay,function()
     L.sampleTimer=nil

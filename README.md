@@ -1,4 +1,4 @@
-# Chimera Kozojeb 2.9.19
+# Chimera Kozojeb 2.9.20
 
 [Pobierz najnowszą paczkę](https://github.com/gurninson-sketch/kozojeb/releases/latest/download/Chimera_Kozojeb.mpackage) · [Wydania](https://github.com/gurninson-sketch/kozojeb/releases)
 
@@ -20,20 +20,35 @@ Do automatycznych aktualizacji wymagany jest Mudlet **4.20.0 lub nowszy**. Kod g
 
 Najpierw utwórz drużynę w grze. Rola bota nie przekazuje faktycznego prowadzenia drużyny.
 
-| Profil — przykład | Komendy konfiguracji | Zachowanie |
+| Funkcja profilu | Komendy konfiguracji | Zachowanie |
 | --- | --- | --- |
-| Yarrim | `/kozojeb rola prowadzacy` | Patrol, wybór celów, pościg, zasłony drużyny i wspólny odwrót |
-| Yarrim — ręczne prowadzenie | `/kozojeb rola zaslony` i `/kozojeb start` | Ręczna nawigacja i walka; automatyczne zasłony całej drużyny |
-| Morrid, Yergo i Gror | `/kozojeb rola zaslony` oraz `/kozojeb lider auto` | Wsparcie i osłanianie zagrożonych członków całej drużyny |
-| Brix, Gunz i Rodrick | `/kozojeb rola wsparcie` oraz `/kozojeb lider auto` | Wsparcie i DPS, bez automatycznych zasłon |
+| Dowolny faktyczny prowadzący | `/kozojeb rola prowadzacy` | Patrol, wybór celów, pościg, zasłony drużyny i wspólny odwrót |
+| Faktyczny prowadzący — ruch ręczny | `/kozojeb rola zaslony` i `/kozojeb start` | Ręczna nawigacja i walka; automatyczne zasłony całej drużyny |
+| Profil osłaniający | `/kozojeb rola zaslony` oraz `/kozojeb lider auto` | Wsparcie i osłanianie zagrożonych członków całej drużyny |
+| Profil drugiej linii | `/kozojeb rola wsparcie` oraz `/kozojeb lider auto` | Wsparcie i DPS, bez automatycznych zasłon |
 
 Wspierający dołączają do walki przez `wesprzyj`; dalsze ataki wykonuje gra. Nie patrolują, nie ścigają przeciwników i nie wykonują własnego odwrotu, leczenia, `/idz` ani opuszczania drużyny. Nie przesyłają raportów między profilami. Ruch za prowadzącym zapewnia drużyna w grze.
 
-Od 2.9.14 każdy profil ma zapisany model ról pozostałych osób. **Brix, Gunz i Rodrick domyślnie są wyłącznie wsparciem**: plan nie rezerwuje dla nich zasłon ani miejsc w kolejce obrońców. Nadal są osłaniani i uwzględniani przy kontroli HP, odwrocie, zbieraniu drużyny i regeneracji. Dotychczasowy prowadzący, Gror, Morrid i Yergo rozdzielają ochronę całej drużyny. Odmiany `brixa`, `gunza` i `rodricka` są wbudowane; istniejące własne odmiany pozostają zachowane.
+Model ról pozostałych osób jest domyślnie pusty. Imię postaci nie narzuca roli. Każdy profil zachowuje własne ustawienie `rola`, a opcjonalny model określa, kogo uwzględniać w planie obrońców. Osoby wpisane jako `wsparcie` nadal są osłaniane i uwzględniane przy kontroli HP, odwrocie, zbieraniu drużyny oraz regeneracji.
 
-Podgląd modelu: `/kozojeb druzyna role`. Gdy w przyszłości role się zmienią, na każdym profilu ustaw np. `/kozojeb druzyna rola Brix zaslony`. Dostępne wartości to `wsparcie`, `zaslony` i `auto` (usuwa zapisane przypisanie). To model planowania, nie zdalna zmiana roli innego profilu. Obecne trzy przypisania wsparcia są dodawane automatycznie przy aktualizacji. Faktyczny prowadzący nadal może być dowolną postacią ustawioną na `prowadzacy`.
+Podgląd: `/kozojeb druzyna role`. Regułę ustaw na każdym profilu przez `/kozojeb druzyna rola <imie> wsparcie|zaslony|auto`; `auto` usuwa przypisanie. Wyczyszczenie całego modelu: `/kozojeb druzyna role reset`. Model nie zmienia zdalnie roli innego profilu. Aktualizacja 2.9.20 usuwa jednorazowo niezmieniony stary zestaw trzech domyślnych przypisań; inne własne modele zachowuje. Własne role profili pozostają zapisane, więc profil ustawiony na `wsparcie` nadal nie wykonuje zasłon. Faktycznego prowadzącego wskazuje GMCP.
 
-Zmiana roli zatrzymuje bota. Po skonfigurowaniu uruchom go przez `/kozojeb start` na każdym profilu. Wspierających można uruchomić przed prowadzącym. Bez widocznego, faktycznego prowadzącego czekają.
+Zmiana roli zatrzymuje bota. Po skonfigurowaniu uruchom go przez `/kozojeb start` na każdym profilu. Wspierających można uruchomić przed prowadzącym. Bez widocznego prowadzącego czekają z nowym wsparciem jego walki. Od 2.9.20 nadal aktualizują własne HP, a rola `zaslony` chroni rozpoznanych, widocznych członków rzeczywistej drużyny, także po zniknięciu lidera. Nie rozpoczyna samodzielnego odwrotu.
+
+### Światło i zgon członka drużyny — od 2.9.20
+
+Każda postać powinna mieć własną sprawną lampę i paliwo. Zniknięcie jedynego nosiciela światła może pozostawić pozostałych w ciemności. Opcjonalną obsługę włącz na **każdym profilu**:
+
+```text
+/kozojeb swiatlo on
+/kozojeb swiatlo status
+```
+
+Domyślna komenda to `zapal lampe`; można zapisać inną pojedynczą komendę przez `/kozojeb swiatlo komenda zapal pochodnie`. Bot próbuje zapalić własne światło po starcie i ponownym połączeniu. Czeka 3 s na potwierdzenie. Brak lampy, paliwa lub odpowiedzi daje jeden komunikat; nie tworzy pętli ponowień. Nowy anonimowy atak dopuszcza kolejną próbę najwyżej raz na 30 s. Obsługa nie kupuje lamp ani paliwa. Wyłączenie: `/kozojeb swiatlo off`.
+
+Atak opisany jako `Ktos ATAKUJE CIE!` wstrzymuje nowy patrol i usuwa jeszcze niewysłany zwykły krok prowadzącego. Zasłony wymagają rozpoznanej postaci oraz NPC, a pilny wspólny odwrót nadal działa według dotychczasowych progów. Samo wysłanie komendy światła nie oznacza odzyskania widoczności: potrzebny jest świeży odczyt rozpoznanych encji. Wspierający nie wychodzą samodzielnie.
+
+Potwierdzony zgon członka, rozpoznany duch, stan `dead`/`ghost` lub poprawna para HP z zerową wartością uruchamia na profilu `prowadzacy` wspólny odwrót i blokuje wznowienie patrolu z uszczuploną drużyną. Blokada przeżywa przeładowanie paczki i rozłączenie. Powrót żywej postaci potwierdzają świeże kanały drużyny i pokoju; przed patrolem wymaga ona 100% HP. Jeśli świadomie zmniejszasz skład, usuń zmarłą postać z drużyny w grze i poza walką wpisz na faktycznym prowadzącym `/kozojeb druzyna gotowa`. Komenda wymaga kompletnego, widocznego i żywego składu. Ręczny prowadzący w roli `zaslony` nadal sam decyduje o odwrocie.
 
 Od **2.9.16** rola `zaslony` działa również na faktycznym prowadzącym drużynę, gdy chodzisz ręcznie. Na aktualnym prowadzącym, np. Yarrimie, ustaw:
 
@@ -114,7 +129,7 @@ Te progi dopuszczają rozważenie zasłony: HP prowadzącego musi być **poniże
 
 Od 2.9.6 `/kozojeb progzaslony 70` określa także próg osłony **pozostałych członków drużyny** na profilach z rolą `zaslony`. Prowadzący używa go dla całej drużyny. Ten próg musi być wyższy od progów odwrotu. `proglidera` pozostaje osobnym progiem dla prowadzącego na profilu osłaniającym: jego wyłączenie nie wyłącza ochrony kolegów, a `progzaslony 0` nie wyłącza ochrony lidera. Rola `wsparcie` nadal nie wykonuje zasłon. Aktualizacja zachowuje istniejące role i wartości progów.
 
-Własne minimum `/kozojeb minhpzaslony` działa niezależnie w obu rolach wykonujących zasłony. Na wspierającym `/kozojeb prog 50` jest skrótem ustawienia własnego minimum zasłon; na prowadzącym pozostaje progiem odwrotu. W roli `zaslony` zagrożony kolega może być osłaniany także wtedy, gdy prowadzący sam nie walczy, ale pozostaje widocznym członkiem drużyny.
+Własne minimum `/kozojeb minhpzaslony` działa niezależnie w obu rolach wykonujących zasłony. Na wspierającym `/kozojeb prog 50` jest skrótem ustawienia własnego minimum zasłon; na prowadzącym pozostaje progiem odwrotu. W roli `zaslony` zagrożony kolega może być osłaniany także wtedy, gdy prowadzący sam nie walczy lub przestał być widoczny.
 
 Od wersji 2.9.0 decyzja uwzględnia punkty HP obu postaci, liczbę unikalnych napastników NPC oraz ostatnie spadki HP. Dla przykładu 60% z 1200 HP oznacza więcej życia niż 78% z 600 HP. Pełne pary `hp/maxhp` drużyny wybierane są według nowszego zdarzenia `Room.Entities` albo `Group.State`; starszy odczyt nie przesłania nowszego. Punkty do porównania obu graczy pochodzą ze wspólnego kanału. `Char.Vitals` nie dostarcza punktów do bezpośredniego porównywania różnych postaci.
 
@@ -132,6 +147,8 @@ Każda próba rezerwuje zmianę szyku od razu. Od 2.9.4 dotyczy to również roz
 Od 2.9.5 odpowiedź `Dopiero co zepchnieto cie sprzed <osoby>; ...` kończy oczekiwanie na wynik i wprowadza 10 s odstępu przed kolejną automatyczną próbą osłony tej osoby. Jest to zachowawczy odstęp skryptu, nie odczyt czasu blokady z serwera. Gotowość szyku nie usuwa tej blokady. Inne osoby można osłaniać zgodnie z pozostałymi warunkami; prowadzący uwzględnia niedostępną pozycję przy decyzji o odwrocie. Stop/start zachowuje niewygasłą blokadę, a upływ czasu nie uruchamia zatrzymanego bota.
 
 Profile z rolą `zaslony` wybierają zagrożonego członka według liczby napastników oraz zapasu HP w punktach z uwzględnieniem ostatnich obrażeń. Kolega obciążony kilkoma NPC może mieć pierwszeństwo przed prowadzącym z niższym procentem HP. Brak porównywalnych danych, niekorzystna osłona lub blokada pozycji pozwala rozważyć kolejną osobę. Nie są osłaniani gracze spoza drużyny ani osoby bez napastnika NPC.
+
+Od 2.9.20, gdy ogólna zasłona grozi niekorzystnym przejęciem wszystkich napastników, bot próbuje bezpiecznej zasłony pojedynczego NPC. Obsługuje opisy orków, goblinów, snotlingów, trolli, ożywieńców i zombi, które potrafi odmienić. Przykład: `zaslon yarrima przed bladym zwinnym ozywiencem`. Przy niejednoznacznym opisie numer jest dopuszczalny tylko wtedy, gdy wszystkie pasujące NPC atakują tę samą osobę. Nieznana odmiana, zmieniony cel lub przekroczony limit obrońcy blokują próbę; zwykła zasłona zachowuje ostrożną ocenę pełnego przejęcia. Obrońcy korzystają z krótkiej kolejki po 0,15 s i najwyżej 0,5 s na potwierdzenie zasłony kolegi w GMCP. Wyłączenie tej dodatkowej próby: `/kozojeb celowanezaslony off`; ponowne włączenie: `/kozojeb celowanezaslony on`. Ustawienie nie wyłącza osobnego planu golemów.
 
 Od 2.9.9 prowadzący i profile `zaslony` używają wspólnej kolejności: obrońca z najkorzystniejszym przewidywanym ryzykiem po osłonie ma pierwszeństwo, pozostali czekają po 0,45 s na kolejne miejsce, najwyżej 1,35 s. Nie zakładają, że inne profile mają włączone zasłony — po tym czasie mogą osłonić samodzielnie. Oczekiwanie na osłonę najważniejszego celu nie uruchamia zastępczo zasłony mniej zagrożonej osoby. Widoczna zasłona dowolnego członka daje do 0,5 s na aktualizację relacji walki; komunikat `zrecznie zaslania` jest również rozpoznawany. Równoczesne osłony różnych kolegów mają osobny krótki kontekst. Zmiana napastników wymaga ponownej oceny. Od 2.9.10 zwykły spadek HP nie zwalnia jednocześnie wszystkich oczekujących obrońców. Dodatkowe oczekiwanie jest pomijane przy krytycznym HP albo braku zapasu na kolejny ostatnio obserwowany cios. Próg odwrotu i kontrola presji nadal obowiązują. Nie wymaga to komunikacji między profilami ani nowych pętli. Notatka przy wykonanej komendzie pokazuje punkty HP, liczby napastników obu postaci i maksymalne obciążenie po pełnym przejęciu, aby ułatwić analizę logów.
 
@@ -154,15 +171,15 @@ Przykład konfiguracji drużyny:
 
 | Profil | Komendy przed uruchomieniem |
 | --- | --- |
-| Yarrim, faktyczny prowadzący | `/kozojeb rola prowadzacy`, `/kozojeb golemy on` |
-| Gror, Morrid i Yergo | `/kozojeb rola zaslony`, `/kozojeb lider auto`, `/kozojeb golemy on` |
-| Brix, Gunz i Rodrick | `/kozojeb rola wsparcie`, `/kozojeb lider auto`, `/kozojeb golemy on` |
+| Faktyczny prowadzący | `/kozojeb rola prowadzacy`, `/kozojeb golemy on` |
+| Profile osłaniające | `/kozojeb rola zaslony`, `/kozojeb lider auto`, `/kozojeb golemy on` |
+| Profile drugiej linii | `/kozojeb rola wsparcie`, `/kozojeb lider auto`, `/kozojeb golemy on` |
 
 1. **Wyłącz stary dodatkowy trigger zbierania pancerzy**, aby uniknąć nakładania komend. Nowa obsługa zbiera je do ekwipunku. Od 2.9.12 rozpoznaje również potwierdzone wkładanie pancerzy do plecaka podczas bieżącego cyklu i wyjmuje je w bazie przed przeszukiwaniem. Głównego modułu łupienia Chimery nie trzeba zastępować. Pancerze pozostawione sprzed aktualizacji obsłuż przed pierwszym cyklem; instalacja zatrzymuje bota i nie przenosi trwającego zadania między wersjami.
 2. Na prowadzącym, stojąc w bezpiecznej kozobazie, wpisz `/kozojeb baza`. Zaznacz na mapie **bazę i pokoje golemów**, następnie `/kozojeb obszar`. W analizowanym logu baza golemów to 8765; sprawdź ją na swojej mapie. Poprzedni obszar 19 pokoi i baza 1097 dotyczyły wcześniejszego patrolu.
 3. Zacznij w tej bezpiecznej bazie: `/kozojeb start` najpierw na osłaniających, potem na prowadzącym. Każdy ręczny start prowadzącego ustala bazę w bieżącym pokoju; nie uruchamiaj go po raz pierwszy w pokoju z golemami.
 
-Przy czterech golemach atakujących jednego gracza profile planują różne, **celowane zasłony**. Od 2.9.14 komenda zawiera pełny opis, np. `zaslon yarrima przed zgrzytajacym kanciastym golemem`. Ogólny numer „drugim golemem” nie jest wyprowadzany z kolejności GMCP, ponieważ logi pokazały rozbieżności z kolejnością gry. Początkowy przydział nadal opiera się na wspólnej kolejności nazw obrońców i opisów NPC; różne ID między profilami oraz drobne różnice HP nie przesuwają pozostałych miejsc. Brix, Gunz i Rodrick nie otrzymują przydziałów obrońcy.
+Przy czterech golemach atakujących jednego gracza profile planują różne, **celowane zasłony**. Od 2.9.14 komenda zawiera pełny opis, np. `zaslon yarrima przed zgrzytajacym kanciastym golemem`. Ogólny numer „drugim golemem” nie jest wyprowadzany z kolejności GMCP, ponieważ logi pokazały rozbieżności z kolejnością gry. Początkowy przydział nadal opiera się na wspólnej kolejności nazw obrońców i opisów NPC; różne ID między profilami oraz drobne różnice HP nie przesuwają pozostałych miejsc. Indywidualne reguły `druzyna rola` pozwalają wykluczyć profile drugiej linii z przydziałów obrońcy.
 
 Przy identycznych opisach numer odnosi się do pełnego opisu, np. `przed pierwszym kamiennym golemem`. Taka próba wymaga, aby wszystkie pasujące egzemplarze atakowały osłanianą osobę; przy różnych celach nie zgadujemy ID. Jednoznaczna odpowiedź rezerwuje opisanego NPC. Przy wielu pasujących egzemplarzach bot czeka najwyżej 0,5 s na GMCP: długa stabilizacja obejmuje tylko potwierdzone przejęcie konkretnego ID, a pozostałe golemy pozostają dostępne. Inny lub nierozpoznany opis nie potwierdza ochrony przed planowanym ID. Rozbieżny selektor otrzymuje 15 s przerwy i krótką diagnostykę. Także ratunkowa zasłona najpierw dobiera konkretny cel; ewentualna ogólna komenda wymaga oceny przejęcia wszystkich napastników osoby. Plan dąży do jednego przeciwnika na obrońcę już przy wysokim HP. Czysty pokój z najwyżej czterema golemami, których nie jest więcej niż członków drużyny, może zostać przyjęty mimo zwykłego limitu celów 3. Mieszany pokój lub większa grupa przeciwników nie otrzymuje tego wyjątku.
 
@@ -218,7 +235,7 @@ Wznowienie patrolu wymaga obsłużenia pancerzy, obecności całej zapamiętanej
 
 ## Aktualizacje z GitHuba
 
-Jeśli masz już Kozojeba 2.8.1–2.9.18, wykonaj na **każdym profilu**:
+Jeśli masz już Kozojeba 2.8.1–2.9.19, wykonaj na **każdym profilu**:
 
 ```text
 /kozojeb stop
@@ -227,7 +244,7 @@ Jeśli masz już Kozojeba 2.8.1–2.9.18, wykonaj na **każdym profilu**:
 /kozojeb aktualizuj
 ```
 
-Poczekaj na zakończenie walki i ruchu oraz komunikat `Zainstalowano 2.9.19`. Sprawdź `/kozojeb status`; powinien pokazać wersję **2.9.19**. Wyłącz stary dodatkowy trigger pancerzy — podniesienia po każdym zabiciu są już wbudowane. Następnie uruchom `/kozojeb start` — najpierw na wspierających, potem na prowadzącym stojącym w bazie. To jednorazowy start po aktualizacji; późniejsze rozłączenia nie wymagają ręcznego wznowienia. Nie trzeba usuwać ani ręcznie instalować paczki; dotychczasowe ustawienia profili pozostają zachowane. Można przejść bezpośrednio z 2.9.2 do 2.9.19. Model ról sam uwzględni Brixa, Gunza i Rodricka jako wsparcie, bez przydzielania im zasłon. Profile już ustawione na `zaslony` korzystają z ochrony całej drużyny; rola `wsparcie` pozostaje drugą linią. Zwykły próg regeneracji wynosi domyślnie 95%; można go zmienić na prowadzącym przez `/kozojeb powrothp 95`. Tryb golemów wymaga osobnego włączenia i w swoim cyklu czeka na 100% całej drużyny.
+Poczekaj na zakończenie walki i ruchu oraz komunikat `Zainstalowano 2.9.20`. Sprawdź `/kozojeb status`; powinien pokazać wersję **2.9.20**. Wyłącz stary dodatkowy trigger pancerzy — podniesienia po każdym zabiciu są już wbudowane. Skontroluj `/kozojeb druzyna role` na każdym profilu; domyślnie nie ma przypisań zależnych od imion. Własne role profili i inne własne modele pozostają zapisane. Opcjonalnie włącz `/kozojeb swiatlo on`, zapewniając każdej postaci własną lampę i paliwo. Następnie uruchom `/kozojeb start` — najpierw na wspierających, potem na prowadzącym stojącym w bazie. To jednorazowy start po aktualizacji; późniejsze rozłączenia nie wymagają ręcznego wznowienia. Nie trzeba usuwać ani ręcznie instalować paczki; można przejść bezpośrednio z 2.9.2 do 2.9.20. Zwykły próg regeneracji wynosi domyślnie 95%; można go zmienić przez `/kozojeb powrothp 95`. Tryb golemów wymaga osobnego włączenia i w swoim cyklu czeka na 100% całej drużyny.
 
 Przy paczce zbudowanej w tym repozytorium adres wydań jest wbudowany. W paczce przygotowanej bez adresu skonfiguruj na każdym profilu:
 
@@ -300,6 +317,8 @@ Zapis jest domyślnie **włączony** na każdym profilu i działa przy uruchomio
 Limit wynosi **8 MiB na plik**, zachowywana jest jedna poprzednia część. Kolejna rotacja zastępuje starszą kopię. Do analizy dołącz oba istniejące pliki z każdego badanego profilu oraz zwykły log tekstowy. Pliki nie są automatycznie wysyłane ani umieszczane w repozytorium.
 
 Od **2.9.19** komendy `/kozojeb wydajnosc` i `/kozojeb zapis status` pokazują czas przygotowania próbki oraz osobno zapisania partii do pliku. Dla obu operacji podają liczbę pomiarów, średnią, p95 i maksimum w milisekundach — osobno CPU (`os.clock`) oraz czas rzeczywisty obejmujący oczekiwanie. Średnia i maksimum obejmują okres od załadowania skryptu, p95 ostatnie 128 operacji. Zapis wywołany podczas przygotowania próbki jest odjęty od jej pomiaru, więc nie liczy się podwójnie. Są to pomiary tych dwóch operacji na tym profilu, nie całego Mudleta ani opóźnienia sieci. Zapytanie o statystyki nie uruchamia testu obciążenia i nie opróżnia bufora. JSONL zawiera zbiorcze metryki poprzednich zakończonych operacji w `recorder_performance`, bez dodatkowego strumienia próbek. Pole źródła `fresh` nadal oznacza odebranie danych w bieżącej sesji; nowe `recent` informuje osobno, czy pakiet odebrano w ostatnich 15 s. Stary niezmieniony pakiet nie jest sam w sobie dowodem zerwania połączenia i nie wywołuje automatycznego reconnect.
+
+Od **2.9.20** rejestrator zachowuje także niewidocznych członków z surowego `Group.State` oraz ich dostępne pary HP. Nieznane ID napastników trafiają do `unresolved_incoming`, oddzielnie od rozpoznanych NPC. Nierozpoznana walka, rany i utrata widoczności mogą uruchomić próbkę bez znanej encji przeciwnika. Pole `safety` pokazuje brak lidera, powód oczekiwania, utratę widoczności, blokadę po zgonie i stan własnego światła. Znana nazwa profilu pozostaje zachowana, nawet gdy serwer zastąpi nazwę własnej postaci słowem `Ktos`. Procentowe `Char.Vitals` jest zapisywane osobno i nie zastępuje punktów HP bez własnego maksimum. Pozostają dotychczasowy limit próbek, buforowanie, rotacja i pomiary kosztu; brak nowego stałego odpytywania.
 
 Jeśli podczas automatycznego odwrotu pojawi się `(Chimera) Chodzik zatrzymany: atak.`, Kozojeb czeka na potwierdzenie wykonanego kroku i dane nowego pokoju, po czym wznawia `/idz` do dotychczasowej bazy. Postęp nie zużywa limitu nieudanych prób trasy. Bez potwierdzenia ruchu nadal działa zwykły watchdog i ograniczenie ponowień. Mechanizm dotyczy roli `prowadzacy` w trybie odwrotu; nie uruchamia ruchu wspierających ani ręcznego lidera w roli `zaslony` i nie zmienia globalnych ustawień chodzika. Stop, rozłączenie i dojście do bazy anulują oczekujące wznowienie.
 

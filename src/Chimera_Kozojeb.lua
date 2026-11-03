@@ -33,6 +33,8 @@
 kozojeb = kozojeb or {}
 local K = kozojeb
 if K.combatLog and K.combatLog.close then pcall(K.combatLog.close,"reload") end
+if K.S and K.S.cancel then K.S.cancel() end
+if K.C and K.C.reset then K.C.reset() end
 K.combatLog=nil
 -- Import z oryginalnego KozoBota nie zmienia jego autorstwa ani przestrzeni nazw.
 if not K.legacyImportTried and type(kozobot) == "table" then
@@ -56,7 +58,7 @@ end
 K.legacyImportTried = true
 K.initialized = false
 
-K.version = "2.9.19"
+K.version = "2.9.20"
 K.config = K.config or {
   chaseDelay = 0.20,
   patrolDelay = 0.70,
@@ -147,6 +149,8 @@ local settingTypes = {
   maxCreatures="number", restAtMoves="number", resumeAtMoves="number", attackCommand="string",
   targetWeakest="boolean",
   combatLogEnabled="boolean",
+  lightEnabled="boolean", lightCommand="string", targetedShieldsEnabled="boolean",
+  teamRoleRulesVersion="number", teamDeaths="table",
   targets="table", targetOrder="table", attackForms="table", teamMembers="table",
   shieldNameForms="table", teamRoles="table", ignoreNonTargets="boolean", ignoredNames="table",
   role="string", leaderName="string", leaderShieldHp="number", shieldSelfHp="number",
@@ -228,6 +232,11 @@ K.config.resumeAtMoves = tonumber(K.config.resumeAtMoves) or 55
 K.config.attackCommand = K.config.attackCommand or "zabij"
 K.config.targetWeakest = K.config.targetWeakest ~= false
 K.config.combatLogEnabled = K.config.combatLogEnabled ~= false
+K.config.targetedShieldsEnabled = K.config.targetedShieldsEnabled ~= false
+K.config.lightEnabled = K.config.lightEnabled == true
+K.config.lightCommand = type(K.config.lightCommand)=="string" and K.config.lightCommand or "zapal lampe"
+if #K.config.lightCommand>100 or K.config.lightCommand:find("[%c;|]") then K.config.lightCommand="zapal lampe" end
+K.config.teamDeaths = type(K.config.teamDeaths)=="table" and K.config.teamDeaths or {}
 K.config.maxCreatures = tonumber(K.config.maxCreatures) or 0
 K.config.targets = K.config.targets or K.config.animals or {
   koza = true, kon = true, krowa = true, jelen = true, koziol = true,
@@ -249,8 +258,17 @@ K.config.attackForms = K.config.attackForms or {}
 K.config.teamMembers = K.config.teamMembers or {}
 -- Wspolny model rol, bez raportow miedzy profilami. Nie usuwa tych osob
 -- z druzyny, kontroli HP ani listy osob wymagajacych ochrony.
-if type(K.config.teamRoles) ~= "table" then
-  K.config.teamRoles = {brix="wsparcie", gunz="wsparcie", rodrick="wsparcie"}
+if type(K.config.teamRoles) ~= "table" then K.config.teamRoles = {} end
+if not K.config.teamRoleRulesVersion then
+  -- Jednorazowo rozpoznajemy caly niezmieniony preset 2.9.14, a nie
+  -- wybieramy rol po imieniu w czasie walki. Wlasne, inne modele zostaja.
+  local legacy={brix="wsparcie",gunz="wsparcie",rodrick="wsparcie"}
+  local exact,count=true,0
+  for name,role in pairs(K.config.teamRoles) do
+    count=count+1;if legacy[name]~=role then exact=false end
+  end
+  if exact and count==3 then K.config.teamRoles={} end
+  K.config.teamRoleRulesVersion=1
 end
 local defaultShieldNameForms = {
   veesa = "veese",
@@ -659,6 +677,7 @@ end
 
 local function cancelAllTimers()
   if K.G then K.G.cancel() end
+  if K.C then K.C.reset() end
   for _, name in ipairs({
     "actionTimer", "moveTimer", "roomSyncTimer", "restTimer", "escapeTimer", "killTimer",
     "returnTimer", "healTimer", "recoveryTimer",
@@ -720,6 +739,7 @@ end
 
 local function idleIsIntentional()
   return K.movementRest ~= nil or K.teamStep ~= nil
+    or (K.S and K.S.blind~=nil)
     or K.restartPending ~= nil or K.mode == "stop" or K.mode == "kill_pause"
     or K.mode == "escape" or K.mode == "heal_rest" or K.mode == "recovery_return"
     or K.mode == "herb_search" or K.mode == "leader_wait" or K.mode == "golem_loot"
@@ -1963,6 +1983,8 @@ end
 
 local function canShieldMember(member)
   if not member then return false end
+  if K.S and K.S.isDead(member) then return false end
+  if K.S and K.S.anonymous(member.name) then return false end
   if isSelf(member) and K.config.role == "wsparcie" then return false end
   local leader = groupContext().actualLeader
   if leader and tostring(member.id) == tostring(leader.id) then return true end
@@ -2012,6 +2034,9 @@ end
 local function shieldImprovesSafety(target, percent)
   local decision, reason
   if K.G and K.G.encounter() then decision, reason = K.G.project(groupContext().self, target)
+  elseif K.C then
+    local plan
+    decision,plan,reason=K.C.project(groupContext().self,target,percent)
   else decision, reason = shieldProjection(groupContext().self, target, percent) end
   if not decision then return false, reason end
   K.shieldDecision = decision
@@ -2198,9 +2223,11 @@ local function shieldTurnRank(entity, percent)
   local own = context.self
   if not own then return 0 end
   local function score(member)
+    if not canShieldMember(member) then return nil end
     local health = latestHealth(member, context.memberVitals[tostring(member.id)]
       or context.memberVitals[normal(member.name)])
     if not health or health.hp <= 0 or health.percent < K.config.shieldSelfHp then return nil end
+    if K.C and not (K.G and K.G.encounter()) then return K.C.project(member,entity,percent) end
     return shieldProjection(member, entity, percent)
   end
   local ownScore, rank = score(own), 0
@@ -2212,7 +2239,7 @@ local function shieldTurnRank(entity, percent)
       if other and (other.riskAfter < ownScore.riskAfter - 0.000000000001
           or (equalRisk and other.ownAfterRisk < ownScore.ownAfterRisk - 0.000000000001)
           or (equalRisk and math.abs(other.ownAfterRisk - ownScore.ownAfterRisk) <= 0.000000000001
-            and tostring(member.id) > tostring(own.id))) then
+            and normal(member.name) > normal(own.name))) then
         rank = rank + 1
       end
     end
@@ -2243,7 +2270,6 @@ end
 function K.onTeamShield(actor, form)
   if not K.enabled or K.config.role == "wsparcie" or not K.entitiesReady then return end
   local context = groupContext()
-  if isFollower() and not context.leader then return end
   local protector, target
   for _, member in ipairs(context.members) do
     if not isSelf(member) and normal(member.name) == normal(actor) then protector = member break end
@@ -2292,15 +2318,22 @@ local function tryShield(entity, hp, threshold, plan)
     decision, plan = K.G.project(groupContext().self, entity)
     if not decision then blocked("no_safe_golem_plan");return end
   end
+  if not plan and K.C then
+    local decision, selected, why=K.C.project(groupContext().self,entity,hp)
+    if not decision then blocked("unsafe_projection",why);K.shieldBlockedReason=why;return end
+    plan=selected
+  end
   local selector, allowedIds
   if plan and not plan.generic then
-    if K.G then selector, allowedIds = K.G.selector(plan.npcId, entity) end
+    if plan.general and K.C then selector,allowedIds=K.C.selector(plan.npcId,entity)
+    elseif K.G then selector, allowedIds = K.G.selector(plan.npcId, entity) end
     if not selector then blocked("selector_unavailable");return end
   end
   local improves, reason
   if plan then
     local decision
-    if K.G then decision, reason = K.G.validatePlan(groupContext().self, entity, plan) end
+    if plan.general and K.C then decision,reason=K.C.validate(groupContext().self,entity,hp,plan)
+    elseif K.G then decision, reason = K.G.validatePlan(groupContext().self, entity, plan) end
     K.shieldDecision, improves = decision, decision ~= nil
   else improves, reason = shieldImprovesSafety(entity, hp) end
   if not improves then
@@ -2341,6 +2374,13 @@ local function tryShield(entity, hp, threshold, plan)
   end
   local notice = K.teamShieldNotices[tostring(entity.id)]
   local urgentHp = isFollower() and K.config.escapeHp or K.config.teamEscapeHp
+  if plan and plan.general then
+    local rank=shieldTurnRank(entity,hp)
+    if rank>0 and deferShield(entity,"rank",now()+rank*.15) then
+      if K.combatLog then K.combatLog.reason(entity,plan.npcId,"defender_turn",false,K.shieldTurn.deadline) end
+      return false,true
+    end
+  end
   if not plan and hp > urgentHp and not needsBurstReserve(entity, hp, urgentHp, true) then
     if notice and notice.id == tostring(entity.id) and notice.room == currentRoom()
         and now() < notice.deadline and sameShieldIncoming(notice) then
@@ -2366,6 +2406,7 @@ local function tryShield(entity, hp, threshold, plan)
   request.golemGeneric = plan and plan.generic or nil
   request.golemSelector = selector
   request.golemAllowedIds = allowedIds
+  request.generalPlan = plan and plan.general or nil
   K.shieldBlockedReason = nil
   local decision = K.shieldDecision
   note(string.format(
@@ -2381,7 +2422,7 @@ local function tryShield(entity, hp, threshold, plan)
   if plan then
     local npc=entityById(plan.npcId)
     local kind=plan.generic and "zaslona przed jedynym napastnikiem" or "celowana zaslona"
-    note("Golemy: " .. kind .. suffix .. " (" .. (npc and npc.name or "brak opisu")
+    note((plan.general and "Zaslony: " or "Golemy: ") .. kind .. suffix .. " (" .. (npc and npc.name or "brak opisu")
       .. "; ID " .. plan.npcId .. ").", "cyan")
   end
   send("zaslon " .. form .. suffix)
@@ -2400,7 +2441,10 @@ function K.onShieldRejected()
   if not pending then return end
   if K.combatLog then K.combatLog.mark("shield_rejected",{target=pending.id,external=pending.external}) end
   if K.G and pending.golemNpcId and liveNpc(entityById(pending.golemNpcId))
-      and entityById(pending.id) and sameShieldIncoming(pending) then K.G.onShieldResult(pending,false) end
+      and entityById(pending.id) and sameShieldIncoming(pending) then
+    if pending.generalPlan and K.C then K.C.onResult(pending,false)
+    else K.G.onShieldResult(pending,false) end
+  end
   if not pending.external and not pending.golemNpcId then
     pending.untilTime = now() + 30
     K.shieldRejectedForms[normal(pending.name)] = pending
@@ -2437,7 +2481,8 @@ function K.onShieldResult(form, succeeded, description)
   local requestedRevision
   if pending and normal(pending.form) == normal(form) then
     local matched = true
-    if K.G and pending.golemNpcId then matched = K.G.onShieldResult(pending,succeeded,description) end
+    if pending.generalPlan and K.C then matched=K.C.onResult(pending,succeeded,description)
+    elseif K.G and pending.golemNpcId then matched = K.G.onShieldResult(pending,succeeded,description) end
     requestedRevision = pending.combatRevision
     K.shieldPendingTarget = nil
     cancelTimer("shieldReplyTimer")
@@ -2495,7 +2540,8 @@ local function maybeShieldTeamMember(coverOnly)
     local isLeader = leader and tostring(leader.id) == tostring(entity.id)
     local threshold = follower and isLeader and K.config.leaderShieldHp or K.config.teamShieldHp
     local blockedByDeath = follower and isLeader and K.supportDeathBarrier
-    if own and not isSelf(entity) and hp and hp > 0 and hp < threshold and incoming and not blockedByDeath then
+    if own and not isSelf(entity) and hp and hp > 0 and hp < threshold and incoming and not blockedByDeath
+        and not (K.S and (K.S.isDead(entity) or K.S.anonymous(entity.name))) then
       local _, reserve = shieldHealthPair(own, entity)
       candidates[#candidates + 1] = {entity=entity, hp=hp, threshold=threshold,
         risk=reserve and pressure(incoming.count) / reserve or math.huge}
@@ -2642,6 +2688,8 @@ function K.recoveryReadiness()
     block("", "Czekam na swieze dane pokoju i postaci")
   else
     K.rememberRecoveryWounds()
+    if K.S and K.S.firstDeath() then block("", "Czekam na zywa druzyne po zgonie") end
+    if K.S and K.S.blind then block("", "Czekam na odzyskanie widocznosci") end
     local context, visible = groupContext(), {}
     K.recoveryRoster = K.recoveryRoster or {}
     for _, member in ipairs(context.members) do
@@ -2822,6 +2870,7 @@ local function safetyCheck(urgentOnly, skipMovementWait)
       K.mode = "patrol"
     end
   end
+  if K.enabled and K.S and not K.S.check() then return false end
   local recovery = K.mode == "escape" or K.mode == "heal_rest" or K.mode == "recovery_return"
   if K.enabled and recovery and K.checkRecoveryThreat(urgentOnly) then return false end
   local injuredTeamMember
@@ -2960,6 +3009,8 @@ local function supportTarget(leader)
 end
 
 local function inspectFollower()
+  if not safetyCheck() then return end
+  if K.combatLog then K.combatLog.request() end
   if not K.entitiesReady then return end
   local context = groupContext()
   local leader = context.leader
@@ -2985,6 +3036,8 @@ local function inspectFollower()
     K.supportWaitReason = context.reason
     K.supportCombatHint = nil
     clearTarget()
+    if K.combatLog then K.combatLog.decisionStatus="waiting_for_leader" end
+    if K.config.role=="zaslony" then maybeShieldTeamMember(true) end
     return
   end
   K.supportWaitReason = nil
@@ -3051,6 +3104,7 @@ function K.onSupportResult(alreadyFighting)
 end
 
 function K.onDeath()
+  updateVitals()
   if K.enabled or K.reconnectTask then K.stop("Postac zginela. Anulowano zadanie i automatyczne wznowienie.") end
 end
 
@@ -3127,7 +3181,10 @@ end
 function K.onTeamCombat(actor, defended, isAttack)
   if not K.enabled or K.sessionBlocked or not K.sessionFresh.room
       or not K.entitiesReady or K.roomChangePending then return end
-  if isAttack then K.observeRoomAttack(actor, defended) end
+  if isAttack then
+    if K.S then K.S.onAttack(actor,defended) end
+    K.observeRoomAttack(actor, defended)
+  end
   if not isFollower()
       or K.mode == "escape" or K.mode == "heal_rest" or K.mode == "recovery_return" then return end
   local leader = groupContext().leader
@@ -3253,6 +3310,7 @@ inspectRoom = function()
     touchActivity()
   end
   if not safetyCheck() then return end
+  if K.S and not K.S.inspect() then return end
   if K.G and K.G.inspect() then return end
   local observedRoom = currentRoom()
   if K.pursuitOriginRoom and observedRoom and not K.roomSet[observedRoom] then K.pursuitLeftArea = true end
@@ -3900,6 +3958,7 @@ function K.onRoomChanged(eventName)
     clearShieldTurn()
     if previousRoom ~= currentRoom() then
       if K.G then K.G.resetCombat() end
+      if K.C then K.C.reset() end
       K.previousRoom = previousRoom
       K.combatRoomReady = knownCombat
       K.roomCombatState = nil
@@ -4064,6 +4123,7 @@ function K.onGmcp(eventName)
     end
   end
   if eventName == "gmcp.Char.Vitals" then K.sessionFresh.vitals = true end
+  if K.S then K.S.observe(eventName) end
   if K.reconnectTask then K.tryResumeAfterReconnect() return end
   if not K.enabled then return end
   if K.escapeWalkerStop and K.mode=="escape" and K.entitiesReady and not K.roomChangePending
@@ -4233,6 +4293,7 @@ local function finishCurrentKill()
 end
 
 function K.onKill(name, confirmedByServer, observedId)
+  if not observedId and K.S and K.S.onTeamDeath(name) then return end
   local matchesByName, dead, zeroCount = {}, nil, 0
   if K.enabled then
     entityIndex()
@@ -4333,6 +4394,7 @@ end
 
 function K.stop(reason)
   if K.combatLog then K.combatLog.close("stop",reason) end
+  if K.S then K.S.cancel() end
   invalidateState(true)
   K.reconnectTask, K.reconnectWaitReason = nil, nil
   K.loginConflict = nil
@@ -4442,6 +4504,7 @@ function K.tryResumeAfterReconnect()
   K.reconnectTask, K.reconnectWaitReason = nil, nil
   K.loginConflict = nil
   K.enabled = true
+  if K.S then K.S.started() end
   K.route, K.routeIndex = nil, 1
   K.lastRoom = room
   K.mode = isFollower() and "support_wait" or (recovery and "escape" or "patrol")
@@ -4505,6 +4568,8 @@ end
 
 function K.onSessionEvent(eventName)
   if K.combatLog then K.combatLog.boundary(eventName) end
+  if K.C then K.C.reset() end
+  if K.S then K.S.session() end
   if K.G then K.G.resetCombat() end
   invalidateState(true)
   K.shieldPendingTarget, K.shieldRescue, K.shieldReplyToken = nil, nil, nil
@@ -4810,6 +4875,7 @@ function K.start(recovered)
     K.mode = "support_wait"
     K.injuredTeamMember = nil
     K.lastRoom = currentRoom()
+    if K.S then K.S.started() end
     if manualShieldLeader(groupContext()) then
       note("Start: reczne prowadzenie druzyny; automatyczne zaslony. Ruch i odwrot sa reczne.", "green")
     else
@@ -4867,6 +4933,7 @@ function K.start(recovered)
   touchActivity()
   -- W trwajacej walce najpierw obowiazuja dotychczasowe decyzje bojowe.
   -- Spokojny start nie moze ominac wspolnego progu regeneracji po aktualizacji.
+  if K.S then K.S.started() end
   updateVitals()
   if K.lastHp <= 0 then safetyCheck() return end
   local actualLeader = groupContext().actualLeader
@@ -4994,6 +5061,9 @@ function K.status()
   if K.reconnectTask then statusRow("Wznowienie", K.reconnectWaitReason or "Automatyczne po odebraniu swiezych danych") end
   if K.loginConflict then statusRow("Logowanie", "Konflikt z inna sesja postaci") end
   if K.restartPending then statusRow("Wznowienie", "Czekam na swiezy pokoj i kompletne HP; wznowie automatycznie") end
+  if K.S and K.S.firstDeath() then statusRow("Druzyna", "Zgon: "..K.S.firstDeath().name.."; patrol wstrzymany") end
+  if K.S and (K.config.lightEnabled or K.S.blind) then statusRow("Swiatlo",K.S.lightStatus) end
+  if K.S and K.S.visibilityWait then statusRow("Widocznosc",K.S.visibilityWait) end
   if K.config.equipmentHold then statusRow("Ekwipunek", K.config.equipmentHold) end
   if K.refugeRoom then statusRow("Miejsce leczenia", "Awaryjne: " .. K.refugeRoom .. "; start patrolu: " .. K.config.startRoom) end
   if K.recoveryEmergency and K.recoveryEmergency.blocked then statusRow("Awaryjny odwrot", "Brak potwierdzonej drogi; nadal chronie druzyne") end
@@ -5287,12 +5357,17 @@ function K.help()
   <green>/kozojeb minhpzaslony 50<reset>       wlasne minimum procentowe;
                               dodatkowo oceniam punkty HP i napastnikow
   <green>/kozojeb limitzaslony 2<reset>        maksymalnie 2 napastnikow po oslonie
+  <green>/kozojeb celowanezaslony on|off<reset> pojedynczy NPC poza golemami,
+                              gdy ogolna zaslona bylaby niekorzystna
   <green>/kozojeb stabilizacja 8<reset>        8 s ochrony przed oddaniem NPC
   <green>/kozojeb pustypatrol 3<reset>         pusty patrol zwalnia do 3 s/krok;
                               0 wylacza spowalnianie (zakres 0-10)
   <green>/kozojeb wydajnosc<reset>             liczniki GMCP, decyzji i komend
   <green>/kozojeb diagnostyka<reset>           stan i czas od GMCP, ciosu i postepu
   <green>/kozojeb zapis on|off|status|teraz<reset> lokalny zapis walki i zaslon
+  <green>/kozojeb swiatlo on|off|status<reset> opcjonalne wlasne swiatlo;
+                              kazda postac potrzebuje lampy i paliwa
+  <green>/kozojeb swiatlo komenda zapal lampe<reset> jedna komenda zapalenia
   <green>/kozojeb golemy on|off<reset>         celowane zaslony golemow; prowadzacy
                               zbiera pancerze, wraca do bazy i leczy cala druzyne do 100%
   <green>/kozojeb golemy roznicahp 10<reset>   prog roznicy HP do rotacji zaslon (5-30)
@@ -5300,6 +5375,8 @@ function K.help()
   - Zmiana roli zatrzymuje bota. Po zmianie wpisz /kozojeb start.
   - Wsparcie dziala tylko przy widocznym prowadzacym nalezacym do druzyny.
     Bez druzyny czeka. Nie wymaga zaznaczenia obszaru na profilu wsparcia.
+    Po utracie lidera nadal odczytuje HP i chroni widocznych czlonkow
+    druzyny w roli zaslony. Nie powtarza wsparcia starego celu.
   - Ruch wspierajacych zapewnia podazanie w druzynie w grze; nie patroluja,
     nie gonia NPC i nie wracaja do bazy z powodu samej bezczynnosci.
   - Wspierajacy zawsze pozostaja w druzynie. Niskie HP, niemoc i komunikat
@@ -5376,10 +5453,13 @@ function K.help()
   <green>/kozojeb druzyna auto<reset>          wykrywaj czlonkow przez GMCP
   <green>/kozojeb druzyna imie1 imie2<reset>   dodatkowe imiona do pilnowania
   <green>/kozojeb druzyna role<reset>          pokaz zapisane role pozostalych osob
-  <green>/kozojeb druzyna rola Brix wsparcie<reset>  nie przydzielaj tej osobie zaslon;
+  <green>/kozojeb druzyna rola <imie> wsparcie<reset> nie przydzielaj tej osobie zaslon;
                               pozostaje chroniona i kontrolowana przez lidera
-  - Brix, Gunz i Rodrick domyslnie maja w planie role wsparcia.
-    Zmiane wpisz na kazdym profilu: druzyna rola <imie> wsparcie|zaslony|auto.
+  <green>/kozojeb druzyna role reset<reset>    wyczysc indywidualny model rol
+  <green>/kozojeb druzyna gotowa<reset>        prowadzacy potwierdza zmniejszony,
+                              zywy sklad po zgonie; tylko poza walka
+  - Domyslnie brak przypisan po imionach. Reguly ustaw na kazdym profilu:
+    druzyna rola <imie> wsparcie|zaslony|auto. Wlasne role nie zmieniaja sie.
   <green>/kozojeb odpoczynek 25 55<reset>      przy 25% ruchu uciekaj do bazy,
                               wroc po regeneracji od 55%
   <green>/kozojeb powrothp 95<reset>           minimum HP kazdego czlonka po leczeniu;
@@ -5396,6 +5476,8 @@ function K.help()
   - Po odwrocie cala druzyna osiaga prog /kozojeb powrothp (domyslnie 95%).
   - Stan ponizej progu odwrotu w tej ewakuacji wymaga pelnych 100% HP.
   - Brak gracza, niepelne dane, zmeczenie i uszkodzony sprzet blokuja powrot.
+  - Zgon czlonka wstrzymuje patrol do potwierdzonego powrotu zywej postaci
+    i jej 100% HP albo jawnego potwierdzenia nowego zywego skladu.
   - Po drodze powrotnej sprawdza gotowosc ponownie przed wznowieniem patrolu.
   - Zaslona wymaga NPC faktycznie atakujacego chroniona osobe w relacjach
     GMCP. Sam atak gracza na NPC nie jest powodem do zaslony.
@@ -5586,7 +5668,15 @@ local function executeCommand(arguments)
   local input = trim(arguments)
   local action, rest = input:match("^(%S+)%s*(.-)$")
   action = normal(action or "status")
-  if action == "wydajnosc" then
+  if action=="swiatlo" and K.S then
+    K.S.command(rest)
+  elseif action=="celowanezaslony" then
+    local value=normal(rest)
+    if value~="on" and value~="off" then note("Uzycie: /kozojeb celowanezaslony on|off.","yellow");return end
+    K.config.targetedShieldsEnabled=value=="on"
+    if K.C then K.C.reset() end
+    note("Celowane zaslony poza golemami: "..value..".","green")
+  elseif action == "wydajnosc" then
     K.performance()
   elseif action == "zapis" and K.combatLog then
     K.combatLog.command(rest)
@@ -5880,6 +5970,13 @@ local function executeCommand(arguments)
     ), "green")
   elseif action == "druzyna" then
     local value = normal(rest)
+    if value=="gotowa" and K.S then K.S.ready();return end
+    if value=="role reset" then
+      K.config.teamRoles={};K.config.teamRoleRulesVersion=1
+      if K.G then K.G.resetCombat() end
+      if K.C then K.C.reset() end
+      clearShieldTurn();note("Usunieto indywidualny model rol; wszyscy wedlug ogolnych regul.","green");return
+    end
     if value:match("^rola%s") or value == "rola" or value == "role" then
       if value == "role" then
         local names = {}
@@ -5892,6 +5989,7 @@ local function executeCommand(arguments)
           note("Uzycie: /kozojeb druzyna rola <imie> wsparcie|zaslony|auto.", "yellow"); return
         end
         K.config.teamRoles[name] = role~="auto" and role or nil
+        K.config.teamRoleRulesVersion=1
         if K.G then K.G.resetCombat() end
         clearShieldTurn()
         note("Rola w planie druzyny: " .. name .. " -> " .. role .. ".", "green")
