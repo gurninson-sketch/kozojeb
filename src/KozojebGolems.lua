@@ -426,7 +426,7 @@ function G.shield()
     -- Brak raportow o wlaczeniu innych profili: po krotkim czasie mozliwy
     -- jest lokalny plan awaryjny, ponownie oceniony na aktualnym GMCP.
     local key = A.snapshot().signature
-    if not G.wait or G.wait.key ~= key then
+    if not G.wait or G.wait.room~=A.room() then
       cancel("shieldTimer")
       local members={}
       for _,member in ipairs(A.group().members) do
@@ -444,7 +444,10 @@ function G.shield()
       local emergency=next(G.unavailable)~=nil
       for _,member in ipairs(members) do if urgent(member) then emergency=true break end end
       local delay=emergency and (0.15+rank*0.15) or (0.9+rank*0.3)
-      G.wait = {key=key, at=A.now() + delay}
+      -- Damage and target packets can change the signature every fraction
+      -- of a second. They must not restart the deadline for an absent/DPS
+      -- defender. The eventual fallback is validated on the latest state.
+      G.wait = {key=key, room=A.room(), at=A.now() + delay}
       if K.combatLog then K.combatLog.reason(nil,nil,"golem_fallback_wait",false,G.wait.at) end
       local wait, generation = G.wait, K.generation
       G.shieldTimer = tempTimer(delay, function()
@@ -1008,7 +1011,9 @@ function G.status()
 end
 function G.command(rest)
   local action, value = A.normal(rest):match("^(%S*)%s*(.-)$")
-  if action == "on" or action == "off" then
+  if action=="filtr" and K.F then
+    K.F.lootCommand(value)
+  elseif action == "on" or action == "off" then
     local wanted = action == "on"
     if K.config.golemsEnabled == wanted then
       A.note("Golemy: " .. (wanted and G.status() or "wylaczone"),"cyan"); return

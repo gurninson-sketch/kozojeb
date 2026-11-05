@@ -2,10 +2,12 @@ name: Release
 on:
   push:
     tags: ["v*.*.*"]
+    branches: ["main"]
+    paths: ["VERSION"]
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing version tag, e.g. v2.8.0"
+        description: "Version tag to prepare, e.g. v2.9.22; may be new"
         required: true
 permissions:
   contents: write
@@ -15,30 +17,49 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ github.ref }}
+          fetch-depth: 0
       - name: Install Lua library
-        run: sudo apt-get update && sudo apt-get install -y liblua5.4-0
+        run: sudo apt-get update && sudo apt-get install -y liblua5.1-0 liblua5.4-0
       - name: Verify version tag
         env:
-          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-        run: python3 -c 'import os,pathlib; assert os.environ["RELEASE_TAG"] == "v" + pathlib.Path("VERSION").read_text().strip()'
-      - name: Test
+          RELEASE_TAG: ${{ inputs.tag || (github.ref_type == 'tag' && github.ref_name) || '' }}
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, subprocess
+          tag = os.environ["RELEASE_TAG"] or "v" + pathlib.Path("VERSION").read_text().strip()
+          assert tag == "v" + pathlib.Path("VERSION").read_text().strip(), "Tag differs from VERSION"
+          head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          existing = subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"refs/tags/{tag}^{{commit}}"], text=True, stdout=subprocess.PIPE)
+          assert existing.returncode != 0 or existing.stdout.strip() == head, "Existing tag points to a different commit"
+          with open(os.environ["GITHUB_ENV"], "a") as env:
+              env.write(f"RELEASE_COMMIT={head}\nRELEASE_TAG={tag}\n")
+          PY
+      - name: Test Lua 5.1
+        env:
+          KOZO_LUA_LIBRARY: lua5.1
+        run: python3 tools/test.py
+      - name: Test Lua 5.4
         run: python3 tools/test.py
       - name: Build release assets
         run: python3 tools/build.py --repository "$GITHUB_REPOSITORY"
       - name: Publish release assets
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           if gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft > /tmp/kozojeb-release-draft; then
             if test "$(cat /tmp/kozojeb-release-draft)" = true; then
               gh release upload "$RELEASE_TAG" dist/Chimera_Kozojeb.mpackage dist/update.json --clobber
-              gh release edit "$RELEASE_TAG" --title "Kozojeb $RELEASE_TAG" --notes-file CHANGELOG.md
+              gh release edit "$RELEASE_TAG" --target "$RELEASE_COMMIT" --title "Kozojeb $RELEASE_TAG" --notes-file CHANGELOG.md
             else
               # Bootstrap an existing empty release; published assets are never overwritten.
               gh release upload "$RELEASE_TAG" dist/Chimera_Kozojeb.mpackage dist/update.json
             fi
           else
-            gh release create "$RELEASE_TAG" dist/Chimera_Kozojeb.mpackage dist/update.json --verify-tag --draft --title "Kozojeb $RELEASE_TAG" --notes-file CHANGELOG.md
+            gh release create "$RELEASE_TAG" dist/Chimera_Kozojeb.mpackage dist/update.json --target "$RELEASE_COMMIT" --draft --title "Kozojeb $RELEASE_TAG" --notes-file CHANGELOG.md
           fi
+      - name: Publish verified version from main
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$RELEASE_TAG" --draft=false --latest

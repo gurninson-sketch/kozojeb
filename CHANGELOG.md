@@ -1,5 +1,15 @@
 # Zmiany
 
+## 2.9.22
+
+- Watchdog: cisza w pakietach wstrzymuje komendy i zachowuje zadanie zamiast rozpoczynać odwrót na starych danych. Automatyczne wznowienie po świeżym pokoju, HP i walce; ograniczone odświeżanie GMCP oraz anulowanie przez STOP.
+- Zasłony: zmiany sygnatury walki nie przesuwają terminu planu awaryjnego dla niewykonanej zasłony. Zachowane lokalne role, reguły wykluczenia DPS, limity napastników, gotowość szyku oraz porównywanie HP w punktach.
+- Pomijanie powtórnego `wesprzyj` przy potwierdzonym tym samym celu oraz wąski, wyłączalny filtr pustej serii łupu na golemach. Dodatkowe komendy `wez <przedmiot>` są ustawialne; pancerze pozostają chronione przed filtrem.
+- Zapisywane blokady pokojów i wyjść, ostrożne rozpoznanie komunikatu pułapki po kierunku ruchu oraz kontrola tras automatycznych. Ręczny ruch pozostaje dostępny z ostrzeżeniem. Brak bezpiecznej potwierdzonej drogi nie uruchamia ślepego `/idz`.
+- Ręczne `zakoncz` anuluje wznowienie zadania; ustawieniami sieci nadal zarządza osobny automat. Zachowany cykl pancerzy i 100% HP całej drużyny po golemach.
+- Regresje odtwarzające przerwę GMCP, zmiany celu podczas oczekiwania na zasłonę, makra łupu, pułapkę mostu, STOP i reconnect. Publikacja po weryfikacji Lua 5.1 i 5.4 oraz powtarzalności paczki.
+- 22 nowe scenariusze; razem 662 symulacje bota, 60 bezpieczeństwa, 54 rejestratora i 30 aktualizatora. Wszystkie przechodzą w Lua 5.1 i 5.4; sprawdzane są również rzeczywiste wzorce triggerów, SHA-256, zapis JSONL i powtarzalność paczki.
+
 ## 2.9.21
 
 - Hotfix obsługi światła z 2.9.20: sama włączona opcja, start i reconnect nie zapalają lampy ani nie wymagają jej potwierdzenia w jasnym pokoju. Próba następuje dopiero po utracie widoczności potwierdzonej anonimowymi encjami GMCP bez rozpoznanej postaci lub NPC. Brak pakietu i anonimowy napastnik w widocznym otoczeniu nie są traktowane jako ciemność.

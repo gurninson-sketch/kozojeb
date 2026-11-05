@@ -6,12 +6,13 @@ local function loadCore()
   local logger=assert(io.open("src/KozojebCombatLog.lua","r"))
   local covers=assert(io.open("src/KozojebCovers.lua","r"))
   local safety=assert(io.open("src/KozojebSafety.lua","r"))
+  local flow=assert(io.open("src/KozojebFlow.lua","r"))
   local combined=main:read("*a") .. "\n" .. module:read("*a") .. "\n" .. covers:read("*a")
-    .. "\n" .. safety:read("*a") .. "\n" .. logger:read("*a")
-  main:close();module:close();covers:close();safety:close();logger:close()
+    .. "\n" .. safety:read("*a") .. "\n" .. flow:read("*a") .. "\n" .. logger:read("*a")
+  main:close();module:close();covers:close();safety:close();flow:close();logger:close()
   assert(compile(combined, "@" .. source))()
 end
-local clock, serial, timers, sends, aliases, output, saved, room, triggers, sendHandlers
+local clock, serial, timers, sends, aliases, output, saved, room, triggers, sendHandlers, deniedSend
 local function clone(value)
   if type(value) ~= "table" then return value end
   local result = {}
@@ -21,12 +22,14 @@ end
 function cecho(value) output[#output + 1] = value end
 function cechoLink(label, action) output[#output + 1] = label end
 function send(command)
+  deniedSend=false
   for _, handler in pairs(sendHandlers or {}) do
     assert(handler == "kozojeb.onShieldCommand")
     kozojeb.onShieldCommand("sysDataSendRequest", command)
   end
-  sends[#sends + 1] = command
+  if not deniedSend then sends[#sends + 1] = command end
 end
+function denyCurrentSend() deniedSend=true end
 function expandAlias(command) aliases[#aliases + 1] = command end
 function getPlayerRoom() return room end
 function getEpoch() return clock end
@@ -3198,9 +3201,9 @@ test("a burst of own combat progress reuses the existing idle timer", function()
   assert(serial==before and kozojeb.idleTimer==timer)
 end)
 
-test("without combat progress the idle watchdog still detects a genuine stall", function()
+test("without packets or combat progress the watchdog waits for fresh state", function()
   setupLeader();kozojeb.start();kozojeb.entitiesReady=false;advance(20.1)
-  assert(kozojeb.metrics.idleResets==1 and kozojeb.mode=="idle_return")
+  assert(kozojeb.metrics.idleResets==0 and kozojeb.mode=="reconnect_wait" and kozojeb.reconnectTask.dataStall)
 end)
 
 test("late combat text after disconnection cannot keep a suspended task alive", function()
@@ -4308,10 +4311,10 @@ test("diagnostyka reports the live state without commands settings writes or tim
   assert(not text:find("Nieznana komenda",1,true) and next(saved)==nil and serial==before and #sends==commands)
 end)
 
-test("watchdog diagnostics retain the combat target and state before the return clears it", function()
+test("watchdog diagnostics retain the combat target before suspending a silent socket", function()
   setupLeader();kozojeb.start();event("gmcp.Chimera.Combat.State");advance(20)
   local record=kozojeb.lastIdleDiagnostic
-  assert(kozojeb.metrics.idleResets==1 and record.mode=="combat" and record.target=="N")
+  assert(kozojeb.metrics.dataWaits==1 and kozojeb.metrics.idleResets==0 and record.mode=="combat" and record.target=="N")
   assert(record.room==1322 and record.gmcpAge>=19.9 and record.activityAge>=19.9)
   assert(table.concat(output):find("Diagnostyka [watchdog]",1,true))
 end)
@@ -6339,6 +6342,168 @@ test("a new attacker is not treated as a surviving subset of the successful resc
   gmcp.Chimera.Combat.State.relations={{attacker="S",defender="N"},{attacker="N",defender="S"},{attacker="Y",defender="M"}}
   event();event("gmcp.Chimera.Combat.State")
   assert(kozojeb.mode=="escape" and #aliases==1)
+end)
+
+test("a silent socket preserves combat without sending a return step",function()
+  setupLeader();kozojeb.start();room=1323;event();event("gmcp.Chimera.Combat.State")
+  local before,walks=#sends,#aliases
+  advance(20.1)
+  assert(kozojeb.reconnectTask and kozojeb.reconnectTask.dataStall and kozojeb.reconnectTask.mode=="combat")
+  assert(not kozojeb.enabled and kozojeb.mode=="reconnect_wait" and #sends==before and #aliases==walks)
+  assert(kozojeb.dataWaitTimer and kozojeb.metrics.idleResets==0)
+end)
+test("data-stall recovery needs fresh combat and never invents an idle return",function()
+  setupLeader();kozojeb.start();room=1323;event();advance(20.1)
+  assert(kozojeb.reconnectTask and kozojeb.reconnectTask.dataStall)
+  kozojeb.onRoomChanged("gmcp.Room.Info");event();advance(.6)
+  assert(not kozojeb.enabled and kozojeb.reconnectTask)
+  event("gmcp.Chimera.Combat.State");advance(.6)
+  assert(kozojeb.enabled and not kozojeb.reconnectTask and not kozojeb.dataWaitTimer)
+  assert(kozojeb.mode=="combat" and count("w")==0 and #aliases==0)
+end)
+test("fresh-state requests are bounded and STOP cancels automatic continuation",function()
+  local requests=0
+  sendGMCP=function() requests=requests+1 end
+  setupLeader();kozojeb.start();event();advance(20.1)
+  assert(requests==2)
+  for _=1,100 do kozojeb.refreshWaitingData() end
+  -- Calling the wakeup helper directly must not multiply requests.
+  assert(requests==2)
+  advance(15);assert(requests==4)
+  kozojeb.stop();advance(45);reconnectPackets();advance(1)
+  assert(requests==4 and not kozojeb.enabled and not kozojeb.reconnectTask and not kozojeb.dataWaitTimer)
+  sendGMCP=nil
+end)
+test("a transport loss during a data wait keeps the original task and cargo",function()
+  liveGolemLeader();local job=kozojeb.G.job
+  event("gmcp.Chimera.Combat.State");advance(20.1)
+  assert(kozojeb.reconnectTask and kozojeb.reconnectTask.mode=="combat")
+  kozojeb.onSessionEvent("sysDisconnectionEvent")
+  assert(kozojeb.reconnectTask.mode=="combat" and kozojeb.G.job==job)
+  reconnectPackets();advance(.6);assert(kozojeb.enabled and not kozojeb.reconnectTask)
+end)
+test("an intentional logout passes through and cancels bot resume",function()
+  reset("zaslony");kozojeb.start();send("zakoncz")
+  assert(count("zakoncz")==1 and not kozojeb.enabled)
+  kozojeb.onSessionEvent("sysDisconnectionEvent");reconnectPackets();advance(1)
+  assert(not kozojeb.enabled and not kozojeb.reconnectTask)
+end)
+test("changing target signatures cannot postpone a missing defender indefinitely",function()
+  golemSetup("S",nil,2);golemRelations({"L","L"});kozojeb.start()
+  assert(kozojeb.G.wait and #shieldCommands()==0)
+  local deadline=kozojeb.G.wait.at
+  for i=1,14 do
+    gmcp.Chimera.Combat.State.primary=i%2==0 and "N1" or "N2"
+    event("gmcp.Chimera.Combat.State");advance(.08)
+    if kozojeb.G.wait then assert(kozojeb.G.wait.at<=deadline) end
+  end
+  assert(#shieldCommands()==1,"fresh packet churn kept waiting for another profile")
+  noMovement()
+end)
+test("configured DPS members do not receive opening shield assignments",function()
+  local selected={}
+  for _,id in ipairs({"G","M"}) do
+    golemSetup(id);kozojeb.command("druzyna rola yergo wsparcie");kozojeb.start()
+    assert(#shieldCommands()==1 and not selected[shieldCommands()[1]])
+    selected[shieldCommands()[1]]=true
+  end
+  golemSetup("S","wsparcie");kozojeb.start();assert(#shieldCommands()==0);noMovement()
+end)
+test("a golem corpse macro is suppressed as one narrow outgoing sequence",function()
+  liveGolemLeader();local before=#sends
+  for _,command in ipairs({"wez kamienie z ciala","ocen kamienie","otworz swoj plecak",
+      "wloz kamienie do swojego plecaka","zamknij swoj plecak"}) do send(command) end
+  assert(#sends==before and kozojeb.metrics.lootFiltered==5)
+  send("wez pancerz");assert(count("wez pancerz")==1)
+end)
+test("standalone inventory commands and other NPC loot remain available",function()
+  liveGolemLeader();send("otworz swoj plecak");send("ocen kamienie")
+  assert(count("otworz swoj plecak")==1 and count("ocen kamienie")==1)
+  gmcp.Chimera.Room.Entities.entities[9]={id="Orc",name="Brutalny ork",kind="npc",hp=100,maxhp=100}
+  event();send("wez kamienie z ciala");assert(count("wez kamienie z ciala")==1)
+end)
+test("a late or interrupted inventory sequence is never swallowed",function()
+  liveGolemLeader();send("wez kamienie z ciala");advance(.3);send("ocen kamienie")
+  assert(count("ocen kamienie")==1)
+  send("wez kamienie z ciala");send("kondycja");send("otworz swoj plecak")
+  assert(count("kondycja")==1 and count("otworz swoj plecak")==1)
+end)
+test("manual leadership and followers keep their own corpse-loot controls",function()
+  for _,role in ipairs({"zaslony","wsparcie"}) do
+    golemSetup("S",role);kozojeb.start();send("wez kamienie z ciala")
+    assert(count("wez kamienie z ciala")==1)
+  end
+  golemSetup("L","zaslony");kozojeb.start();send("wez kamienie z ciala")
+  assert(count("wez kamienie z ciala")==1)
+end)
+test("the optional loot filter and extra item rules persist without blocking armor",function()
+  liveGolemLeader();kozojeb.command("golemy filtr dodaj wez misterny topor")
+  kozojeb.command("golemy filtr dodaj wez pancerz")
+  send("wez misterny topor");send("wez pancerz")
+  assert(count("wez misterny topor")==0 and count("wez pancerz")==1)
+  kozojeb.command("golemy filtr off");send("wez kamienie z ciala")
+  assert(count("wez kamienie z ciala")==1)
+  loadCore();assert(not kozojeb.config.golemLootFilter and kozojeb.config.golemLootIgnored["wez misterny topor"])
+end)
+test("fresh matching combat suppresses redundant external support only",function()
+  reset("zaslony");gmcp.Chimera.Combat.State.relations={
+    {attacker="L",defender="N"},{attacker="S",defender="N"},{attacker="N",defender="L"}}
+  kozojeb.start();send("wesprzyj")
+  assert(count("wesprzyj")==0 and kozojeb.metrics.supportFiltered==1)
+  gmcp.Chimera.Room.Entities.entities[5]={id="N2",name="Brutalny ork",kind="npc",hp=100,maxhp=100}
+  gmcp.Chimera.Combat.State.relations[1].defender="N2";event();event("gmcp.Chimera.Combat.State")
+  send("wesprzyj");assert(count("wesprzyj")==1)
+end)
+test("a support command with unknown or ambiguous combat is allowed",function()
+  reset("wsparcie");kozojeb.start();kozojeb.sessionFresh.combat=false
+  local before=count("wesprzyj");send("wesprzyj");assert(count("wesprzyj")==before+1)
+end)
+test("hazard settings use configurable room IDs and directional exits",function()
+  reset();kozojeb.command("pulapki blokuj 1323");kozojeb.command("pulapki blokuj 1322 east")
+  assert(not kozojeb.F.allowed(1322,"e",1324) and kozojeb.F.allowed(1322,"w",1324))
+  assert(not kozojeb.F.allowed(1324,"s",1323))
+  loadCore();assert(not kozojeb.F.allowed(1322,"east",1324))
+  kozojeb.command("pulapki usun 1322 e");assert(kozojeb.F.allowed(1322,"e",1324))
+  kozojeb.command("pulapki usun 1323");assert(not kozojeb.F.hasHazards())
+end)
+test("automatic movement cannot enter a blocked route or use the walker fallback",function()
+  setupLeader();kozojeb.start();kozojeb.command("pulapki blokuj 1322 w")
+  assert(not kozojeb.prepareMovement("w") and not kozojeb.enabled and count("w")==0)
+  setupLeader();kozojeb.start();kozojeb.command("pulapki blokuj 1323")
+  assert(not kozojeb.walkTo(1323) and #aliases==0 and not kozojeb.enabled)
+end)
+test("a direct chase step checks the destination room before it is sent",function()
+  setupLeader();kozojeb.start();kozojeb.command("pulapki blokuj 1323")
+  assert(not kozojeb.prepareMovement("e") and not kozojeb.enabled and count("e")==0)
+end)
+test("a dangerous edge later on a map route is rejected before the first step",function()
+  setupLeader();kozojeb.start();kozojeb.command("pulapki blokuj 1323 east")
+  local original=getPath
+  getPath=function() speedWalkDir={"e","e"};speedWalkPath={1323,1324};return true end
+  local ok,found=kozojeb.findPath(1322,1324)
+  assert(ok and not found and kozojeb.pathHazard)
+  assert(not kozojeb.walkTo(1324) and #aliases==0)
+  getPath=original
+end)
+test("manual movement warns about a hazard without taking control",function()
+  reset("zaslony");kozojeb.start();kozojeb.command("pulapki blokuj 1322")
+  send("s");assert(count("s")==1 and kozojeb.enabled and #aliases==0)
+end)
+test("the logged bridge trap is learned from the last actual direction",function()
+  reset("zaslony");kozojeb.start();send("s");kozojeb.F.onTrap()
+  assert(kozojeb.config.dangerousRooms["1322"] and #aliases==0 and count("s")==1)
+  kozojeb.command("pulapki usun 1322");advance(4);kozojeb.F.onTrap()
+  assert(not kozojeb.F.hasHazards(),"an old direction authorized learning an unrelated hazard")
+end)
+test("queued manual directions do not assign a trap to an uncertain map position",function()
+  reset("zaslony");kozojeb.start();send("s");send("s");kozojeb.F.onTrap()
+  assert(not kozojeb.F.hasHazards())
+end)
+test("STOP and session loss clear transient outgoing state",function()
+  liveGolemLeader();send("wez kamienie z ciala");assert(kozojeb.F.batch)
+  kozojeb.stop();assert(not kozojeb.F.batch)
+  liveGolemLeader();send("s");kozojeb.onSessionEvent("sysDisconnectionEvent")
+  assert(not kozojeb.F.lastMove and not kozojeb.F.batch)
 end)
 
 print(string.format("%d simulations passed", total))

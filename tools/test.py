@@ -121,6 +121,18 @@ for line in ("Zapalasz lampe.", "Zapalasz olejna lampe.", "Zapalasz pochodnie.",
     assert any(re.fullmatch(json.loads(pattern), line) for pattern in light_patterns), "Missing light acknowledgement: " + line
 assert not any(re.fullmatch(json.loads(pattern), "Gror zapala lampe.") for pattern in light_patterns)
 covers_source = (ROOT / "src/KozojebCovers.lua").read_text()
+flow_source = (ROOT / "src/KozojebFlow.lua").read_text()
+trap_trigger = re.search(r'tempRegexTrigger\(\s*("(?:\\.|[^"\\])*"),\[\[kozojeb\.F\.onTrap', flow_source)
+assert trap_trigger, "Missing logged trap trigger"
+trap_pattern = json.loads(trap_trigger.group(1))
+for line in (
+    "kociej wrecz zrecznosci udaje ci sie uniknac straszliwego ciecia oraz stracenia do otchlani.",
+    "Nagle z boku z glosnym swistem wylatuje ostrze. Straszliwe ciecie obraca cie, niczym szmaciana",
+    "lalke. Tracisz rownowage i spadasz w otchlan.",
+):
+    assert re.fullmatch(trap_pattern, line), "Missing wrapped bridge trap: " + line
+assert not re.fullmatch(trap_pattern, "Ogromny golem rani cie w korpus.")
+assert not re.fullmatch(trap_pattern, "Morrid mowi: Nagle z boku Straszliwe ciecie obraca cie.")
 general_cover = re.search(r'tempRegexTrigger\(\s*("(?:\\.|[^"\\])*"),\s*\[\[kozojeb\.C\.onTeamCover', covers_source)
 assert general_cover
 for line, groups in (("Morrid zaslania Yarrima przed ciosami bladego zwinnego ozywienca.",
@@ -167,6 +179,7 @@ with tempfile.TemporaryDirectory() as directory:
             + "\n" + (ROOT / "src/KozojebGolems.lua").read_text()
             + "\n" + (ROOT / "src/KozojebCovers.lua").read_text()
             + "\n" + (ROOT / "src/KozojebSafety.lua").read_text()
+            + "\n" + (ROOT / "src/KozojebFlow.lua").read_text()
             + "\n" + (ROOT / "src/KozojebCombatLog.lua").read_text())
         assert 'local releaseRepository = "example/kozojeb"' in scripts[2].findtext("script")
         assert all(script.get("isActive") == "yes" for script in scripts)

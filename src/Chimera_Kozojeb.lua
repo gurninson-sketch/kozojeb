@@ -58,7 +58,7 @@ end
 K.legacyImportTried = true
 K.initialized = false
 
-K.version = "2.9.21"
+K.version = "2.9.22"
 K.config = K.config or {
   chaseDelay = 0.20,
   patrolDelay = 0.70,
@@ -150,6 +150,8 @@ local settingTypes = {
   targetWeakest="boolean",
   combatLogEnabled="boolean",
   lightEnabled="boolean", lightCommand="string", targetedShieldsEnabled="boolean",
+  dangerousRooms="table", dangerousExits="table", trapAutoLearn="boolean",
+  golemLootFilter="boolean", golemLootIgnored="table",
   teamRoleRulesVersion="number", teamDeaths="table",
   targets="table", targetOrder="table", attackForms="table", teamMembers="table",
   shieldNameForms="table", teamRoles="table", ignoreNonTargets="boolean", ignoredNames="table",
@@ -682,7 +684,7 @@ local function cancelAllTimers()
     "actionTimer", "moveTimer", "roomSyncTimer", "restTimer", "escapeTimer", "killTimer",
     "returnTimer", "healTimer", "recoveryTimer",
     "panicTimer",
-    "idleTimer", "idleReturnTimer",
+    "idleTimer", "idleReturnTimer", "dataWaitTimer",
     "focusTimer", "pendingFleeTimer", "targetLostTimer",
     "killConfirmTimer", "escapeWatchTimer", "escapeResumeTimer", "shieldTimer", "herbTimer",
     "supportTimer", "supportHintTimer", "shieldTurnTimer", "teamShieldTimer", "reconnectTimer",
@@ -1480,7 +1482,8 @@ local function mapExitList(roomId)
       local key = tostring(direction) .. ":" .. tostring(nextId)
       local blocked = K.failedExits[tonumber(roomId)]
       local rejected = blocked and (blocked[normal(direction)] or blocked[directionCommands[normal(direction)]])
-      if nextId and K.roomSet[nextId] and not seen[key] and not rejected then
+      if nextId and K.roomSet[nextId] and not seen[key] and not rejected
+          and (not K.F or K.F.allowed(roomId,direction,nextId)) then
         result[#result + 1] = { direction = tostring(direction), room = nextId }
         seen[key] = true
       end
@@ -1508,7 +1511,7 @@ local function adjacentExitList(roomId)
   for direction, nextId in pairs(exits) do
     local command = directionCommands[normal(direction)] or normal(direction)
     nextId = tonumber(nextId)
-    if nextId and inverseDirections[command] then
+    if nextId and inverseDirections[command] and (not K.F or K.F.allowed(roomId,command,nextId)) then
       result[#result + 1] = { direction = command, room = nextId }
     end
   end
@@ -1687,7 +1690,7 @@ sendRecoveryReturnAttempt = function()
     "Powrot po leczeniu przez /idz %d: proba %d/%d.",
     K.config.startRoom, K.recoveryAttempts, K.config.escapeMaxAttempts
   ), "green")
-  expandAlias("/idz " .. K.config.startRoom)
+  if not K.walkTo(K.config.startRoom) then return end
   later("recoveryTimer", K.config.escapeRetryDelay, sendRecoveryReturnAttempt)
 end
 
@@ -1772,7 +1775,7 @@ local function sendEscapeAttempt()
     "Proba dojscia do bazy %d: %d/%d.",
     escapeDestination(), K.escapeAttempts, K.config.escapeMaxAttempts
   ), "yellow")
-  expandAlias("/idz " .. escapeDestination())
+  if not K.walkTo(escapeDestination()) then return end
   later("escapeWatchTimer", K.config.escapeRetryDelay, sendEscapeAttempt)
 end
 
@@ -2176,7 +2179,12 @@ local function reserveShieldRequest(entity, form, external)
 end
 
 function K.onShieldCommand(_, command)
-  -- Wspoldzielony obserwator nie nadpisuje send i nie blokuje recznych komend.
+  if K.F and K.F.outgoing(command) then return end
+  if not K.sessionBlocked and K.sessionFresh.room and K.entitiesReady and type(command)=="string"
+      and (K.enabled or K.reconnectTask) and normal(command)=="zakoncz" then
+    K.stop("Reczne wylogowanie. Zadanie i oczekujace wznowienie anulowane.")
+  end
+  -- Obserwator szyku nie nadpisuje send ani nie blokuje recznych zaslon.
   if K.G then K.G.onLootCommand(command) end
   if K.sendingShield or type(command) ~= "string" or #command < 8 or #command > 128 then return end
   local form = command:match("^%s*[Zz][Aa][Ss][Ll][Oo][Nn]%s+([%a%-]+)%s*$")
@@ -3603,7 +3611,7 @@ returnToPursuitOriginStep = function()
 
   speedWalkDir = nil
   speedWalkPath = nil
-  local ok, found = pcall(getPath, room, destination)
+  local ok, found = K.findPath(room, destination)
   local command
   if ok and found ~= false and type(speedWalkDir) == "table" and #speedWalkDir > 0 then
     local raw = tostring(speedWalkDir[1])
@@ -3697,6 +3705,7 @@ local function finishIdleReset()
 end
 
 local function fallbackIdleReset(room, destination)
+  if K.pathHazard then K.stop("Powrot zablokowany przez zapisana pulapke; potrzebna bezpieczna droga.");return end
   K.idleAliasAttempts = (K.idleAliasAttempts or 0) + 1
   if K.idleAliasAttempts > K.config.escapeMaxAttempts then
     K.stop(string.format(
@@ -3709,7 +3718,7 @@ local function fallbackIdleReset(room, destination)
     "Mapa nie ma drogi do %d. Awaryjna proba /idz: %d/%d.",
     destination, K.idleAliasAttempts, K.config.escapeMaxAttempts
   ), "yellow")
-  pcall(expandAlias, "/idz " .. destination)
+  if not K.walkTo(destination) then return end
   K.idleAliasActive = true
   later("idleReturnTimer", 10.0, idleReturnStep)
 end
@@ -3735,7 +3744,7 @@ idleReturnStep = function()
 
   speedWalkDir = nil
   speedWalkPath = nil
-  local ok, found = pcall(getPath, room, destination)
+  local ok, found = K.findPath(room, destination)
   if not ok or found == false or type(speedWalkDir) ~= "table" or #speedWalkDir == 0 then
     fallbackIdleReset(room, destination)
     return
@@ -3754,6 +3763,14 @@ function K.onIdleTimeout()
     return
   end
   K.lastIdleDiagnostic = K.diagnostics("watchdog")
+  -- A silent socket is not evidence that movement is safe. Preserve the
+  -- original task, invalidate cached room/combat data and await fresh GMCP.
+  local received=K.lastGmcpAt or K.lastActivityAt
+  if received and now()-received>=math.min(5,K.config.idleTimeout/2) then
+    K.metrics.dataWaits=(K.metrics.dataWaits or 0)+1
+    K.onSessionEvent("data_stall")
+    return
+  end
   K.generation = K.generation + 1
   cancelAllTimers()
   clearTarget()
@@ -3897,6 +3914,7 @@ function K.onPanicLanded()
 end
 
 function K.onRoomChanged(eventName)
+  if K.F and eventName=="gmcp.Room.Info" then K.F.roomRevision=(K.F.roomRevision or 0)+1 end
   if K.combatLog and eventName=="gmcp.Room.Info" then K.combatLog.packet(eventName) end
   if eventName == "gmcp.Room.Info" then K.lastGmcpAt, K.lastGmcpEvent = now(), eventName end
   invalidateState(true)
@@ -4394,6 +4412,7 @@ function K.onKill(name, confirmedByServer, observedId)
 end
 
 function K.stop(reason)
+  if K.F then K.F.session() end
   if K.combatLog then K.combatLog.close("stop",reason) end
   if K.S then K.S.cancel() end
   invalidateState(true)
@@ -4441,6 +4460,7 @@ function K.tryResumeAfterReconnect()
   if not K.sessionFresh.entities or not K.entitiesReady or K.roomChangePending then
     missing[#missing + 1] = "Room.Entities"
   end
+  if task.dataStall and not K.sessionFresh.combat then missing[#missing+1]="Combat.State" end
   if #missing > 0 then
     K.reconnectWaitReason = "Czekam: " .. table.concat(missing, ", ")
     return
@@ -4471,6 +4491,7 @@ function K.tryResumeAfterReconnect()
   -- Room.Info i lista encji z wlasnym HP potwierdzaja powrot do gry.
   -- Group/Combat/Vitals nie zawsze sa ponownie wysylane, gdy stan sie nie
   -- zmienil. Ich stare kopie pozostaja odfiltrowane przez sessionFresh.
+  -- Po ciszy watchdogu dodatkowo wymagamy swiezej walki (warunek wyzej).
   -- Krotka pauza pozwala przetworzyc pozostale pakiety tego samego logowania.
   if not task.snapshotReady then
     K.reconnectWaitReason = "Odebrano pokoj i HP; uzgadniam stan"
@@ -4503,6 +4524,7 @@ function K.tryResumeAfterReconnect()
     end
   end
   K.reconnectTask, K.reconnectWaitReason = nil, nil
+  cancelTimer("dataWaitTimer")
   K.loginConflict = nil
   K.enabled = true
   if K.S then K.S.started() end
@@ -4518,7 +4540,8 @@ function K.tryResumeAfterReconnect()
     K.armMovementRest()
   end
   K.lastProgressFingerprint = progressFingerprint()
-  note("Polaczenie przywrocone. Automatycznie wznawiam zadanie; baza "
+  note((task.dataStall and "Odebralem swieze dane. Automatycznie wznawiam zadanie; baza "
+    or "Polaczenie przywrocone. Automatycznie wznawiam zadanie; baza ")
     .. tostring(K.config.startRoom) .. ".", "green")
   if isFollower() then inspectRoom() return end
   markCurrentRoom()
@@ -4567,7 +4590,27 @@ function K.onLoginConflict()
     .. "samo ponawianie polaczenia nie odpowiada na pytanie o przejecie kontroli.", "yellow")
 end
 
+function K.refreshWaitingData()
+  if not K.reconnectTask or not K.reconnectTask.dataStall then return end
+  if type(sendGMCP)=="function" and (not K.dataWaitRequestAt or now()-K.dataWaitRequestAt>=15) then
+    local connected=true
+    if type(getConnectionInfo)=="function" then
+      local ok,_,_,value=pcall(getConnectionInfo)
+      if ok and value==false then connected=false end
+    end
+    if connected then
+      K.dataWaitRequestAt=now()
+      pcall(sendGMCP,'Core.Supports.Remove ["Char","Room","Chimera.Group","Chimera.Room","Chimera.Combat"]')
+      pcall(sendGMCP,'Core.Supports.Add ["Char 2","Room 1","Chimera.Group 1","Chimera.Room 1","Chimera.Combat 2"]')
+    end
+  end
+  if K.reconnectTask and K.reconnectTask.dataStall and not K.dataWaitTimer then
+    later("dataWaitTimer",15,K.refreshWaitingData)
+  end
+end
+
 function K.onSessionEvent(eventName)
+  if eventName=="data_stall" then K.dataWaitRequestAt=nil end
   if K.combatLog then K.combatLog.boundary(eventName) end
   if K.C then K.C.reset() end
   if K.S then K.S.session() end
@@ -4608,6 +4651,7 @@ function K.onSessionEvent(eventName)
   if K.reconnectTask then
     K.reconnectTask.snapshotReady = nil
     K.reconnectTask.movementRevision = K.dataRevision
+    if eventName=="data_stall" then K.reconnectTask.dataStall=true end
   end
   K.movementRest, K.moveSnapshot, K.teamStep = nil, nil, nil
   K.movementRevision = nil
@@ -4627,8 +4671,12 @@ function K.onSessionEvent(eventName)
   K.vitalsSource = nil
   K.shieldAwaitCombatRevision = nil
   if wasEnabled then
-    note("Polaczenie z gra przerwane. Po zalogowaniu i odebraniu swiezych danych automatycznie wznowie zadanie.", "yellow")
+    note(eventName=="data_stall" and
+      "Brak naplywu danych z gry. Wstrzymuje komendy; po swiezym pokoju, HP i walce automatycznie wznowie zadanie." or
+      "Polaczenie z gra przerwane. Po zalogowaniu i odebraniu swiezych danych automatycznie wznowie zadanie.", "yellow")
   end
+  if K.F then K.F.session() end
+  K.refreshWaitingData()
 end
 
 function K.onMoveRejected()
@@ -4681,6 +4729,10 @@ end
 
 function K.prepareMovement(command, regroup)
   if isFollower() or K.sessionBlocked then return false end
+  if K.F and not K.F.stepAllowed(currentRoom(),command) then
+    K.stop("Automatyczny ruch zablokowany: zapisana pulapka w pokoju "..tostring(currentRoom())..".")
+    return false
+  end
   if not regroup and (K.movementRest or K.teamStep) then return false end
   local roster = {}
   for _, member in ipairs(groupContext().members) do
@@ -5098,7 +5150,8 @@ function K.status()
   local supportOnly = {}
   for name, role in pairs(K.config.teamRoles) do if role == "wsparcie" then supportOnly[#supportOnly+1]=name end end
   table.sort(supportOnly)
-  if #supportOnly>0 then statusRow("Tylko wsparcie", table.concat(supportOnly, ", ")) end
+  if #supportOnly>0 then statusRow("Tylko wsparcie", table.concat(supportOnly, ", "))
+  else statusRow("Role innych", "brak wylaczen z zaslon; /kozojeb druzyna role") end
   local context = groupContext()
   local leader = context.leader
   local leaderHp = context.leaderHp
@@ -5635,6 +5688,8 @@ function K.performance()
     m.health, m.combat, m.index, m.shields, m.support, m.shieldBlocked))
   note(string.format("Ataki %d; ponowienia ataku %d; powroty watchdogu %d; oczekiwania restartu %d.",
     m.attacks, m.attackRetries, m.idleResets, m.restartWaits))
+  note(string.format("Oczekiwania na swieze dane %d; pominiete komendy: pusty lup %d, powtorne wsparcie %d.",
+    m.dataWaits or 0, m.lootFiltered or 0, m.supportFiltered or 0))
   note(string.format("Odpoczynki po odmowie ruchu lub rozdzieleniu druzyny %d; powroty po druzyne %d.",
     m.movementRests, m.regroups))
   if K.config.golemsEnabled then
@@ -5669,7 +5724,9 @@ local function executeCommand(arguments)
   local input = trim(arguments)
   local action, rest = input:match("^(%S+)%s*(.-)$")
   action = normal(action or "status")
-  if action=="swiatlo" and K.S then
+  if action=="pulapki" and K.F then
+    K.F.command(rest)
+  elseif action=="swiatlo" and K.S then
     K.S.command(rest)
   elseif action=="celowanezaslony" then
     local value=normal(rest)
@@ -6191,9 +6248,24 @@ K.golemApi = {
   isSelf=isSelf, isFollower=isFollower, health=latestHealth, normal=normal,
   liveNpc=liveNpc, commandPeers=npcCommandPeers, snapshot=combatSnapshot, pair=shieldHealthPair,
   projection=shieldProjection, shield=tryShield, threat=recoveryThreat, canShield=canShieldMember,
-  form=shieldNameForm, safety=function() return safetyCheck(true) end,
+  form=shieldNameForm, safety=function() return safetyCheck(true) end, directions=directionCommands,
   queue=function() queueInspection(inspectRoom) end,
   ensureTarget=function() addCustomTarget("golem golema") end,
   heal=function() K.escapeTailSent=false; finishEscapeTail() end,
 }
 K.combatLogApi={now=now,note=note,room=currentRoom,normal=normal,isSelf=isSelf,combat=combatState,liveNpc=liveNpc}
+
+function K.findPath(from,destination)
+  local ok,found=pcall(getPath,from,destination)
+  K.pathHazard=nil
+  if ok and found~=false and K.F and not K.F.validatePath(from) then
+    K.pathHazard=true
+    return true,false
+  end
+  return ok,found
+end
+function K.walkTo(destination)
+  if K.F then return K.F.walk(destination) end
+  expandAlias("/idz "..destination)
+  return true
+end

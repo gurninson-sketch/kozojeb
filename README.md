@@ -1,10 +1,44 @@
-# Chimera Kozojeb 2.9.21
+# Chimera Kozojeb 2.9.22
 
 [Pobierz najnowszą paczkę](https://github.com/gurninson-sketch/kozojeb/releases/latest/download/Chimera_Kozojeb.mpackage) · [Wydania](https://github.com/gurninson-sketch/kozojeb/releases)
 
 **Kozojeb** jest rozwinięciem oryginalnego **KozoBota**, którego autorem jest **Pipek**. Zachowujemy autorstwo oryginału; nazwa Kozojeb oznacza rozwijaną tutaj wersję.
 
 Bot do Mudleta: patrol, walka i role drużynowe w Chimerze. Prowadzącym może być dowolny profil. Pozostałe profile wspierają walkę zgodnie ze swoją rolą; decyzję o odwrocie podejmuje prowadzący, korzystając z danych drużyny w GMCP.
+
+## Poprawki po analizie logów z 3–5 listopada — 2.9.22
+
+- Watchdog rozróżnia zastój mimo bieżących pakietów od braku danych z gry. Przy przerwie w danych zachowuje zadanie i pancerze oraz wstrzymuje komendy. Po świeżych `Room.Info`, `Room.Entities` i `Combat.State` automatycznie ocenia obecną walkę. Odświeżenie subskrypcji GMCP następuje najwyżej raz na 15 sekund, bez pętli ruchu i ponownego logowania. Oczekujący STOP anuluje wznowienie.
+- Kolejne zmiany celu w GMCP nie odsuwają w nieskończoność awaryjnej zasłony oczekującej na inny profil. Sama rola profilu pozostaje lokalna. Dla osoby ustawionej na DPS zapisz na pozostałych profilach ogólną regułę `/kozojeb druzyna rola <imie> wsparcie`, aby od początku nie przydzielać jej zasłon. Aktualizacja nie zmienia zapisanych ról i nie wprowadza przypisań według imienia.
+- Powtórne `wesprzyj` może zostać pominięte, jeśli aktualne, jednoznaczne relacje GMCP potwierdzają ten sam żywy cel prowadzącego i wspierającego. Inny, nieznany albo niejednoznaczny cel nadal dopuszcza wsparcie. Dotyczy również komend wysyłanych przez osobne triggery; liczbę pominięć pokazuje `/kozojeb wydajnosc`.
+- `zakoncz` wysłane już w grze zatrzymuje zadanie Kozojeba i anuluje jego wznowienie. Ponowne zestawianie połączenia przez Mudleta lub osobny Reconnect ma własne ustawienia.
+
+### Puste serie łupu na golemach
+
+Przy aktywnym automatycznym prowadzącym, włączonych golemach i pokoju z samymi golemami filtr pomija serię `wez kamienie z ciala`, `ocen kamienie`, otwarcie plecaka, wkładanie kamieni i zamknięcie plecaka. Kolejne cztery polecenia muszą nadejść w tej kolejności w ciągu 0,25 s; pojedyncza ręczna komenda ekwipunku pozostaje dostępna. Pancerze zbierane są jak dotąd, a odpoczynek nadal wymaga 100% HP całej drużyny. Filtr nie działa podczas ręcznego prowadzenia w roli `zaslony`, u wspierających, w mieszanych pokojach, przy przeszukiwaniu w bazie ani na wyłączonym bocie.
+
+```text
+/kozojeb golemy filtr status
+/kozojeb golemy filtr off
+/kozojeb golemy filtr on
+```
+
+Zbędne komendy pobierania innych przedmiotów można dodać samodzielnie, np. `/kozojeb golemy filtr dodaj wez misterny topor`; cofnięcie: `filtr usun wez misterny topor`. Nie można w ten sposób filtrować pancerzy. Lista jest konfigurowalna, domyślnie pusta. Docelowo usuń niepotrzebny automat łupu u źródła; filtr ogranicza jego komendy, ale nie odinstalowuje obcych triggerów.
+
+### Zapisane pułapki i niebezpieczne przejścia
+
+```text
+/kozojeb pulapki status
+/kozojeb pulapki blokuj <numer_pokoju>
+/kozojeb pulapki blokuj <numer_pokoju> <kierunek>
+/kozojeb pulapki usun <numer_pokoju> [kierunek]
+/kozojeb pulapki on
+/kozojeb pulapki off
+```
+
+Powyższe numery i kierunki zastąp wartościami z mapy. Zapis dotyczy bieżącego profilu. Automatyczny patrol omija zablokowane pokoje i wyjścia przy wyborze trasy. Powrót lub odwrót sprawdza również całą drogę mapy przed wywołaniem `/idz`; brak potwierdzonej bezpiecznej drogi zatrzymuje bota zamiast wysyłać go przez pułapkę. Obce, ręcznie uruchomione `/idz` i inne boty nie są zmieniane.
+
+Wykrywanie zapisuje pokój po rozpoznanym komunikacie pułapki z ostrzem i niedawnym, jednoznacznym kierunku ruchu. Dotyczy również uniknięcia pułapki. Seria kierunków bez potwierdzenia pozycji daje ostrzeżenie zamiast zapisania przypadkowej lokacji. `off` wyłącza nowe automatyczne rozpoznawanie; zapisane blokady usuwa `usun`. Przy ręcznym prowadzeniu bot ostrzega, a ruch pozostaje pod kontrolą gracza. Mechanizm nie zapewnia ochrony przed pierwszą nieznaną pułapką i nie zawiera wpisanych na stałe numerów pokoi z logów.
 
 ## Instalacja
 
@@ -225,7 +259,7 @@ Wznowienie patrolu wymaga obsłużenia pancerzy, obecności całej zapamiętanej
 - Nowe miejsce leczenia jest sprawdzane po przybyciu — mapa nie gwarantuje, że sąsiedni pokój będzie bezpieczny. Potwierdzone miejsce pozostaje awaryjnym celem następnych odwrotów do zatrzymania zadania. Ustawiony start patrolu nie jest zmieniany; po pełnej regeneracji i zebraniu drużyny bot wraca do niego. Panel pokazuje awaryjne miejsce leczenia. Rozłączenie zachowuje ten kontekst, ręczny stop, śmierć i zmiana roli go anulują. Wspierający nie wykonują własnej ewakuacji ani raportowania.
 - Ręczne `/kozojeb baza`, `startpokoj <ID>` lub `bezczynnosc <sekundy> <ID>` zastępuje wcześniejsze awaryjne miejsce odwrotu. Bot nie kieruje kolejnego odwrotu do starego schronienia po wskazaniu nowej bazy.
 - Pęknięcie własnego lub widocznego drużynowego ekwipunku uruchamia wspólny odwrót i blokuje automatyczne wznowienie. Uzupełnij sprzęt i wpisz na prowadzącym `/kozojeb ekwipunek gotowy`.
-- Rozłączenie wstrzymuje komendy i zapamiętuje aktywne zadanie. Po ponownym zalogowaniu Kozojeb **automatycznie je wznawia, bez `/kozojeb start`**. Wymaga świeżego pokoju i listy encji z własną postacią oraz kompletnym HP. Po krótkiej pauzie 0,5 s ocenia aktualny stan. Brak ponownego wysłania niezmienionych `Group.State`, `Combat.State` lub `Char.Vitals` nie blokuje wznowienia. Starsze dane walki i składu drużyny pozostają odfiltrowane; drużyna może być rozpoznana po rolach na świeżej liście encji. Ruch jest monitorowany według ostatniego znanego odczytu, aż przyjdzie jego aktualizacja.
+- Rozłączenie wstrzymuje komendy i zapamiętuje aktywne zadanie. Po ponownym zalogowaniu Kozojeb **automatycznie je wznawia, bez `/kozojeb start`**. Wymaga świeżego pokoju i listy encji z własną postacią oraz kompletnym HP. Po krótkiej pauzie 0,5 s ocenia aktualny stan. Przy zwykłym zerwaniu połączenia brak ponownego wysłania niezmienionych `Group.State`, `Combat.State` lub `Char.Vitals` nie blokuje wznowienia. Po ciszy wykrytej przez watchdog wymagany jest dodatkowo świeży `Combat.State`; ograniczone odświeżanie GMCP działa również po późniejszym rozłączeniu. Starsze dane walki i składu drużyny pozostają odfiltrowane; drużyna może być rozpoznana po rolach na świeżej liście encji. Ruch jest monitorowany według ostatniego znanego odczytu, aż przyjdzie jego aktualizacja.
 - Przed wznowieniem patrolu prowadzący czeka na wcześniej widocznych członków drużyny. Ich nieobecność nie blokuje pilnego odwrotu ani kontynuacji leczenia; zebranie drużyny jest wtedy sprawdzane w bazie. Wspierający wracają do swoich ról bez własnego ruchu. Panel pokazuje konkretny brakujący odczyt albo gracza, gdy wznowienie nadal oczekuje.
 - Automatyczne wznowienie zachowuje bazę, obszar i postęp patrolu. Trwający odwrót, leczenie lub powrót jest kontynuowany. Cel walki i kolejny krok są wybierane ponownie z aktualnych danych. Logowanie i ponowne połączenie obsługuje Mudlet oraz dotychczasowa konfiguracja profilu.
 - `/kozojeb stop` anuluje również oczekujące wznowienie. Bot zatrzymany przed rozłączeniem pozostaje zatrzymany. Zmiana roli anuluje poprzednie zadanie; logowanie inną postacią również go nie wznawia. Po aktualizacji paczki bot pozostaje zatrzymany.
@@ -235,7 +269,7 @@ Wznowienie patrolu wymaga obsłużenia pancerzy, obecności całej zapamiętanej
 
 ## Aktualizacje z GitHuba
 
-Jeśli masz już Kozojeba 2.8.1–2.9.20, wykonaj na **każdym profilu**:
+Jeśli masz już Kozojeba 2.8.1–2.9.21, wykonaj na **każdym profilu**:
 
 ```text
 /kozojeb stop
@@ -244,7 +278,7 @@ Jeśli masz już Kozojeba 2.8.1–2.9.20, wykonaj na **każdym profilu**:
 /kozojeb aktualizuj
 ```
 
-Poczekaj na zakończenie walki i ruchu oraz komunikat `Zainstalowano 2.9.21`. Sprawdź `/kozojeb status`; powinien pokazać wersję **2.9.21**. Wyłącz stary dodatkowy trigger pancerzy — podniesienia po każdym zabiciu są już wbudowane. Skontroluj `/kozojeb druzyna role` na każdym profilu; domyślnie nie ma przypisań zależnych od imion. Własne role profili i inne własne modele pozostają zapisane. Opcjonalnie włącz `/kozojeb swiatlo on` na postaciach z lampą i paliwem; opcja działa tylko przy wykrytej utracie widoczności. Następnie uruchom `/kozojeb start` — najpierw na wspierających, potem na prowadzącym stojącym w bazie. To jednorazowy start po aktualizacji; późniejsze rozłączenia nie wymagają ręcznego wznowienia. Nie trzeba usuwać ani ręcznie instalować paczki; można przejść bezpośrednio z 2.9.2 do 2.9.21. Zwykły próg regeneracji wynosi domyślnie 95%; można go zmienić przez `/kozojeb powrothp 95`. Tryb golemów wymaga osobnego włączenia i w swoim cyklu czeka na 100% całej drużyny.
+Poczekaj na zakończenie walki i ruchu oraz komunikat `Zainstalowano 2.9.22`. Sprawdź `/kozojeb status`; powinien pokazać wersję **2.9.22**. Wyłącz stary dodatkowy trigger pancerzy — podniesienia po każdym zabiciu są już wbudowane. Skontroluj `/kozojeb druzyna role` na każdym profilu; domyślnie nie ma przypisań zależnych od imion. Własne role profili i inne własne modele pozostają zapisane. Opcjonalnie włącz `/kozojeb swiatlo on` na postaciach z lampą i paliwem; opcja działa tylko przy wykrytej utracie widoczności. Następnie uruchom `/kozojeb start` — najpierw na wspierających, potem na prowadzącym stojącym w bazie. To jednorazowy start po aktualizacji; późniejsze rozłączenia nie wymagają ręcznego wznowienia. Nie trzeba usuwać ani ręcznie instalować paczki; można przejść bezpośrednio z 2.9.2 do 2.9.22. Zwykły próg regeneracji wynosi domyślnie 95%; można go zmienić przez `/kozojeb powrothp 95`. Tryb golemów wymaga osobnego włączenia i w swoim cyklu czeka na 100% całej drużyny.
 
 Przy paczce zbudowanej w tym repozytorium adres wydań jest wbudowany. W paczce przygotowanej bez adresu skonfiguruj na każdym profilu:
 
@@ -332,7 +366,7 @@ Zapis obejmuje HP i maksymalne HP wszystkich rozpoznanych członków, procent be
 
 Kontrole faktycznie wykonane przez ten profil mają kody przyczyn: m.in. `hp_gap`, `hp_reserve`, `ambiguous_selector`, `unsafe_projection`, `cover_hold`, `transfer_hold`, `formation_busy`, `reply_pending`, `defender_turn`, `hp_above_threshold` i `no_npc`. To ślad rozważanych kandydatów, nie symulacja dodatkowych decyzji. Zasłona innego celu może pozostawić wpisy wcześniejszych odrzuconych kandydatów. Zapis przechowuje najwyżej 24 członków, 32 NPC i 64 kontrole na próbkę; pole `truncated` oznacza ograniczenie rozmiaru. Nie zmienia komend, ról, prowadzenia, progów odwrotu ani wymagań regeneracji. Błąd pliku wyłącza rejestrator do ponownego `zapis on`, zgłasza jedną informację i pozostawia bota w pracy.
 
-`/kozojeb diagnostyka` pokazuje te liczniki oraz bieżący tryb, rolę, pokój, ID celu, gotowość danych i oczekujący ruch. Podaje czas od ostatniego odebranego GMCP, własnego ciosu, postępu bota i decyzji. Watchdog zapisuje ten sam krótki stan przed rozpoczęciem powrotu. Identyczny pakiet GMCP aktualizuje czas odbioru, lecz nie udaje postępu. Diagnostyka działa na żądanie lub przy faktycznym zastoju; nie dodaje timera, odpytywania ani rejestratora pakietów. Sam taki zapis nie rozstrzyga przyczyny zerwania TCP.
+`/kozojeb diagnostyka` pokazuje te liczniki oraz bieżący tryb, rolę, pokój, ID celu, gotowość danych i oczekujący ruch. Podaje czas od ostatniego odebranego GMCP, własnego ciosu, postępu bota i decyzji. Watchdog zapisuje ten sam krótki stan przed decyzją o powrocie lub oczekiwaniu na świeże dane. Identyczny pakiet GMCP aktualizuje czas odbioru, lecz nie udaje postępu. Diagnostyka działa na żądanie lub przy faktycznym zastoju; sama nie dodaje timera, odpytywania ani rejestratora pakietów. Oczekiwanie na utracone dane korzysta z osobnego odświeżenia najwyżej raz na 15 sekund. Sam zapis nie rozstrzyga przyczyny zerwania TCP.
 
 ## Zmęczenie i odmowa ruchu
 

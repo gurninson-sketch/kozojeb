@@ -20,6 +20,7 @@ def build(repository: str = "", output: Path | None = None) -> Path:
     core += "\n" + (ROOT / "src/KozojebGolems.lua").read_text()
     core += "\n" + (ROOT / "src/KozojebCovers.lua").read_text()
     core += "\n" + (ROOT / "src/KozojebSafety.lua").read_text()
+    core += "\n" + (ROOT / "src/KozojebFlow.lua").read_text()
     core += "\n" + (ROOT / "src/KozojebCombatLog.lua").read_text()
     if f'K.version = "{version}"' not in core:
         raise ValueError("VERSION differs from the Lua core version")
