@@ -637,19 +637,31 @@ local function shareGem(job)
     A.note("Golemy: brak potwierdzenia przekazania kamienia do " .. recipient.name
       .. ". Pomijam tego odbiorce przez 30 s.", "yellow")
   end)
-  -- A singular, full item description selects one stone, even for duplicates.
-  send("daj " .. item .. " " .. recipient.form)
+  send("daj kamien " .. recipient.form)
   return true
 end
 local gemPrefix = "udaje ci sie otworzyc ukryta na piersi zgruchotanego golema klapke i zabierasz znajdujace sie pod"
 local gemDescription = "nia zrodlo mocy konstruktu, ([a-z][a-z %-]+)%."
+local gemNouns = {
+  agat=true, apatyt=true, awenturyn=true, azuryt=true, cyrkon=true, cytryn=true,
+  diament=true, diopsyd=true, fluoryt=true, gagat=true, granat=true, hematyt=true,
+  jaspis=true, kamien=true, karneol=true, kwarc=true, malachit=true, obsydian=true,
+  oliwin=true, onyks=true, ortoklaz=true, turmalin=true, tytanit=true, zoisyt=true,
+}
+local function confirmedGem(text, delivery)
+  local item, recipient = text:match("^dajesz ([a-z][a-z %-]*) ([a-z][a-z%-]*)%.$")
+  if not item or recipient ~= delivery.form then return false end
+  -- The generic selector can give a previously carried stone.
+  if item == delivery.item then return true end
+  return not item:find(" i ", 1, true) and gemNouns[item:match("([a-z]+)$")] == true
+end
 function G.onGemText(line)
   local job = G.job
   if not fresh() or A.isFollower() or not job or A.room() ~= tonumber(K.config.startRoom)
       or K.mode ~= "heal_rest" then return end
   local text = A.normal(line)
   local delivery = job.gemDelivery
-  if delivery and text == "dajesz " .. delivery.item .. " " .. delivery.form .. "." then
+  if delivery and confirmedGem(text, delivery) then
     cancel("timer")
     job.gemDelivery = nil
     G.lastGemRecipient = delivery.name

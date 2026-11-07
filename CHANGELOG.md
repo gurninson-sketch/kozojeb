@@ -1,5 +1,9 @@
 # Zmiany
 
+## 2.9.24
+
+- Automat przekazuje pojedyncze kamienie przez `daj kamien <odbiorca>`. Potwierdzenie przyjmuje pełną nazwę pojedynczego kamienia podaną przez grę, także jeśli wybrano wcześniejszą sztukę z ekwipunku.
+
 ## 2.9.23
 
 - Prowadzący podaje po jednym nowo wydobytym kamieniu obecnym członkom drużyny po kolei. Potwierdzenie gry przesuwa kolejkę, a przerwanie połączenia podczas przekazania nie powtarza wysłanego polecenia. Podział liczy sztuki i zachowuje kolejność między cyklami pancerzy.

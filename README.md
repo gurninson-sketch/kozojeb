@@ -1,4 +1,4 @@
-# Chimera Kozojeb 2.9.23
+# Chimera Kozojeb 2.9.24
 
 [Pobierz najnowszą paczkę](https://github.com/gurninson-sketch/kozojeb/releases/latest/download/Chimera_Kozojeb.mpackage) · [Wydania](https://github.com/gurninson-sketch/kozojeb/releases)
 
@@ -241,7 +241,7 @@ Hotfix 2.9.12 uwzględnia ostatni pancerz także wtedy, gdy potwierdzenie podnie
 
 Wznowienie patrolu wymaga obsłużenia pancerzy, obecności całej zapamiętanej drużyny i **rzeczywistych 100% HP wszystkich postaci**; zaokrąglone 100% nie wystarcza. Kontrola ruchu i ekwipunku nadal obowiązuje. Dzieje się to automatycznie. Rozłączenie zachowuje etap cyklu; po niepewnym odłożeniu bot najpierw ponownie przeszukuje kolejny pancerz, zanim go odłoży. Brak potwierdzenia przeszukiwania przez 45 s lub odłożenia przez 4 s wyświetla przyczynę i pozostawia cykl w oczekiwaniu, bez kolejnych komend. Spóźniona odpowiedź jest nadal przyjmowana. Zadanie pozostaje aktywne, także gdy Mudlet dopiero później wykryje rozłączenie; po zalogowaniu wznowienie jest automatyczne. Jeżeli połączenie działa, a odpowiedź nie przychodzi, sprawdź ekwipunek i komunikaty gry. Ręczny stop, śmierć, zmiana roli lub wyłączenie trybu anuluje cykl.
 
-Od 2.9.23 po wydobyciu kamienia i zakończeniu przeszukiwania w bazie prowadzący podaje jedną sztukę następnemu żywemu członkowi drużyny obecnemu w pokoju. Po potwierdzeniu gry odkłada pancerz i przechodzi do kolejnej sztuki. Kolejka przechodzi między cyklami oraz przez reconnect. Przy stałym składzie i potwierdzeniu wszystkich przekazań różnica wynosi najwyżej jeden kamień. Podział dotyczy nowo wydobytych kamieni.
+Od 2.9.23 po wydobyciu kamienia i zakończeniu przeszukiwania w bazie prowadzący podaje jedną sztukę następnemu żywemu członkowi drużyny obecnemu w pokoju. Po potwierdzeniu gry odkłada pancerz i przechodzi do kolejnej sztuki. Kolejka przechodzi między cyklami oraz przez reconnect. Przy stałym składzie i potwierdzeniu wszystkich przekazań różnica wynosi najwyżej jeden kamień. Wydobycie kamienia uruchamia przekazanie jednej sztuki z ekwipunku. Od 2.9.24 prowadzący używa polecenia `daj kamien <odbiorca>`. Pełna nazwa w odpowiedzi gry potwierdza przekazanie.
 
 `/kozojeb golemy kamienie status` pokazuje potwierdzone przekazania. Podział w trybie golemów jest domyślnie włączony. Opcje `kamienie off` i `kamienie on` sterują nim na prowadzącym. Niestandardową odmianę imienia można zapisać poleceniem `/kozojeb golemy kamienie odmiana <imie> <celownik>`. Przy braku odbiorcy kamień zostaje u prowadzącego. Brak potwierdzenia po 3 s zwalnia obsługę pancerza i wyłącza danego odbiorcę z kolejki na 30 s. Rozłączenie podczas przekazywania zachowuje już zebrane pancerze bez powtarzania niepewnego polecenia.
 
@@ -277,7 +277,7 @@ Potwierdzona przez grę odmowa podniesienia zbyt ciężkiego pancerza kończy pr
 
 ## Aktualizacje z GitHuba
 
-Jeśli masz już Kozojeba 2.8.1–2.9.22, wykonaj na **każdym profilu**:
+Jeśli masz już Kozojeba 2.8.1–2.9.23, wykonaj na **każdym profilu**:
 
 ```text
 /kozojeb stop
@@ -286,7 +286,7 @@ Jeśli masz już Kozojeba 2.8.1–2.9.22, wykonaj na **każdym profilu**:
 /kozojeb aktualizuj
 ```
 
-Poczekaj na zakończenie walki i ruchu oraz komunikat `Zainstalowano 2.9.23`. Sprawdź `/kozojeb status`; powinien pokazać wersję **2.9.23**. Wyłącz stary dodatkowy trigger pancerzy — podniesienia po każdym zabiciu są już wbudowane. Skontroluj `/kozojeb druzyna role` na każdym profilu; domyślnie nie ma przypisań zależnych od imion. Własne role profili i inne własne modele pozostają zapisane. Opcjonalnie włącz `/kozojeb swiatlo on` na postaciach z lampą i paliwem; opcja działa tylko przy wykrytej utracie widoczności. Następnie uruchom `/kozojeb start` — najpierw na wspierających, potem na prowadzącym stojącym w bazie. To jednorazowy start po aktualizacji; późniejsze rozłączenia nie wymagają ręcznego wznowienia. Nie trzeba usuwać ani ręcznie instalować paczki; można przejść bezpośrednio z 2.9.2 do 2.9.23. Zwykły próg regeneracji wynosi domyślnie 95%; można go zmienić przez `/kozojeb powrothp 95`. Tryb golemów wymaga osobnego włączenia i w swoim cyklu czeka na 100% całej drużyny.
+Poczekaj na zakończenie walki i ruchu oraz komunikat `Zainstalowano 2.9.24`. Sprawdź `/kozojeb status`; powinien pokazać wersję **2.9.24**. Wyłącz stary dodatkowy trigger pancerzy — podniesienia po każdym zabiciu są już wbudowane. Skontroluj `/kozojeb druzyna role` na każdym profilu; domyślnie nie ma przypisań zależnych od imion. Własne role profili i inne własne modele pozostają zapisane. Opcjonalnie włącz `/kozojeb swiatlo on` na postaciach z lampą i paliwem; opcja działa tylko przy wykrytej utracie widoczności. Następnie uruchom `/kozojeb start` — najpierw na wspierających, potem na prowadzącym stojącym w bazie. To jednorazowy start po aktualizacji; późniejsze rozłączenia nie wymagają ręcznego wznowienia. Nie trzeba usuwać ani ręcznie instalować paczki; można przejść bezpośrednio z 2.9.2 do 2.9.24. Zwykły próg regeneracji wynosi domyślnie 95%; można go zmienić przez `/kozojeb powrothp 95`. Tryb golemów wymaga osobnego włączenia i w swoim cyklu czeka na 100% całej drużyny.
 
 Przy paczce zbudowanej w tym repozytorium adres wydań jest wbudowany. W paczce przygotowanej bez adresu skonfiguruj na każdym profilu:
 
