@@ -4767,6 +4767,85 @@ test("a missing armor has a bounded pickup retry without corpse commands", funct
   golemCycle();kozojeb.G.onText("Wez co?");advance(4)
   assert(count("wez pancerz")<=2 and kozojeb.mode=="escape")
 end)
+test("a confirmed heavy armor refusal returns with confirmed cargo and no repeated pickup", function()
+  golemCycle();pickup()
+  kozojeb.G.onText("   Powyginany pancerz plytowy jest zbyt ciezki.");advance(4)
+  assert(count("wez pancerz")==2 and kozojeb.mode=="escape")
+  arriveWithCargo()
+  assert(kozojeb.G.job.remaining==1 and count("przeszukaj pancerz")==1)
+end)
+local gemText = "Udaje ci sie otworzyc ukryta na piersi zgruchotanego golema klapke i zabierasz znajdujace sie pod"
+local function foundGem(split)
+  local item = "oliwkowozielony oliwin"
+  local description = "nia zrodlo mocy konstruktu, " .. item .. "."
+  if split then
+    kozojeb.G.onGemText(gemText .. " ")
+    kozojeb.G.onGemText(description)
+  else
+    kozojeb.G.onGemText(gemText .. " " .. description)
+  end
+  return item
+end
+local function finishSearch()
+  kozojeb.G.onText("Przestajesz przeszukiwac powyginany pancerz plytowy.");advance(.13)
+end
+local function confirmDrop()
+  kozojeb.G.onText("Odkladasz powyginany pancerz plytowy.");advance(.13)
+end
+test("one new stone per armor cycles through teammates before the next search", function()
+  cargoAtBase()
+  for i,form in ipairs({"Grorowi","Morridowi","Yergowi","Grorowi"}) do
+    local item=foundGem(i==1)
+    assert(count("odloz pancerz")==i-1 and count("przeszukaj pancerz")==i)
+    finishSearch()
+    assert(sends[#sends]=="daj "..item.." "..form:lower() and count("odloz pancerz")==i-1)
+    kozojeb.G.onGemText("Dajesz "..item.." "..form..".");advance(.13)
+    assert(count("odloz pancerz")==i)
+    confirmDrop()
+  end
+  local shares=kozojeb.G.gemShares
+  assert(shares.gror==2 and shares.morrid==1 and shares.yergo==1)
+  kozojeb.G.reset()
+  assert(kozojeb.G.gemShares.gror==2 and kozojeb.G.lastGemRecipient=="gror",
+    "a new armor cycle must retain the distribution position and counts")
+end)
+test("only a present party member can receive a stone and custom dative forms work", function()
+  cargoAtBase()
+  local entity=gmcp.Chimera.Room.Entities.entities[4]
+  entity.name="Lira"
+  gmcp.Chimera.Group.State.members={"L","S"}
+  event("gmcp.Chimera.Group.State");event()
+  kozojeb.command("golemy kamienie odmiana Lira Lirze")
+  local item=foundGem();finishSearch()
+  assert(sends[#sends]=="daj "..item.." lirze")
+  kozojeb.G.onGemText("Dajesz "..item.." Lirze.");advance(.13)
+  assert(kozojeb.G.gemShares.lira==1 and not kozojeb.G.gemShares.gror)
+end)
+test("a missing recipient leaves the stone with the leader and still completes the armor", function()
+  cargoAtBase()
+  gmcp.Chimera.Group.State.members={"L"};event("gmcp.Chimera.Group.State")
+  foundGem(true);finishSearch()
+  assert(count("odloz pancerz")==1 and not kozojeb.G.job.gemDelivery)
+  for _, command in ipairs(sends) do assert(not command:match("^daj ")) end
+  confirmDrop();assert(count("przeszukaj pancerz")==2)
+end)
+test("an unrelated give result does not advance the split and a missing ACK does not resend", function()
+  cargoAtBase();local item=foundGem();finishSearch()
+  kozojeb.G.onGemText("Dajesz chrupiacy chleb Grorowi.");advance(.13)
+  assert(count("odloz pancerz")==0)
+  advance(3.1)
+  assert(count("daj "..item.." grorowi")==1 and count("odloz pancerz")==1)
+  assert(not kozojeb.G.gemShares.gror)
+  confirmDrop();foundGem();finishSearch()
+  assert(sends[#sends]=="daj "..item.." morridowi")
+end)
+test("reconnect after an unconfirmed handoff resumes armor work without giving a second stone", function()
+  cargoAtBase();local item=foundGem();finishSearch()
+  kozojeb.onSessionEvent("sysDisconnectionEvent");reconnectPackets();advance(1)
+  assert(kozojeb.enabled and count("daj "..item.." grorowi")==1)
+  assert(count("odloz pancerz")==1 and not kozojeb.G.gemShares.gror)
+  confirmDrop();assert(count("przeszukaj pancerz")==2)
+end)
 test("armor search waits for completion and ignores ground armor disintegration", function()
   cargoAtBase()
   kozojeb.G.onText("Zniszczony powyginany pancerz plytowy rozsypuje sie w proch.")
@@ -5104,6 +5183,13 @@ test("a confirmed golem death picks armor immediately while other NPCs are alive
   liveGolemLeader();killGolem(1)
   assert(count("wez pancerz")==1 and kozojeb.G.job.lootPending)
   assert(count("przeszukaj pancerz")==0 and #aliases==0)
+end)
+test("a heavy pickup refusal during combat does not interrupt combat or retry the armor", function()
+  liveGolemLeader();killGolem(1)
+  kozojeb.G.onText("   Powyginany pancerz plytowy jest zbyt ciezki.");advance(.2)
+  killGolem(2);advance(.2)
+  assert(count("wez pancerz")==1 and #aliases==0 and kozojeb.G.job.phase=="battle")
+  assert(not kozojeb.G.job.uncertainPickup)
 end)
 test("duplicate death and XP lines cannot duplicate a fast pickup", function()
   liveGolemLeader();local npc=killGolem(1)
@@ -6415,6 +6501,15 @@ test("a golem corpse macro is suppressed as one narrow outgoing sequence",functi
       "wloz kamienie do swojego plecaka","zamknij swoj plecak"}) do send(command) end
   assert(#sends==before and kozojeb.metrics.lootFiltered==5)
   send("wez pancerz");assert(count("wez pancerz")==1)
+end)
+test("the seven command loot burst with coins leaves no bag command after filtered opening",function()
+  liveGolemLeader();local before=#sends
+  for _, command in ipairs({"wez zlote monety z ciala", "wez kamienie z ciala", "ocen kamienie",
+      "otworz swoj plecak", "wloz monety do swojego plecaka", "wloz kamienie do swojego plecaka",
+      "zamknij swoj plecak"}) do send(command) end
+  assert(#sends==before and kozojeb.metrics.lootFiltered==7)
+  send("otworz swoj plecak");send("wloz monety do swojego plecaka")
+  assert(count("otworz swoj plecak")==1 and count("wloz monety do swojego plecaka")==1)
 end)
 test("standalone inventory commands and other NPC loot remain available",function()
   liveGolemLeader();send("otworz swoj plecak");send("ocen kamienie")

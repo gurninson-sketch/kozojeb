@@ -114,22 +114,28 @@ local function deny(kind)
   K.metrics[kind]=(K.metrics[kind] or 0)+1
   return true
 end
-local lootTail={"ocen kamienie","otworz swoj plecak","wloz kamienie do swojego plecaka","zamknij swoj plecak"}
+local lootBursts = {
+  ["wez kamienie z ciala"] = {"ocen kamienie", "otworz swoj plecak",
+    "wloz kamienie do swojego plecaka", "zamknij swoj plecak"},
+  ["wez zlote monety z ciala"] = {"wez kamienie z ciala", "ocen kamienie", "otworz swoj plecak",
+    "wloz monety do swojego plecaka", "wloz kamienie do swojego plecaka", "zamknij swoj plecak"},
+}
 local function loot(command)
-  if command~="wez kamienie z ciala" and not F.batch and not K.config.golemLootIgnored[command] then return false end
+  local tail = lootBursts[command]
+  if not tail and not F.batch and not K.config.golemLootIgnored[command] then return false end
   if not K.config.golemLootFilter or not golemContext() or type(denyCurrentSend)~="function" then F.batch=nil;return false end
-  if command=="wez kamienie z ciala" then
-    F.batch={room=A.room(),at=A.now(),index=1}
-    if F.filterNotice~=A.room() then
-      F.filterNotice=A.room()
-      A.note("Golemy: filtruje pusta serie kamieni z ciala; kamienie zbieram z pancerzy w bazie. /kozojeb golemy filtr off wylacza filtr.","cyan")
-    end
+  local batch=F.batch
+  if batch and batch.room==A.room() and A.now()-batch.at<=0.25 and command==batch.tail[batch.index] then
+    batch.index=batch.index+1
+    if batch.index>#batch.tail then F.batch=nil end
     return deny("lootFiltered")
   end
-  local batch=F.batch
-  if batch and batch.room==A.room() and A.now()-batch.at<=0.25 and command==lootTail[batch.index] then
-    batch.index=batch.index+1
-    if batch.index>#lootTail then F.batch=nil end
+  if tail then
+    F.batch={room=A.room(),at=A.now(),index=1,tail=tail}
+    if F.filterNotice~=A.room() then
+      F.filterNotice=A.room()
+      A.note("Golemy: pomijam pusta serie lupu z ciala. Kamienie zbieram z pancerzy w bazie. /kozojeb golemy filtr off wylacza filtr.","cyan")
+    end
     return deny("lootFiltered")
   end
   F.batch=nil

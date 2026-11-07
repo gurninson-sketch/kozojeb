@@ -3,8 +3,11 @@
 do
 local K = kozojeb
 local A = K.golemApi
-local G = {holds={}, confirmations={}, failures={}, selectors={}, forms={}, unavailable={}, combatEpoch=0}
+local G = {holds={}, confirmations={}, failures={}, selectors={}, forms={}, unavailable={}, combatEpoch=0,
+  gemShares={}, gemRetryAt={}}
 K.G = G
+if K.config.golemGemSharing == nil then K.config.golemGemSharing = true end
+if type(K.config.golemGemForms) ~= "table" then K.config.golemGemForms = {} end
 local ordinal = {"pierwszym", "drugim", "trzecim", "czwartym"}
 local function enabled() return K.config.golemsEnabled == true end
 local function fresh()
@@ -25,7 +28,14 @@ end
 local function cancel(name)
   if G[name] then pcall(killTimer, G[name]); G[name] = nil end
 end
-function G.cancel() cancel("timer"); cancel("shieldTimer"); cancel("lootTimer"); cancel("coverTimer");G.coverDeadline=nil end
+function G.cancel()
+  cancel("timer"); cancel("shieldTimer"); cancel("lootTimer"); cancel("coverTimer")
+  G.coverDeadline = nil
+  if G.job then
+    -- A gift may already have reached the server. Never replay it on reconnect.
+    G.job.gemDelivery, G.job.gemContinuation = nil, nil
+  end
+end
 function G.resetCombat()
   cancel("shieldTimer")
   cancel("coverTimer");G.coverDeadline=nil;G.confirmations={}
@@ -583,6 +593,81 @@ local function finishCargo(job)
   job.phase = "done"
   A.note("Golemy: pancerze obsluzone. Czekam na 100% HP calej druzyny.", "green")
 end
+local function validName(name)
+  return type(name) == "string" and #name <= 40 and name:match("^[a-z][a-z%-]*$")
+end
+local function giftForm(name)
+  if not validName(name) then return nil end
+  local form = K.config.golemGemForms[name]
+  if validName(form) then return form end
+  if name:sub(-1) == "o" then return name:sub(1,-2) .. "owi" end
+  if name:match("[bcdfghjklmnpqrstvwxyz]$") then return name .. "owi" end
+end
+local function gemRecipient()
+  local group = A.group()
+  if not group.actualLeader or not A.isSelf(group.actualLeader) then return nil end
+  local first, nextRecipient
+  for _, member in ipairs(group.members) do
+    local name = A.normal(member.name)
+    local form = giftForm(name)
+    if form and member.kind == "player" and not A.isSelf(member)
+        and (tonumber(member.hp) or 0) > 0 and not (K.S and K.S.isDead(member))
+        and (G.gemRetryAt[name] or 0) <= A.now() then
+      local recipient = {name=name, form=form}
+      if not first or name < first.name then first = recipient end
+      if G.lastGemRecipient and name > G.lastGemRecipient
+          and (not nextRecipient or name < nextRecipient.name) then
+        nextRecipient = recipient
+      end
+    end
+  end
+  return nextRecipient or first
+end
+local function shareGem(job)
+  local item = job.foundGem
+  job.foundGem = nil
+  if not item or not K.config.golemGemSharing then return false end
+  local recipient = gemRecipient()
+  if not recipient then return false end
+  recipient.item = item
+  job.gemDelivery = recipient
+  later(3, function(j)
+    j.gemDelivery = nil
+    G.gemRetryAt[recipient.name] = A.now() + 30
+    A.note("Golemy: brak potwierdzenia przekazania kamienia do " .. recipient.name
+      .. ". Pomijam tego odbiorce przez 30 s.", "yellow")
+  end)
+  -- A singular, full item description selects one stone, even for duplicates.
+  send("daj " .. item .. " " .. recipient.form)
+  return true
+end
+local gemPrefix = "udaje ci sie otworzyc ukryta na piersi zgruchotanego golema klapke i zabierasz znajdujace sie pod"
+local gemDescription = "nia zrodlo mocy konstruktu, ([a-z][a-z %-]+)%."
+function G.onGemText(line)
+  local job = G.job
+  if not fresh() or A.isFollower() or not job or A.room() ~= tonumber(K.config.startRoom)
+      or K.mode ~= "heal_rest" then return end
+  local text = A.normal(line)
+  local delivery = job.gemDelivery
+  if delivery and text == "dajesz " .. delivery.item .. " " .. delivery.form .. "." then
+    cancel("timer")
+    job.gemDelivery = nil
+    G.lastGemRecipient = delivery.name
+    G.gemShares[delivery.name] = (G.gemShares[delivery.name] or 0) + 1
+    A.queue()
+    return
+  end
+  if not K.config.golemGemSharing or job.foundGem
+      or (job.phase ~= "search_wait" and job.phase ~= "search_uncertain") then return end
+  if text == gemPrefix then
+    job.gemContinuation = true
+    return
+  end
+  local item = text:match("^" .. gemPrefix .. " " .. gemDescription .. "$")
+  if not item and job.gemContinuation then item = text:match("^" .. gemDescription .. "$") end
+  job.gemContinuation = nil
+  if item and #item <= 96 then job.foundGem = item end
+end
 local amounts = {jeden=1,jedna=1,dwa=2,dwie=2,trzy=3,cztery=4,piec=5,szesc=6,
   siedem=7,osiem=8,dziewiec=9,dziesiec=10,jedenascie=11,dwanascie=12,trzynascie=13,
   czternascie=14,pietnascie=15,szesnascie=16,siedemnascie=17,osiemnascie=18,
@@ -660,7 +745,7 @@ local function consumeExternal(job)
 end
 function G.pumpLoot()
   local job=G.job
-  if not fresh() or A.isFollower() or not job or A.room()~=job.room or K.movementRest
+  if not fresh() or A.isFollower() or not job or job.pickupBlocked or A.room()~=job.room or K.movementRest
       or K.mode=="escape" or K.mode=="heal_rest" or K.mode=="recovery_return" then return end
   while job.lootQueue and job.lootQueue[1] and job.lootQueue[1].done do table.remove(job.lootQueue,1) end
   local pending=job.lootPending
@@ -689,7 +774,7 @@ function G.onLootCommand(command)
       or not command:lower():match("^%s*wez%s+pancerz%s*$")
       or not fresh() or A.isFollower() then return end
   local job=G.job
-  if not job or job.phase~="battle" or A.room()~=job.room or K.mode=="escape"
+  if not job or job.pickupBlocked or job.phase~="battle" or A.room()~=job.room or K.mode=="escape"
       or K.mode=="heal_rest" or K.mode=="recovery_return" then return end
   local pending=job.lootPending
   if pending and not pending.waiting then
@@ -789,7 +874,7 @@ function G.onConsumed(actor)
 end
 function G.actionBusy()
   local phase=G.job and G.job.phase
-  return enabled() and (phase=="search_wait" or phase=="search_uncertain")
+  return enabled() and (phase=="search_wait" or phase=="search_uncertain" or G.job and G.job.gemDelivery ~= nil)
 end
 function G.inspect()
   if not fresh() or A.isFollower() then return false end
@@ -839,7 +924,7 @@ function G.inspect()
   if job.phase == "settle" or job.phase == "pickup" then return true end
   if job.phase == "collect" then
     if A.room() ~= job.room or recovery then returnHome(job)
-    elseif job.picked+(job.consumed or 0)+(job.unavailable or 0) >= job.expected
+    elseif job.pickupBlocked or job.picked+(job.consumed or 0)+(job.unavailable or 0) >= job.expected
         or job.attempts >= job.expected + 1 then returnHome(job)
     else
       K.mode="golem_loot"
@@ -873,6 +958,8 @@ function G.inspect()
     return true
   end
   if not atBase or K.mode ~= "heal_rest" then return false end
+  if job.gemDelivery then return true end
+  if job.phase == "drop" and shareGem(job) then return true end
   if (job.phase == "search" or job.phase == "drop") and (job.bagged or 0) > 0 then
     job.phase="bag_open"
     later(0.3,function(j) j.phase="bag_take" end)
@@ -886,6 +973,7 @@ function G.inspect()
   end
   if job.phase == "search" then
     if job.remaining <= 0 then finishCargo(job); return false end
+    job.gemContinuation = nil
     job.phase = "search_wait"
     later(45, function(j)
       j.phase="search_uncertain"
@@ -907,6 +995,20 @@ function G.onText(line)
   if not enabled() or not K.enabled or K.sessionBlocked or A.isFollower() or not job then return end
   local text = A.normal(line)
   local armor = text:find("pancerz", 1, true) ~= nil and text:find("powyginan",1,true) ~= nil
+  if armor and text:match(" jest zbyt ciezki%.$") then
+    if job.phase == "bag_wait" and A.room() == tonumber(K.config.startRoom) then
+      cargoWait(job,"Pancerz w plecaku jest zbyt ciezki do wyjecia.")
+      A.queue()
+    elseif A.room() == job.room and not job.pickupBlocked
+        and (job.phase == "battle" or job.phase == "pickup") then
+      job.pickupBlocked = true
+      finishFast(job)
+      if job.phase == "pickup" then cancel("timer"); job.phase="return_requested" end
+      A.note("Golemy: pancerz jest zbyt ciezki. Po walce wracam z dotychczas zebranymi pancerzami.", "yellow")
+      A.queue()
+    end
+    return
+  end
   local amount=armor and armorAmount(text)
   local fromBag=armor and text:match("^bierzesz ") and text:find("plecaka",1,true)
   if fromBag then
@@ -946,7 +1048,7 @@ function G.onText(line)
     end
   elseif text == "wez co?" and job.phase == "pickup" then job.empty=true
   elseif (job.phase == "search_wait" or job.phase == "search_uncertain") and armor and text:match("^przestajesz przeszukiwac ") then
-    cancel("timer"); job.phase="drop"
+    cancel("timer"); job.phase="drop"; job.gemContinuation=nil
   elseif (job.phase == "search_wait" or job.phase == "search_uncertain") and text == "przeszukaj co?" then
     if (job.bagged or 0)>0 then cancel("timer"); job.phase="search"
     elseif job.remaining>0 then cargoWait(job,"Brakuje pancerza, ktory nadal jest zapisany w ladunku.")
@@ -1009,10 +1111,33 @@ function G.status()
       .. (G.job.cargoReady and G.job.remaining or G.job.picked+(G.job.extraCargo or 0))
       .. ", w plecaku " .. (G.job.bagged or 0)) or "gotowy")
 end
+local function gemCommand(value)
+  local action, rest = value:match("^(%S*)%s*(.-)$")
+  if action == "on" or action == "off" then
+    K.config.golemGemSharing = action == "on"
+  elseif action == "odmiana" then
+    local name, form = rest:match("^(%S+)%s+(%S+)$")
+    if not validName(name) or not validName(form) then
+      A.note("Uzycie: /kozojeb golemy kamienie odmiana <imie> <celownik>.", "yellow")
+      return
+    end
+    K.config.golemGemForms[name] = form
+  elseif action ~= "" and action ~= "status" then
+    A.note("Uzycie: /kozojeb golemy kamienie on|off|status|odmiana <imie> <celownik>.", "yellow")
+    return
+  end
+  local shares = {}
+  for name, count in pairs(G.gemShares) do shares[#shares + 1] = name .. " " .. count end
+  table.sort(shares)
+  A.note("Golemy: podzial kamieni " .. (K.config.golemGemSharing and "on" or "off")
+    .. "; przekazano " .. (#shares > 0 and table.concat(shares, ", ") or "0") .. ".", "cyan")
+end
 function G.command(rest)
   local action, value = A.normal(rest):match("^(%S*)%s*(.-)$")
   if action=="filtr" and K.F then
     K.F.lootCommand(value)
+  elseif action == "kamienie" then
+    gemCommand(value)
   elseif action == "on" or action == "off" then
     local wanted = action == "on"
     if K.config.golemsEnabled == wanted then
@@ -1036,8 +1161,11 @@ function G.command(rest)
   else A.note("Uzycie: /kozojeb golemy on|off|status|roznicahp <5-30>.", "yellow") end
 end
 K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
-  "^(?:Bierzesz .*pancerz.*|Wkladasz .*pancerz.*plecaka\\.|Wez co\\?|Przestajesz przeszukiwac .*pancerz.*|Przeszukaj co\\?|Odkladasz .*pancerz.*|Odloz co\\?)$",
+  "^(?:Bierzesz .*pancerz.*|Wkladasz .*pancerz.*plecaka\\.|Wez co\\?|Przestajesz przeszukiwac .*pancerz.*|Przeszukaj co\\?|Odkladasz .*pancerz.*|Odloz co\\?|\\s*(?:Zniszczony )?[Pp]owyginany pancerz plytowy jest zbyt ciezki\\.\\s*)$",
   [[kozojeb.G.onText(matches[1])]])
+K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
+  "^(?:Udaje ci sie otworzyc ukryta na piersi zgruchotanego golema klapke i zabierasz znajdujace sie pod.*|nia zrodlo mocy konstruktu, [a-z -]+\\.|Dajesz [a-zA-Z -]+\\.)\\s*$",
+  [[kozojeb.G.onGemText(matches[1])]])
 K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
   "^([A-Za-z-]+)(?: zrecznie)? zaslania (.+) przed ciosami ([^.,]+)[.,]",
   [[kozojeb.G.onTeamCover(matches[2],matches[3],matches[4])]])

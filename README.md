@@ -1,4 +1,4 @@
-# Chimera Kozojeb 2.9.22
+# Chimera Kozojeb 2.9.23
 
 [Pobierz najnowszą paczkę](https://github.com/gurninson-sketch/kozojeb/releases/latest/download/Chimera_Kozojeb.mpackage) · [Wydania](https://github.com/gurninson-sketch/kozojeb/releases)
 
@@ -16,6 +16,8 @@ Bot do Mudleta: patrol, walka i role drużynowe w Chimerze. Prowadzącym może b
 ### Puste serie łupu na golemach
 
 Przy aktywnym automatycznym prowadzącym, włączonych golemach i pokoju z samymi golemami filtr pomija serię `wez kamienie z ciala`, `ocen kamienie`, otwarcie plecaka, wkładanie kamieni i zamknięcie plecaka. Kolejne cztery polecenia muszą nadejść w tej kolejności w ciągu 0,25 s; pojedyncza ręczna komenda ekwipunku pozostaje dostępna. Pancerze zbierane są jak dotąd, a odpoczynek nadal wymaga 100% HP całej drużyny. Filtr nie działa podczas ręcznego prowadzenia w roli `zaslony`, u wspierających, w mieszanych pokojach, przy przeszukiwaniu w bazie ani na wyłączonym bocie.
+
+Od 2.9.23 filtr obsługuje też wariant zaczynający się od `wez zlote monety z ciala`, w którym przed kamieniami makro wkłada do plecaka monety. Cała rozpoznana seria musi zmieścić się w tym samym oknie 0,25 s.
 
 ```text
 /kozojeb golemy filtr status
@@ -239,7 +241,13 @@ Hotfix 2.9.12 uwzględnia ostatni pancerz także wtedy, gdy potwierdzenie podnie
 
 Wznowienie patrolu wymaga obsłużenia pancerzy, obecności całej zapamiętanej drużyny i **rzeczywistych 100% HP wszystkich postaci**; zaokrąglone 100% nie wystarcza. Kontrola ruchu i ekwipunku nadal obowiązuje. Dzieje się to automatycznie. Rozłączenie zachowuje etap cyklu; po niepewnym odłożeniu bot najpierw ponownie przeszukuje kolejny pancerz, zanim go odłoży. Brak potwierdzenia przeszukiwania przez 45 s lub odłożenia przez 4 s wyświetla przyczynę i pozostawia cykl w oczekiwaniu, bez kolejnych komend. Spóźniona odpowiedź jest nadal przyjmowana. Zadanie pozostaje aktywne, także gdy Mudlet dopiero później wykryje rozłączenie; po zalogowaniu wznowienie jest automatyczne. Jeżeli połączenie działa, a odpowiedź nie przychodzi, sprawdź ekwipunek i komunikaty gry. Ręczny stop, śmierć, zmiana roli lub wyłączenie trybu anuluje cykl.
 
-`/kozojeb golemy status` i panel pokazują etap. Plan zasłon jest buforowany według istotnego stanu HP i walki; zdarzenia korzystają z istniejącej kolejki decyzji. Timery działają tylko dla oczekującej operacji, podniesienia lub krótkiego zastępstwa obrońcy. Duplikaty odmowy pobrania współdzielą jeden timer powtórki. Tekstowe `kondycja` czeka podczas przeszukiwania, a kontrola GMCP pozostaje aktywna. `/kozojeb wydajnosc` pokazuje również liczbę przeliczeń planu; notatka wykonanej zasłony zawiera opis i lokalne ID NPC. Nie ma nowego stałego odpytywania ani analizy każdej linii obrażeń.
+Od 2.9.23 po wydobyciu kamienia i zakończeniu przeszukiwania w bazie prowadzący podaje jedną sztukę następnemu żywemu członkowi drużyny obecnemu w pokoju. Po potwierdzeniu gry odkłada pancerz i przechodzi do kolejnej sztuki. Kolejka przechodzi między cyklami oraz przez reconnect. Przy stałym składzie i potwierdzeniu wszystkich przekazań różnica wynosi najwyżej jeden kamień. Podział dotyczy nowo wydobytych kamieni.
+
+`/kozojeb golemy kamienie status` pokazuje potwierdzone przekazania. Podział w trybie golemów jest domyślnie włączony. Opcje `kamienie off` i `kamienie on` sterują nim na prowadzącym. Niestandardową odmianę imienia można zapisać poleceniem `/kozojeb golemy kamienie odmiana <imie> <celownik>`. Przy braku odbiorcy kamień zostaje u prowadzącego. Brak potwierdzenia po 3 s zwalnia obsługę pancerza i wyłącza danego odbiorcę z kolejki na 30 s. Rozłączenie podczas przekazywania zachowuje już zebrane pancerze bez powtarzania niepewnego polecenia.
+
+Potwierdzona przez grę odmowa podniesienia zbyt ciężkiego pancerza kończy próby zbierania w bieżącym pokoju. Bot kończy walkę, wraca z zebranymi pancerzami i kontynuuje odpoczynek drużyny w bazie.
+
+`/kozojeb golemy status` i panel pokazują etap. Plan zasłon jest buforowany według istotnego stanu HP i walki; zdarzenia korzystają z istniejącej kolejki decyzji. Timery działają tylko dla oczekującej operacji, podniesienia lub krótkiego zastępstwa obrońcy. Duplikaty odmowy pobrania współdzielą jeden timer powtórki. Tekstowe `kondycja` czeka podczas przeszukiwania i podawania kamienia, a kontrola GMCP pozostaje aktywna. `/kozojeb wydajnosc` pokazuje również liczbę przeliczeń planu; notatka wykonanej zasłony zawiera opis i lokalne ID NPC. Nie ma nowego stałego odpytywania ani analizy każdej linii obrażeń.
 
 ## Odwrót, sprzęt i ponowne logowanie
 
@@ -269,7 +277,7 @@ Wznowienie patrolu wymaga obsłużenia pancerzy, obecności całej zapamiętanej
 
 ## Aktualizacje z GitHuba
 
-Jeśli masz już Kozojeba 2.8.1–2.9.21, wykonaj na **każdym profilu**:
+Jeśli masz już Kozojeba 2.8.1–2.9.22, wykonaj na **każdym profilu**:
 
 ```text
 /kozojeb stop
@@ -278,7 +286,7 @@ Jeśli masz już Kozojeba 2.8.1–2.9.21, wykonaj na **każdym profilu**:
 /kozojeb aktualizuj
 ```
 
-Poczekaj na zakończenie walki i ruchu oraz komunikat `Zainstalowano 2.9.22`. Sprawdź `/kozojeb status`; powinien pokazać wersję **2.9.22**. Wyłącz stary dodatkowy trigger pancerzy — podniesienia po każdym zabiciu są już wbudowane. Skontroluj `/kozojeb druzyna role` na każdym profilu; domyślnie nie ma przypisań zależnych od imion. Własne role profili i inne własne modele pozostają zapisane. Opcjonalnie włącz `/kozojeb swiatlo on` na postaciach z lampą i paliwem; opcja działa tylko przy wykrytej utracie widoczności. Następnie uruchom `/kozojeb start` — najpierw na wspierających, potem na prowadzącym stojącym w bazie. To jednorazowy start po aktualizacji; późniejsze rozłączenia nie wymagają ręcznego wznowienia. Nie trzeba usuwać ani ręcznie instalować paczki; można przejść bezpośrednio z 2.9.2 do 2.9.22. Zwykły próg regeneracji wynosi domyślnie 95%; można go zmienić przez `/kozojeb powrothp 95`. Tryb golemów wymaga osobnego włączenia i w swoim cyklu czeka na 100% całej drużyny.
+Poczekaj na zakończenie walki i ruchu oraz komunikat `Zainstalowano 2.9.23`. Sprawdź `/kozojeb status`; powinien pokazać wersję **2.9.23**. Wyłącz stary dodatkowy trigger pancerzy — podniesienia po każdym zabiciu są już wbudowane. Skontroluj `/kozojeb druzyna role` na każdym profilu; domyślnie nie ma przypisań zależnych od imion. Własne role profili i inne własne modele pozostają zapisane. Opcjonalnie włącz `/kozojeb swiatlo on` na postaciach z lampą i paliwem; opcja działa tylko przy wykrytej utracie widoczności. Następnie uruchom `/kozojeb start` — najpierw na wspierających, potem na prowadzącym stojącym w bazie. To jednorazowy start po aktualizacji; późniejsze rozłączenia nie wymagają ręcznego wznowienia. Nie trzeba usuwać ani ręcznie instalować paczki; można przejść bezpośrednio z 2.9.2 do 2.9.23. Zwykły próg regeneracji wynosi domyślnie 95%; można go zmienić przez `/kozojeb powrothp 95`. Tryb golemów wymaga osobnego włączenia i w swoim cyklu czeka na 100% całej drużyny.
 
 Przy paczce zbudowanej w tym repozytorium adres wydań jest wbudowany. W paczce przygotowanej bez adresu skonfiguruj na każdym profilu:
 

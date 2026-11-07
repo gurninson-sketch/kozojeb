@@ -58,7 +58,7 @@ end
 K.legacyImportTried = true
 K.initialized = false
 
-K.version = "2.9.22"
+K.version = "2.9.23"
 K.config = K.config or {
   chaseDelay = 0.20,
   patrolDelay = 0.70,
@@ -159,6 +159,7 @@ local settingTypes = {
   zubrTargetInitialized="boolean", szkieletTargetInitialized="boolean", introducedTargets230="table",
   equipmentHold="string", recoveryHp="number",
   golemsEnabled="boolean", golemHpGap="number",
+  golemGemSharing="boolean", golemGemForms="table",
   shieldMaxAttackers="number", shieldHold="number", emptyPatrolMax="number",
 }
 if not K.settingsLoaded then
@@ -5425,6 +5426,7 @@ function K.help()
   <green>/kozojeb golemy on|off<reset>         celowane zaslony golemow; prowadzacy
                               zbiera pancerze, wraca do bazy i leczy cala druzyne do 100%
   <green>/kozojeb golemy roznicahp 10<reset>   prog roznicy HP do rotacji zaslon (5-30)
+  <green>/kozojeb golemy kamienie status<reset> podzial kamieni w bazie (on|off|status)
   - Role, wybor lidera, oba progi zaslony i odmiany sa zapisywane na profilu.
   - Zmiana roli zatrzymuje bota. Po zmianie wpisz /kozojeb start.
   - Wsparcie dziala tylko przy widocznym prowadzacym nalezacym do druzyny.

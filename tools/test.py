@@ -64,10 +64,22 @@ for line in ("Bierzesz powyginany pancerz plytowy.",
              "Wkladasz powyginany pancerz plytowy do otwartego skorzanego plecaka.",
              "Przestajesz przeszukiwac powyginany pancerz plytowy.",
              "Przestajesz przeszukiwac zniszczony powyginany pancerz plytowy.",
-             "Odkladasz powyginany pancerz plytowy.", "Wez co?", "Odloz co?"):
+             "Odkladasz powyginany pancerz plytowy.", "Wez co?", "Odloz co?",
+             "   Powyginany pancerz plytowy jest zbyt ciezki."):
     assert re.fullmatch(armor_pattern, line), "Missing armor confirmation: " + line
 assert not re.fullmatch(armor_pattern, "Zniszczony powyginany pancerz plytowy rozsypuje sie w proch.")
 assert not re.fullmatch(armor_pattern, "Nie udalo ci sie znalezc niczego interesujacego.")
+gem_trigger = re.search(
+    r'tempRegexTrigger\(\s*("(?:\\.|[^"\\])*"),\s*\[\[kozojeb\.G\.onGemText', golems_source
+)
+assert gem_trigger, "Missing gem acquisition and handoff trigger"
+gem_pattern = json.loads(gem_trigger.group(1))
+gem_prefix = "Udaje ci sie otworzyc ukryta na piersi zgruchotanego golema klapke i zabierasz znajdujace sie pod"
+for line in (gem_prefix + " ", "nia zrodlo mocy konstruktu, oliwkowozielony oliwin.",
+             gem_prefix + " nia zrodlo mocy konstruktu, oliwkowozielony oliwin.",
+             "Dajesz oliwkowozielony oliwin Grorowi."):
+    assert re.fullmatch(gem_pattern, line), "Missing gem event: " + line
+assert not re.fullmatch(gem_pattern, "Morrid mowi: nia zrodlo mocy konstruktu, oliwkowozielony oliwin.")
 
 for prefix, succeeded in (("Zaslaniasz", "true"), ("Probujesz zaslonic", "false")):
     own_reply = re.search(

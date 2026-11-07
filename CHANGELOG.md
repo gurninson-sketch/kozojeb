@@ -1,5 +1,11 @@
 # Zmiany
 
+## 2.9.23
+
+- Prowadzący podaje po jednym nowo wydobytym kamieniu obecnym członkom drużyny po kolei. Potwierdzenie gry przesuwa kolejkę, a przerwanie połączenia podczas przekazania nie powtarza wysłanego polecenia. Podział liczy sztuki i zachowuje kolejność między cyklami pancerzy.
+- Odmowa podniesienia zbyt ciężkiego pancerza kończy próby zbierania w tym pokoju. Trwająca walka dobiega końca, a bot obsługuje w bazie zebrany ładunek.
+- Filtr łupu z golemów obejmuje także zaobserwowaną serię z monetami, która zostawiała komendy wkładania przedmiotów do zamkniętego plecaka.
+
 ## 2.9.22
 
 - Watchdog: cisza w pakietach wstrzymuje komendy i zachowuje zadanie zamiast rozpoczynać odwrót na starych danych. Automatyczne wznowienie po świeżym pokoju, HP i walce; ograniczone odświeżanie GMCP oraz anulowanie przez STOP.
