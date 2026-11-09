@@ -1,5 +1,11 @@
 # Zmiany
 
+## 2.9.25
+
+- Wspólny plan zasłon w każdej walce z NPC. Pierwszy potwierdzony napastnik może zostać przejęty od razu, również przy pełnym HP osłanianej osoby. Przy kilku napastnikach plan rozdziela pojedyncze cele między dostępnych obrońców.
+- Jeden mechanizm potwierdzeń, zastępstwa i rotacji HP niezależnie od trybu golemów. Wymaga aktualnych relacji, przestrzega roli, rzeczywistej rezerwy HP i limitu napastników. Brak odpowiedzi na zasłonę nie blokuje decyzji o odwrocie.
+- Tryb golemów obsługuje pancerze, kamienie, odpoczynek w bazie i wznowienie patrolu. Próg rotacji HP przeniesiono do `/kozojeb roznicahp`. Zapisana wartość jest migrowana, a poprzednia komenda pozostaje aliasem.
+
 ## 2.9.24
 
 - Automat przekazuje pojedyncze kamienie przez `daj kamien <odbiorca>`. Potwierdzenie przyjmuje pełną nazwę pojedynczego kamienia podaną przez grę, także jeśli wybrano wcześniejszą sztukę z ekwipunku.

@@ -121,7 +121,7 @@ test("status and manual snapshot work without the lua alias or a running bot",fu
 end)
 test("a sent shield and result keep their own exact timestamps between snapshots",function()
   local l,e=setup("M");e[1].hp=1200;gmcp.Chimera.Group.State.members[1].hp=1200
-  kozojeb.start();assert(count("zaslon yarrima")==1)
+  kozojeb.start();assert(countCover("yarrima")==1)
   advance(.04);kozojeb.onShieldResult("yarrima",false,"brutalnego smierdzacego orka")
   l.flush();local data=read(l.path)
   assert(data:find('"kind":"shield_sent"',1,true) and data:find('"kind":"shield_reply"',1,true))
@@ -145,10 +145,14 @@ test("a normal shield held for formation readiness explains the actual block",fu
   assert(found and count("zaslon yarrima")==0);noMovement()
 end)
 test("ordinary combat explains both a high HP target and an unattacked teammate",function()
-  local l=setup("M");kozojeb.start();advance(.21)
+  local l,e=setup("M")
+  e[1].hp=1900;gmcp.Chimera.Group.State.members[1].hp=1900
+  kozojeb.start();advance(.21)
   local reasons={}
-  for _,check in ipairs(l.lastSnapshot.shield.checks) do reasons[check.target]=check.code end
-  assert(reasons.L=="hp_above_threshold" and reasons.S=="no_npc");noMovement()
+  for _,check in ipairs(l.lastSnapshot.shield.checks) do
+    reasons[tostring(check.target)..":"..check.code]=true
+  end
+  assert(reasons["L:hp_above_threshold"] and reasons["S:no_npc"]);noMovement()
 end)
 test("cover relationships do not alter the combat allocator or become incoming attacks",function()
   local l,e=setup("M","wsparcie");kozojeb.start();advance(.21)

@@ -99,6 +99,7 @@ for line in ("Nowe interaktywne polaczenie do twej postaci. Zamykam te sesje.",
              "Twoja postac jest juz w grze. Czy chcesz przejac nad nia kontrole? "):
     assert any(re.match(json.loads(pattern), line) for pattern in conflicts)
 
+covers_source = (ROOT / "src/KozojebCovers.lua").read_text()
 for handler,examples in (
     ("onTeamCover",[("Gror zaslania Yarrima przed ciosami pekatego nieforemnego golema.",
                      ("Gror","Yarrima","pekatego nieforemnego golema")),
@@ -111,13 +112,14 @@ for handler,examples in (
     ("onConsumed",[("Porysowany nieforemny golem zbliza sie do powyginanego pancerza plytowego, podnosi go i wciska do",
                     ("Porysowany nieforemny golem",))]),
 ):
-    registered=re.search(r'tempRegexTrigger\(\s*("(?:\\.|[^"\\])*"),\s*\[\[kozojeb\.G\.'+handler, golems_source)
+    module, text = ("G", golems_source) if handler == "onConsumed" else ("C", covers_source)
+    registered=re.search(r'tempRegexTrigger\(\s*("(?:\\.|[^"\\])*"),\s*\[\[kozojeb\.'+module+r'\.'+handler, text)
     assert registered, "Missing golem trigger: " + handler
     for line,groups in examples:
         match=re.match(json.loads(registered.group(1)),line)
         assert match and match.groups()==groups, "Wrong golem event: " + line
 
-protected_failure=re.search(r'tempRegexTrigger\(\s*("(?:\\.|[^"\\])*"),\s*\[\[kozojeb\.G\.onTeamFailure\(matches\[2\],"cie",matches\[3\]\)',golems_source)
+protected_failure=re.search(r'tempRegexTrigger\(\s*("(?:\\.|[^"\\])*"),\s*\[\[kozojeb\.C\.onTeamFailure\(matches\[2\],"cie",matches\[3\]\)',covers_source)
 assert protected_failure, "Missing protected player's word order in failed cover"
 match=re.match(json.loads(protected_failure.group(1)),
     "Yergo probuje cie zaslonic przed ciosami porysowanego nieforemnego golema, lecz nie jest w stanie tego uczynic.")
@@ -132,7 +134,6 @@ for line in ("Zapalasz lampe.", "Zapalasz olejna lampe.", "Zapalasz pochodnie.",
              "Zapalasz latarnie.", "Olejna zapalona lampa jest juz zapalona."):
     assert any(re.fullmatch(json.loads(pattern), line) for pattern in light_patterns), "Missing light acknowledgement: " + line
 assert not any(re.fullmatch(json.loads(pattern), "Gror zapala lampe.") for pattern in light_patterns)
-covers_source = (ROOT / "src/KozojebCovers.lua").read_text()
 flow_source = (ROOT / "src/KozojebFlow.lua").read_text()
 trap_trigger = re.search(r'tempRegexTrigger\(\s*("(?:\\.|[^"\\])*"),\[\[kozojeb\.F\.onTrap', flow_source)
 assert trap_trigger, "Missing logged trap trigger"

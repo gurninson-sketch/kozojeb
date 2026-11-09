@@ -157,7 +157,7 @@ function S.observe(event)
     elseif not S.anonymous(member.name) and member.id then
       local key=A.normal(member.name)
       local held=K.config.teamDeaths[key]
-      local visible=A.entity(member.id)
+      local visible=held and A.entity(member.id)
       local groupMember=context.memberVitals[tostring(member.id)]
       local revision=S.deathRevisions[key] or 0
       if held and value and value.hp>0 and visible and A.normal(visible.name)==key

@@ -141,29 +141,29 @@ test("mixed owners of the same description do not allow ordinal guessing",functi
 end)
 test("identical NPCs with the same patient use an ordinal inside their description only",function()
   local e=multiple(3);for i=4,#e do e[i].name="Blady zwinny ozywieniec" end
-  kozojeb.start();assert(shields()[1]=="zaslon yarrima przed pierwszym bladym zwinnym ozywiencem");noMovement()
+  kozojeb.start();assert(shields()[1]=="zaslon yarrima przed drugim bladym zwinnym ozywiencem");noMovement()
 end)
 test("general cover confirmation never assigns the planned NPC from a different reply",function()
   local e=multiple(3);kozojeb.start();local pending=kozojeb.shieldPendingTarget
-  assert(pending and pending.generalPlan)
+  assert(pending and pending.npcId)
   kozojeb.onShieldResult("Yarrima",true,"niezgrabnego powolnego zombiego")
-  assert(not kozojeb.shieldRescue and kozojeb.C.rejected[pending.golemSelector]);noMovement()
+  assert(not kozojeb.shieldRescue and kozojeb.C.rejected[pending.npcSelector]);noMovement()
 end)
 test("a named peer cover can briefly reserve a general NPC before its GMCP transfer",function()
   local e=multiple(3);kozojeb.shieldFormationReady=false;kozojeb.start()
   kozojeb.C.onTeamCover("Morrid","Yarrima","bladego zwinnego ozywienca")
   local _,plan=kozojeb.C.project(e[1],e[2],60)
   assert(plan and plan.npcId~="N3")
-  local deadline=kozojeb.C.pending["M:L"].deadline
+  local deadline=kozojeb.C.holds.N3.pendingUntil
   for i=1,2000 do kozojeb.C.onTeamCover("Morrid","Yarrima","bladego zwinnego ozywienca") end
-  assert(kozojeb.C.pending["M:L"].deadline==deadline);noMovement()
+  assert(kozojeb.C.holds.N3.pendingUntil==deadline);noMovement()
 end)
 test("general cover reservations are cleared on stop and session boundaries",function()
   for _,boundary in ipairs({"stop","disconnect"}) do
     multiple(3);kozojeb.shieldFormationReady=false;kozojeb.start()
-    kozojeb.C.onTeamCover("Morrid","Yarrima","bladego zwinnego ozywienca");assert(kozojeb.C.timer)
+    kozojeb.C.onTeamCover("Morrid","Yarrima","bladego zwinnego ozywienca");assert(kozojeb.C.coverTimer)
     if boundary=="stop" then kozojeb.stop() else kozojeb.onSessionEvent("sysDisconnectionEvent") end
-    assert(not kozojeb.C.timer and next(kozojeb.C.pending)==nil);advance(1);noMovement()
+    assert(not kozojeb.C.coverTimer and next(kozojeb.C.holds)==nil and next(kozojeb.C.confirmations)==nil);advance(1);noMovement()
   end
 end)
 test("a teammate death holds patrol even while the remaining party has full HP",function()

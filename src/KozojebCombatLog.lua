@@ -272,7 +272,7 @@ local function snapshot()
       role_enabled=K.config.role~="wsparcie"},
     settings={own_min=K.config.shieldSelfHp,team_shield=K.config.teamShieldHp,leader_shield=K.config.leaderShieldHp,
       own_retreat=K.config.escapeHp,team_retreat=K.config.teamEscapeHp,max_npc=K.config.shieldMaxAttackers,
-      hold=K.config.shieldHold,golems=K.config.golemsEnabled,hp_gap=K.config.golemHpGap}}
+      hold=K.config.shieldHold,golems=K.config.golemsEnabled,hp_gap=K.config.shieldHpGap}}
   local wounded=(charPercent and charPercent<100) or (charHealth and charHealth.percent<100) or false
   for _,member in ipairs(members) do if member.percent and member.percent<100 then wounded=true end end
   return state,active or wounded or (K.S and K.S.blind~=nil) or false

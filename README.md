@@ -1,4 +1,4 @@
-# Chimera Kozojeb 2.9.24
+# Chimera Kozojeb 2.9.25
 
 [Pobierz najnowszą paczkę](https://github.com/gurninson-sketch/kozojeb/releases/latest/download/Chimera_Kozojeb.mpackage) · [Wydania](https://github.com/gurninson-sketch/kozojeb/releases)
 
@@ -93,7 +93,7 @@ Od **2.9.16** rola `zaslony` działa również na faktycznym prowadzącym druży
 /kozojeb start
 ```
 
-Bot rozpoznaje własne prowadzenie przez GMCP i automatycznie osłania pozostałych członków drużyny. Nie wymaga innego lidera ani zapisanej trasy. Panel pokazuje `Prowadzenie: Reczne; automatyczne zaslony calej druzyny`. Sam wybierasz ataki, kierunki, odwrót i odpoczynek. Ten tryb nie wysyła `wesprzyj` do własnej postaci, nie rozpoczyna patrolu, pościgu ani cyklu pancerzy. Włączone `golemy` nadal zapewniają celowane zasłony. Po przekazaniu prowadzenia profil sam wraca do wspierania nowego widocznego lidera; po odzyskaniu prowadzenia znów osłania podczas ręcznego chodzenia. Rozłączenie wznawia ochronę automatycznie po świeżych danych.
+Bot rozpoznaje własne prowadzenie przez GMCP i automatycznie osłania pozostałych członków drużyny. Nie wymaga innego lidera ani zapisanej trasy. Panel pokazuje `Prowadzenie: Reczne; automatyczne zaslony calej druzyny`. Sam wybierasz ataki, kierunki, odwrót i odpoczynek. Ten tryb nie wysyła `wesprzyj` do własnej postaci, nie rozpoczyna patrolu, pościgu ani cyklu pancerzy. Wspólny plan zasłon działa również podczas ręcznego prowadzenia. Po przekazaniu prowadzenia profil sam wraca do wspierania nowego widocznego lidera; po odzyskaniu prowadzenia znów osłania podczas ręcznego chodzenia. Rozłączenie wznawia ochronę automatycznie po świeżych danych.
 
 Dla ochrony kolegów przy ręcznym prowadzeniu znaczenie mają `progzaslony`, `minhpzaslony`, limit napastników i stabilizacja. `proglidera` określa ochronę **innego** prowadzącego, kiedy ten profil jest wspierającym. Próg `progdruzyny` nie uruchamia w tej roli automatycznego odwrotu; w planie golemów nadal wpływa na rozpoznanie pilnej zasłony. Ustawienia pozostają zapisane i nie są automatycznie wyrównywane między profilami. Do pełnego patrolu, wspólnego odwrotu i cyklu pancerzy wybierz `rola prowadzacy`.
 
@@ -184,7 +184,15 @@ Od 2.9.5 odpowiedź `Dopiero co zepchnieto cie sprzed <osoby>; ...` kończy ocze
 
 Profile z rolą `zaslony` wybierają zagrożonego członka według liczby napastników oraz zapasu HP w punktach z uwzględnieniem ostatnich obrażeń. Kolega obciążony kilkoma NPC może mieć pierwszeństwo przed prowadzącym z niższym procentem HP. Brak porównywalnych danych, niekorzystna osłona lub blokada pozycji pozwala rozważyć kolejną osobę. Nie są osłaniani gracze spoza drużyny ani osoby bez napastnika NPC.
 
-Od 2.9.20, gdy ogólna zasłona grozi niekorzystnym przejęciem wszystkich napastników, bot próbuje bezpiecznej zasłony pojedynczego NPC. Obsługuje opisy orków, goblinów, snotlingów, trolli, ożywieńców i zombi, które potrafi odmienić. Przykład: `zaslon yarrima przed bladym zwinnym ozywiencem`. Przy niejednoznacznym opisie numer jest dopuszczalny tylko wtedy, gdy wszystkie pasujące NPC atakują tę samą osobę. Nieznana odmiana, zmieniony cel lub przekroczony limit obrońcy blokują próbę; zwykła zasłona zachowuje ostrożną ocenę pełnego przejęcia. Obrońcy korzystają z krótkiej kolejki po 0,15 s i najwyżej 0,5 s na potwierdzenie zasłony kolegi w GMCP. Wyłączenie tej dodatkowej próby: `/kozojeb celowanezaslony off`; ponowne włączenie: `/kozojeb celowanezaslony on`. Ustawienie nie wyłącza osobnego planu golemów.
+Od 2.9.25 wszystkie walki z NPC korzystają ze wspólnego planu zasłon. Gdy pierwszy spójny stan GMCP pokazuje jednego napastnika, dostępny obrońca może od razu osłonić osobę, która zebrała aggro, także przy 100% jej HP. Potrzebuje gotowego szyku, wolnego miejsca na napastnika i porównywalnej rezerwy HP. Przejęcie kończy zasłonę otwarcia w tej walce.
+
+Przy kilku napastnikach plan przydziela różne cele kolejnym obrońcom. Dąży do wyrównania liczby NPC, z pierwszeństwem wolnych obrońców. Używa świeżych relacji NPC–gracz i wspólnej kolejności nazw, bez wiadomości między profilami. Gdy jeden obrońca jest niedostępny, pozostali oceniają zastępstwo po ograniczonym czasie. Widoczna nieudana zasłona wyklucza obrońcę z planu na 10 s i skraca to oczekiwanie. Zmiana pokoju lub sesji czyści te informacje.
+
+Zasłona celowana używa pełnego opisu, np. `zaslon yarrima przed bladym zwinnym ozywiencem`. Plan rozpoznaje opisy golemów, orków, goblinów, snotlingów, trolli, ożywieńców i zombi. Numer przy identycznych opisach jest dopuszczalny, gdy wszystkie pasujące egzemplarze atakują tę samą osobę. Przy jednym potwierdzonym napastniku dostępna jest też zwykła komenda. Dla ogólnej zasłony przed kilkoma NPC bot ocenia możliwe przejęcie ich wszystkich. `/kozojeb celowanezaslony on|off` steruje celowanymi komendami w całej walce.
+
+Po podziale plan ocenia rotację według różnicy HP. `/kozojeb roznicahp 10` ustawia próg w punktach procentowych od 5 do 30, z domyślną wartością 10. Obrońca potrzebuje także porównywalnej rezerwy HP w punktach większej o 5% przy pierwszym i 15% przy drugim napastniku. Zapisany próg golemów przechodzi do wspólnego ustawienia. Zasłony otwarcia i wyrównywanie liczby NPC działają powyżej zwykłych progów HP. Wartość 0 dla progu osłony danej osoby wyłącza jej przydział na tym profilu.
+
+Odpowiedź gry rezerwuje NPC opisanego w potwierdzeniu. Gdy opis pasuje do kilku egzemplarzy, plan czeka do 0,5 s na rozstrzygnięcie w GMCP. Rozbieżny selektor dostaje 15 s przerwy. Świeży stan, gotowość szyku, minimalne własne HP i limit napastników są sprawdzane ponownie przed wysłaniem komendy.
 
 Od 2.9.9 prowadzący i profile `zaslony` używają wspólnej kolejności: obrońca z najkorzystniejszym przewidywanym ryzykiem po osłonie ma pierwszeństwo, pozostali czekają po 0,45 s na kolejne miejsce, najwyżej 1,35 s. Nie zakładają, że inne profile mają włączone zasłony — po tym czasie mogą osłonić samodzielnie. Oczekiwanie na osłonę najważniejszego celu nie uruchamia zastępczo zasłony mniej zagrożonej osoby. Widoczna zasłona dowolnego członka daje do 0,5 s na aktualizację relacji walki; komunikat `zrecznie zaslania` jest również rozpoznawany. Równoczesne osłony różnych kolegów mają osobny krótki kontekst. Zmiana napastników wymaga ponownej oceny. Od 2.9.10 zwykły spadek HP nie zwalnia jednocześnie wszystkich oczekujących obrońców. Dodatkowe oczekiwanie jest pomijane przy krytycznym HP albo braku zapasu na kolejny ostatnio obserwowany cios. Próg odwrotu i kontrola presji nadal obowiązują. Nie wymaga to komunikacji między profilami ani nowych pętli. Notatka przy wykonanej komendzie pokazuje punkty HP, liczby napastników obu postaci i maksymalne obciążenie po pełnym przejęciu, aby ułatwić analizę logów.
 
@@ -201,33 +209,21 @@ Niepoprawna forma odrzucona przez grę jest blokowana do poprawienia.
 
 ## Opcjonalny tryb golemów — od 2.9.11
 
-Na **każdym profilu** włącz `/kozojeb golemy on`. Domyślnie tryb jest wyłączony. Dodaje cel `golem` z odmianą `golema`, zachowując pozostałe cele, obszar, progi, tempo i pauzę po zabiciu. Wyłączenie: `/kozojeb golemy off`. Zmiana trybu podczas pracy zatrzymuje profil; po konfiguracji uruchom `/kozojeb start`.
+Na **prowadzącym** włącz `/kozojeb golemy on`. Tryb obsługuje łup z golemów oraz odpoczynek i powrót do patrolu po cyklu. Domyślnie jest wyłączony. Dodaje cel `golem` z odmianą `golema`, zachowując pozostałe cele, obszar, progi, tempo i pauzę po zabiciu. Wyłączenie: `/kozojeb golemy off`. Zmiana trybu podczas pracy zatrzymuje profil; po konfiguracji uruchom `/kozojeb start`.
 
 Przykład konfiguracji drużyny:
 
 | Profil | Komendy przed uruchomieniem |
 | --- | --- |
 | Faktyczny prowadzący | `/kozojeb rola prowadzacy`, `/kozojeb golemy on` |
-| Profile osłaniające | `/kozojeb rola zaslony`, `/kozojeb lider auto`, `/kozojeb golemy on` |
-| Profile drugiej linii | `/kozojeb rola wsparcie`, `/kozojeb lider auto`, `/kozojeb golemy on` |
+| Profile osłaniające | `/kozojeb rola zaslony`, `/kozojeb lider auto` |
+| Profile drugiej linii | `/kozojeb rola wsparcie`, `/kozojeb lider auto` |
 
 1. **Wyłącz stary dodatkowy trigger zbierania pancerzy**, aby uniknąć nakładania komend. Nowa obsługa zbiera je do ekwipunku. Od 2.9.12 rozpoznaje również potwierdzone wkładanie pancerzy do plecaka podczas bieżącego cyklu i wyjmuje je w bazie przed przeszukiwaniem. Głównego modułu łupienia Chimery nie trzeba zastępować. Pancerze pozostawione sprzed aktualizacji obsłuż przed pierwszym cyklem; instalacja zatrzymuje bota i nie przenosi trwającego zadania między wersjami.
 2. Na prowadzącym, stojąc w bezpiecznej kozobazie, wpisz `/kozojeb baza`. Zaznacz na mapie **bazę i pokoje golemów**, następnie `/kozojeb obszar`. W analizowanym logu baza golemów to 8765; sprawdź ją na swojej mapie. Poprzedni obszar 19 pokoi i baza 1097 dotyczyły wcześniejszego patrolu.
 3. Zacznij w tej bezpiecznej bazie: `/kozojeb start` najpierw na osłaniających, potem na prowadzącym. Każdy ręczny start prowadzącego ustala bazę w bieżącym pokoju; nie uruchamiaj go po raz pierwszy w pokoju z golemami.
 
-Przy czterech golemach atakujących jednego gracza profile planują różne, **celowane zasłony**. Od 2.9.14 komenda zawiera pełny opis, np. `zaslon yarrima przed zgrzytajacym kanciastym golemem`. Ogólny numer „drugim golemem” nie jest wyprowadzany z kolejności GMCP, ponieważ logi pokazały rozbieżności z kolejnością gry. Początkowy przydział nadal opiera się na wspólnej kolejności nazw obrońców i opisów NPC; różne ID między profilami oraz drobne różnice HP nie przesuwają pozostałych miejsc. Indywidualne reguły `druzyna rola` pozwalają wykluczyć profile drugiej linii z przydziałów obrońcy.
-
-Przy identycznych opisach numer odnosi się do pełnego opisu, np. `przed pierwszym kamiennym golemem`. Taka próba wymaga, aby wszystkie pasujące egzemplarze atakowały osłanianą osobę; przy różnych celach nie zgadujemy ID. Jednoznaczna odpowiedź rezerwuje opisanego NPC. Przy wielu pasujących egzemplarzach bot czeka najwyżej 0,5 s na GMCP: długa stabilizacja obejmuje tylko potwierdzone przejęcie konkretnego ID, a pozostałe golemy pozostają dostępne. Inny lub nierozpoznany opis nie potwierdza ochrony przed planowanym ID. Rozbieżny selektor otrzymuje 15 s przerwy i krótką diagnostykę. Także ratunkowa zasłona najpierw dobiera konkretny cel; ewentualna ogólna komenda wymaga oceny przejęcia wszystkich napastników osoby. Plan dąży do jednego przeciwnika na obrońcę już przy wysokim HP. Czysty pokój z najwyżej czterema golemami, których nie jest więcej niż członków drużyny, może zostać przyjęty mimo zwykłego limitu celów 3. Mieszany pokój lub większa grupa przeciwników nie otrzymuje tego wyjątku.
-
-Od 2.9.15 także przestawiona kolejność przymiotników i dłuższe pasujące opisy są traktowane jako potencjalnie ta sama pula komendy. Numer w tej puli jest dopuszczalny wyłącznie wtedy, gdy wszyscy pasujący napastnicy atakują tę samą osobę. Wynik przypisuje się do faktycznego opisu z odpowiedzi gry. Gdy ofiary są różne, skrypt rezygnuje ze zgadywania celowanej zasłony.
-
-Od **2.9.17** taka niejednoznaczność nie zatrzymuje ochrony osoby z dokładnie **jednym** napastnikiem NPC: możliwa jest ogólna komenda `zaslon <osobe>`. Przed wysłaniem bot ponownie sprawdza liczbę napastników, wyłączność celu NPC, HP obu osób, role i limit obciążenia. Pojawienie się drugiego napastnika unieważnia ten plan; bot nie przenosi oceny pojedynczego NPC na zasłonę przed kilkoma. Odpowiedź `przed ciosami wrogow` daje najwyżej 0,5 s na uzgodnienie GMCP, bez uznania planowanego ID za potwierdzone przejęcie. Zwykła odpowiedź zawierająca opis nadal stabilizuje faktycznie opisanego golema. Spóźniona odpowiedź z poprzedniego pokoju nie zapisuje blokad w nowym pokoju.
-
-Przy rotacji HP pierwszeństwo ma dostępny obrońca **bez napastnika**, także aktualny prowadzący. Zachowana jest skonfigurowana różnica procentowa HP, domyślnie 10 punktów. Wolny obrońca potrzebuje co najmniej 5% przewagi porównywalnego zapasu HP w punktach; przy przejmowaniu drugiego NPC nadal wymagane jest 15%. Zapas uwzględnia ostatnie obrażenia, więc sam wyższy procent postaci o mniejszej puli nie wystarcza. Pilna ochrona golemów używa spójnej granicy: większy z progów `prog` i `progdruzyny` plus 15 punktów procentowych. Przy ustawieniach 50%/70% obejmuje ona także 85% HP i może przerwać stabilizację przejętego NPC. Limit napastników, minimalne HP i gotowość szyku nadal obowiązują. Po silnym ciosie prowadzący rozważa dostępną ochronę golemów również powyżej zwykłego `progzaslony`, zanim zdecyduje o dodatkowym odwrocie z powodu braku rezerwy na następny cios.
-
-Widoczna w grze nieudana zasłona kolegi wyklucza go z nowych przydziałów przez najwyżej 10 s i skraca lokalne oczekiwanie na zastępstwo do 0,15–0,60 s zależnie od miejsca obrońcy. Nie rezerwuje napastnika dla całej drużyny. Duplikaty komunikatu nie przedłużają okna ani oczekiwania. Udana zasłona przywraca dostępność, a zmiana pokoju lub sesji czyści ten stan. To reakcja na komunikat gry, bez raportowania między profilami i bez nowej stałej pętli. Wymóg rzeczywistych 100% HP wszystkich po cyklu golemów pozostaje zachowany.
-
-Po rozdzieleniu napastników bot może przenosić pojedynczego golema z osoby o niższym procencie HP na zdrowszego obrońcę. Domyślna różnica wynosi **10 punktów procentowych**; ustawienie `/kozojeb golemy roznicahp 10` przyjmuje wartości 5–30. Sama różnica procentów nie wystarcza: porównywalna rezerwa punktów HP obrońcy musi być większa co najmniej o 5% przy przejęciu pierwszego NPC i o 15% przy drugim. Zachowane są minimum własnego HP, limit napastników, gotowość szyku i stabilizacja niedawnych przejęć. Bezpieczna rotacja celowana może zastąpić zwykły wymóg poprawy presji o 15%, ponieważ jej celem jest wyrównanie HP w dalszej części walki. Brak gotowego obrońcy, opóźniony GMCP lub niejednoznaczny cel mogą opóźnić podział. To heurystyka, nie gwarancja równego HP w każdej rundzie. Rola `wsparcie` nadal nie wykonuje zasłon.
+Czysty pokój z najwyżej czterema golemami, których nie jest więcej niż członków drużyny, korzysta z wyjątku od zwykłego limitu celów. Zasłony dobiera wspólny plan walki opisany powyżej.
 
 Od 2.9.13 **prowadzący podnosi pancerz od razu po każdym potwierdzonym zabiciu golema**, także podczas dalszej walki. Używa `wez pancerz`, z potwierdzeniem podniesienia i pojedynczą kolejką dla równoczesnych zgonów. Powtórzenie komunikatu zabicia i późniejsza linia XP nie wysyłają kolejnego pobrania. Przejściowy brak przedmiotu dopuszcza jedną krótką powtórkę; brak odpowiedzi pozostaje zapisany jako niepewne podniesienie. Pilny odwrót ma pierwszeństwo. Po oczyszczeniu całego pokoju prowadzący wraca z drużyną przez dotychczasowe `/idz` do kozobazy. Tylko w bazie wykonuje kolejno `przeszukaj pancerz` → potwierdzenie `Przestajesz przeszukiwac ...` → `odloz pancerz` → potwierdzenie odłożenia.
 
@@ -277,7 +273,7 @@ Potwierdzona przez grę odmowa podniesienia zbyt ciężkiego pancerza kończy pr
 
 ## Aktualizacje z GitHuba
 
-Jeśli masz już Kozojeba 2.8.1–2.9.23, wykonaj na **każdym profilu**:
+Jeśli masz już Kozojeba 2.8.1–2.9.24, wykonaj na **każdym profilu**:
 
 ```text
 /kozojeb stop
@@ -286,7 +282,7 @@ Jeśli masz już Kozojeba 2.8.1–2.9.23, wykonaj na **każdym profilu**:
 /kozojeb aktualizuj
 ```
 
-Poczekaj na zakończenie walki i ruchu oraz komunikat `Zainstalowano 2.9.24`. Sprawdź `/kozojeb status`; powinien pokazać wersję **2.9.24**. Wyłącz stary dodatkowy trigger pancerzy — podniesienia po każdym zabiciu są już wbudowane. Skontroluj `/kozojeb druzyna role` na każdym profilu; domyślnie nie ma przypisań zależnych od imion. Własne role profili i inne własne modele pozostają zapisane. Opcjonalnie włącz `/kozojeb swiatlo on` na postaciach z lampą i paliwem; opcja działa tylko przy wykrytej utracie widoczności. Następnie uruchom `/kozojeb start` — najpierw na wspierających, potem na prowadzącym stojącym w bazie. To jednorazowy start po aktualizacji; późniejsze rozłączenia nie wymagają ręcznego wznowienia. Nie trzeba usuwać ani ręcznie instalować paczki; można przejść bezpośrednio z 2.9.2 do 2.9.24. Zwykły próg regeneracji wynosi domyślnie 95%; można go zmienić przez `/kozojeb powrothp 95`. Tryb golemów wymaga osobnego włączenia i w swoim cyklu czeka na 100% całej drużyny.
+Poczekaj na zakończenie walki i ruchu oraz komunikat `Zainstalowano 2.9.25`. Sprawdź `/kozojeb status`; powinien pokazać wersję **2.9.25**. Wyłącz stary dodatkowy trigger pancerzy — podniesienia po każdym zabiciu są już wbudowane. Skontroluj `/kozojeb druzyna role` na każdym profilu; domyślnie nie ma przypisań zależnych od imion. Własne role profili i inne własne modele pozostają zapisane. Opcjonalnie włącz `/kozojeb swiatlo on` na postaciach z lampą i paliwem; opcja działa tylko przy wykrytej utracie widoczności. Następnie uruchom `/kozojeb start` — najpierw na wspierających, potem na prowadzącym stojącym w bazie. To jednorazowy start po aktualizacji; późniejsze rozłączenia nie wymagają ręcznego wznowienia. Nie trzeba usuwać ani ręcznie instalować paczki; można przejść bezpośrednio z 2.9.2 do 2.9.25. Zwykły próg regeneracji wynosi domyślnie 95%; można go zmienić przez `/kozojeb powrothp 95`. Tryb golemów wymaga osobnego włączenia i w swoim cyklu czeka na 100% całej drużyny.
 
 Przy paczce zbudowanej w tym repozytorium adres wydań jest wbudowany. W paczce przygotowanej bez adresu skonfiguruj na każdym profilu:
 
