@@ -186,20 +186,23 @@ end)
 
 test("shield threshold equality, off, unknown HP and own low HP", function()
   reset("zaslony", 70)
+  local players = gmcp.Chimera.Room.Entities.entities
+  players[1].hp, players[3].hp = 98, 98
+  kozojeb.command("roznicahp 30")
   kozojeb.start()
-  assert(count("zaslon yarrima") == 0)
+  assert(countCover("yarrima") == 0)
   gmcp.Chimera.Room.Entities.entities[2].hp = 69
   kozojeb.command("proglidera 0")
   event()
-  assert(count("zaslon yarrima") == 0)
+  assert(countCover("yarrima") == 0)
   kozojeb.command("proglidera 70")
   gmcp.Chimera.Room.Entities.entities[2].hp = nil
   event()
-  assert(count("zaslon yarrima") == 0)
+  assert(countCover("yarrima") == 0)
   gmcp.Chimera.Room.Entities.entities[2].hp = 69
   gmcp.Chimera.Room.Entities.entities[1].hp = 49
   event()
-  assert(count("zaslon yarrima") == 0)
+  assert(countCover("yarrima") == 0)
 end)
 
 test("no team suppresses actions despite stale entity roles and manual names", function()
@@ -3259,7 +3262,11 @@ test("disabling the leader threshold leaves teammate protection active", functio
 end)
 
 test("the configured teammate threshold remains strict at equality", function()
-  partyProtector(nil,70);kozojeb.start();assert(count("zaslon morrida")==0)
+  partyProtector(nil,70)
+  local players=gmcp.Chimera.Room.Entities.entities
+  players[1].hp,players[2].hp=98,98
+  kozojeb.command("roznicahp 30")
+  kozojeb.start();assert(countCover("morrida")==0)
   gmcp.Chimera.Room.Entities.entities[3].hp=69;event();advance(.4)
   assert(count("zaslon morrida")==1)
 end)
@@ -6664,6 +6671,43 @@ test("a multiowner attack does not authorize a guessed opening transfer",functio
   gmcp.Chimera.Combat.State.relations={{attacker="N",defender="L"},{attacker="N",defender="M"}}
   event("gmcp.Chimera.Combat.State");advance(2)
   assert(#shieldCommands()==0 and not kozojeb.C.opening);noMovement()
+end)
+test("the last attacker rotates when fresh party HP reaches the gap above the rescue threshold",function()
+  for _,mode in ipairs({"on","off"}) do
+    golemSetup("G",nil,2);golemRelations({"L","S"})
+    local entities=gmcp.Chimera.Room.Entities.entities
+    if mode=="off" then entities[6].name="Brutalny smierdzacy ork" end
+    kozojeb.command("golemy "..mode)
+    kozojeb.command("roznicahp 12")
+    kozojeb.start()
+    entities[5].hp=0;event("gmcp.Chimera.Room.Entities")
+    local members={}
+    for i=1,4 do
+      local player=entities[i]
+      members[i]={id=player.id,name=player.name,here=1,hp=player.hp,maxhp=player.maxhp}
+    end
+    gmcp.Chimera.Group.State.members=members
+    members[4].hp=890;event("gmcp.Chimera.Group.State")
+    assert(#shieldCommands()==0)
+    members[4].hp=880;event("gmcp.Chimera.Group.State")
+    local selector=mode=="on" and "kamiennym golemem" or "brutalnym smierdzacym orkiem"
+    assert(#shieldCommands()==1 and count("zaslon yerga przed "..selector)==1)
+    assert(kozojeb.shieldPendingTarget.npcId=="N2" and kozojeb.C.planCache.value.G.rotation)
+    assert(table.concat(output):find("rotacja HP od 12 pp",1,true))
+    noMovement()
+  end
+end)
+test("the last attacker can rotate when the ordinary rescue projection is too strict",function()
+  golemSetup("G",nil,1);golemRelations({"S"})
+  kozojeb.command("progzaslony 95")
+  kozojeb.command("roznicahp 12")
+  local entities=gmcp.Chimera.Room.Entities.entities
+  entities[1].hp,entities[1].maxhp=1030,1030
+  gmcp.Char.Vitals.hp,gmcp.Char.Vitals.maxhp=1030,1030
+  entities[4].hp,entities[4].maxhp=968,1100
+  kozojeb.start()
+  assert(count("zaslon yerga przed alabastrowym golemem")==1)
+  assert(kozojeb.C.planCache.value.G.rotation);noMovement()
 end)
 test("an opening cover with equal percentages still needs comparable actual HP",function()
   reset("zaslony")

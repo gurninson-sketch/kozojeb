@@ -1,5 +1,10 @@
 # Zmiany
 
+## 2.9.26
+
+- Przywrócono rotację według różnicy HP przy ostatnim napastniku. Świeże HP drużyny uruchamiają ocenę również powyżej progów ratunkowych, niezależnie od trybu golemów.
+- Bezpieczna zasłona ratunkowa przed pojedynczym NPC zachowuje swoją kolejność obrońców. Rotacja respektuje rezerwę HP w punktach, gotowość szyku i stabilizację przejęcia. Log oznacza próbę rotacji i pokazuje ustawioną różnicę HP w punktach procentowych.
+
 ## 2.9.25
 
 - Wspólny plan zasłon w każdej walce z NPC. Pierwszy potwierdzony napastnik może zostać przejęty od razu, również przy pełnym HP osłanianej osoby. Przy kilku napastnikach plan rozdziela pojedyncze cele między dostępnych obrońców.

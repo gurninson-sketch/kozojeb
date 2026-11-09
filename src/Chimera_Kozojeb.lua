@@ -58,7 +58,7 @@ end
 K.legacyImportTried = true
 K.initialized = false
 
-K.version = "2.9.25"
+K.version = "2.9.26"
 K.config = K.config or {
   chaseDelay = 0.20,
   patrolDelay = 0.70,
@@ -2421,9 +2421,11 @@ local function tryShield(entity, hp, threshold, plan)
   request.allowedNpcIds = allowedIds
   K.shieldBlockedReason = nil
   local decision = K.shieldDecision
+  local rule = plan and plan.rotation and string.format("rotacja HP od %d pp", K.config.shieldHpGap)
+    or string.format("prog %d%%", threshold)
   note(string.format(
-    "Zaslaniam %s (%d%% HP, prog %d%%; moje %.0f HP / %d napastnikow, cel %.0f HP / %d; po zaslonie do %d).",
-    form:gsub("^%l", string.upper), math.floor(hp+0.5), threshold,
+    "Zaslaniam %s (%d%% HP, %s; moje %.0f HP / %d napastnikow, cel %.0f HP / %d; po zaslonie do %d).",
+    form:gsub("^%l", string.upper), math.floor(hp+0.5), rule,
     decision.ownHp, decision.ownAttackers, decision.targetHp, decision.targetAttackers, decision.maxOwnAttackers
   ), "yellow")
   -- Rezerwacja przed send chroni tez przed pakietami/odpowiedziami
@@ -5200,7 +5202,7 @@ function K.status()
   end
   statusPrefix("Golemy")
   statusLink(K.config.golemsEnabled and "[ WLACZONE ]" or "[ WYLACZONE ]",
-    K.config.golemsEnabled and "golemy off" or "golemy on", "Tryb golemow: zaslony, pancerze i pelne HP", "cyan")
+    K.config.golemsEnabled and "golemy off" or "golemy on", "Tryb golemow: pancerze, kamienie i pelne HP", "cyan")
   if K.G then cecho("  " .. K.G.status()) end
   statusEndRow()
   statusRow("Stan walki", K.combatRoomReady and K.sessionFresh.combat and "Aktualne dane pokoju"
@@ -5261,6 +5263,9 @@ function K.status()
   if manual then statusRow("Zaslony druzyny", "Cala druzyna; progzaslony i minhpzaslony")
   elseif K.config.role == "zaslony" then statusRow("Zaslony druzyny", "Cala druzyna; lider ma osobny prog lidera")
   elseif isFollower() then statusRow("Zaslony druzyny", "Wylaczone w roli wsparcie") end
+  if K.config.role ~= "wsparcie" then
+    statusRow("Rotacja HP", K.config.shieldHpGap .. " pp roznicy; /kozojeb roznicahp")
+  end
   statusRow("Odmiany zaslon", #shieldForms > 0 and table.concat(shieldForms, ", ") or "brak (/kozojeb imie)")
   statusRow("Limit zaslony", K.config.shieldMaxAttackers .. " napastnikow; stabilizacja " .. K.config.shieldHold .. " s")
   if K.selfVitals then
@@ -5431,7 +5436,7 @@ function K.help()
   <green>/kozojeb swiatlo komenda zapal lampe<reset> jedna komenda zapalenia
   <green>/kozojeb golemy on|off<reset>         pancerze, kamienie i powrot do patrolu
                               po obsludze ladunku i 100% HP calej druzyny
-  <green>/kozojeb roznicahp 10<reset>          prog roznicy HP do rotacji zaslon (5-30)
+  <green>/kozojeb roznicahp 10<reset>          minimalna roznica HP do rotacji (5-30 pp)
   <green>/kozojeb golemy kamienie status<reset> podzial kamieni w bazie (on|off|status)
   - Role, wybor lidera, oba progi zaslony i odmiany sa zapisywane na profilu.
   - Zmiana roli zatrzymuje bota. Po zmianie wpisz /kozojeb start.
@@ -5504,7 +5509,7 @@ function K.help()
   <green>/kozojeb prog 50<reset>               odwrot przy 50% HP
   <green>/kozojeb progdruzyny 50<reset>        odwrot, gdy widoczny czlonek
                               druzyny spadnie ponizej 50% HP
-  <green>/kozojeb progzaslony 70<reset>        wykonuj "zaslon <imie>", gdy
+  <green>/kozojeb progzaslony 70<reset>        zaslona ratunkowa, gdy
                               czlonek druzyny spadnie ponizej 70% HP
                               (0 = wylacz; prog musi byc wyzszy
                               od obu progow ucieczki)

@@ -436,12 +436,6 @@ local function plans()
       end
     end
   end
-  -- After the first cover, an ordinary duel uses the configured rescue
-  -- thresholds. A healthy team does not pass the same NPC back and forth.
-  if #npcs == 1 then
-    C.planCache = {key=key,value=assignments}
-    return assignments
-  end
   local used, evaluated = {}, {}
   -- Wirtualne przesuniecia rozdzielaja cele przed nadejsciem odpowiedzi gry.
   for _ = 1, #defenders do
@@ -482,23 +476,31 @@ local function plans()
   -- Warunek porownywalnych surowych HP chroni postac o mniejszej puli zycia.
   local best
   for _, target in ipairs(players) do
-    for _, own in ipairs(defenders) do
-      if own ~= target then
-        for _, npc in ipairs(npcs) do
-          local incoming = snapshot.incoming[tostring(target.id)]
-          local plan,result
-          if incoming and incoming.npcs[tostring(npc.id)] then plan,result=candidate(own,target,npc,true) end
-          if plan then
-            local score = health(own) - health(target)
-            local free=result.ownAttackers==0
-            if not best or free and not best.free or free==best.free
-                and (score>best.score or score==best.score and result.riskAfter<best.riskAfter) then
-              plan.score,plan.free,plan.riskAfter=score,free,result.riskAfter;best=plan
+    local incoming = snapshot.incoming[tostring(target.id)]
+    if incoming then
+      for _, own in ipairs(defenders) do
+        if own ~= target then
+          for _, npc in ipairs(npcs) do
+            local plan,result
+            if incoming.npcs[tostring(npc.id)] then plan,result=candidate(own,target,npc,true) end
+            if plan then
+              local score = health(own) - health(target)
+              local free=result.ownAttackers==0
+              if not best or free and not best.free or free==best.free
+                  and (score>best.score or score==best.score and result.riskAfter<best.riskAfter) then
+                plan.score,plan.free,plan.riskAfter=score,free,result.riskAfter;best=plan
+              end
             end
           end
         end
       end
     end
+  end
+  -- Przy jednym napastniku pierwszenstwo ma bezpieczna zwykla zaslona
+  -- ratunkowa, z jej kolejnoscia obroncow i oczekiwaniem na potwierdzenie.
+  if best and #npcs == 1 then
+    local hp = math.floor(health(best.target) + 0.5)
+    if hp < A.threshold(best.target) and A.projection(best.own, best.target, hp) then best = nil end
   end
   if best then assignments[tostring(best.own.id)] = best end
   C.planCache={key=key,value=assignments}

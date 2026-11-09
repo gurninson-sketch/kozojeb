@@ -161,7 +161,7 @@ Na profilu z rolą `zaslony`:
 /kozojeb minhpzaslony 50
 ```
 
-Te progi dopuszczają rozważenie zasłony: HP prowadzącego musi być **poniżej 85%**, własne HP **co najmniej 50%**, żywy NPC musi faktycznie atakować prowadzącego, a szyk musi być gotowy. Sama różnica procentów nie wystarcza do wykonania osłony. Przy równych 85% zasłona nie następuje. `/kozojeb proglidera 0` wyłącza tę zasłonę.
+Zwykła zasłona ratunkowa może zadziałać, gdy HP prowadzącego spadnie **poniżej 85%**. Potrzebne są też własne HP na poziomie **co najmniej 50%**, żywy NPC atakujący prowadzącego i gotowy szyk. `/kozojeb proglidera 0` wyłącza osłanianie prowadzącego na tym profilu.
 
 Od 2.9.6 `/kozojeb progzaslony 70` określa także próg osłony **pozostałych członków drużyny** na profilach z rolą `zaslony`. Prowadzący używa go dla całej drużyny. Ten próg musi być wyższy od progów odwrotu. `proglidera` pozostaje osobnym progiem dla prowadzącego na profilu osłaniającym: jego wyłączenie nie wyłącza ochrony kolegów, a `progzaslony 0` nie wyłącza ochrony lidera. Rola `wsparcie` nadal nie wykonuje zasłon. Aktualizacja zachowuje istniejące role i wartości progów.
 
@@ -190,7 +190,7 @@ Przy kilku napastnikach plan przydziela różne cele kolejnym obrońcom. Dąży 
 
 Zasłona celowana używa pełnego opisu, np. `zaslon yarrima przed bladym zwinnym ozywiencem`. Plan rozpoznaje opisy golemów, orków, goblinów, snotlingów, trolli, ożywieńców i zombi. Numer przy identycznych opisach jest dopuszczalny, gdy wszystkie pasujące egzemplarze atakują tę samą osobę. Przy jednym potwierdzonym napastniku dostępna jest też zwykła komenda. Dla ogólnej zasłony przed kilkoma NPC bot ocenia możliwe przejęcie ich wszystkich. `/kozojeb celowanezaslony on|off` steruje celowanymi komendami w całej walce.
 
-Po podziale plan ocenia rotację według różnicy HP. `/kozojeb roznicahp 10` ustawia próg w punktach procentowych od 5 do 30, z domyślną wartością 10. Obrońca potrzebuje także porównywalnej rezerwy HP w punktach większej o 5% przy pierwszym i 15% przy drugim napastniku. Zapisany próg golemów przechodzi do wspólnego ustawienia. Zasłony otwarcia i wyrównywanie liczby NPC działają powyżej zwykłych progów HP. Wartość 0 dla progu osłony danej osoby wyłącza jej przydział na tym profilu.
+Po podziale plan ocenia różnicę między bieżącym procentem HP obrońcy a procentem HP atakowanego członka drużyny. `/kozojeb roznicahp 10` ustawia minimalną różnicę od 5 do 30 punktów procentowych, domyślnie 10. Od 2.9.26 ta rotacja działa również przy ostatnim napastniku. Obrońca ze 100% HP może przejąć NPC od postaci z 90% HP, jeśli ma odpowiednią rezerwę w punktach. Potrzebuje przewagi o co najmniej 5% przy pierwszym i 15% przy drugim napastniku. Zasłony otwarcia, wyrównywanie liczby NPC i rotacja mogą zadziałać powyżej zwykłych progów ratunkowych. Zapisana wartość `roznicahp` obowiązuje niezależnie od trybu golemów. Wartość 0 dla progu osłony danej osoby wyłącza jej przydział na tym profilu.
 
 Odpowiedź gry rezerwuje NPC opisanego w potwierdzeniu. Gdy opis pasuje do kilku egzemplarzy, plan czeka do 0,5 s na rozstrzygnięcie w GMCP. Rozbieżny selektor dostaje 15 s przerwy. Świeży stan, gotowość szyku, minimalne własne HP i limit napastników są sprawdzane ponownie przed wysłaniem komendy.
 
