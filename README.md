@@ -1,4 +1,4 @@
-# Chimera Kozojeb 2.9.25
+# Chimera Kozojeb 2.9.27
 
 [Pobierz najnowszą paczkę](https://github.com/gurninson-sketch/kozojeb/releases/latest/download/Chimera_Kozojeb.mpackage) · [Wydania](https://github.com/gurninson-sketch/kozojeb/releases)
 
@@ -186,9 +186,11 @@ Profile z rolą `zaslony` wybierają zagrożonego członka według liczby napast
 
 Od 2.9.25 wszystkie walki z NPC korzystają ze wspólnego planu zasłon. Gdy pierwszy spójny stan GMCP pokazuje jednego napastnika, dostępny obrońca może od razu osłonić osobę, która zebrała aggro, także przy 100% jej HP. Potrzebuje gotowego szyku, wolnego miejsca na napastnika i porównywalnej rezerwy HP. Przejęcie kończy zasłonę otwarcia w tej walce.
 
+Od 2.9.27 zasłona otwarcia zaczyna się od kolejnego bezpiecznego obrońcy po ostatniej potwierdzonej zasłonie. Pierwszy ma natychmiastową próbę. Następni mogą zaczekać po 0,18 s na pozycję w kolejce, maksymalnie 0,72 s, żeby uwzględnić odpowiedź gry przed wysłaniem komendy. Rozpoznany napastnik jest wskazywany w komendzie. Komunikat o zmęczeniu wstrzymuje automatyczne zasłony danego profilu na 15 s. Gra nie podaje czasu potrzebnego na regenerację.
+
 Przy kilku napastnikach plan przydziela różne cele kolejnym obrońcom. Dąży do wyrównania liczby NPC, z pierwszeństwem wolnych obrońców. Używa świeżych relacji NPC–gracz i wspólnej kolejności nazw, bez wiadomości między profilami. Gdy jeden obrońca jest niedostępny, pozostali oceniają zastępstwo po ograniczonym czasie. Widoczna nieudana zasłona wyklucza obrońcę z planu na 10 s i skraca to oczekiwanie. Zmiana pokoju lub sesji czyści te informacje.
 
-Zasłona celowana używa pełnego opisu, np. `zaslon yarrima przed bladym zwinnym ozywiencem`. Plan rozpoznaje opisy golemów, orków, goblinów, snotlingów, trolli, ożywieńców i zombi. Numer przy identycznych opisach jest dopuszczalny, gdy wszystkie pasujące egzemplarze atakują tę samą osobę. Przy jednym potwierdzonym napastniku dostępna jest też zwykła komenda. Dla ogólnej zasłony przed kilkoma NPC bot ocenia możliwe przejęcie ich wszystkich. `/kozojeb celowanezaslony on|off` steruje celowanymi komendami w całej walce.
+Zasłona celowana używa pełnego opisu, np. `zaslon yarrima przed bladym zwinnym ozywiencem`. Plan rozpoznaje opisy golemów, orków, goblinów, snotlingów, trolli, ożywieńców, zombi i bestii. Numer przy identycznych opisach jest dopuszczalny, gdy wszystkie pasujące egzemplarze atakują tę samą osobę. Przy jednym potwierdzonym napastniku dostępna jest też zwykła komenda. Dla ogólnej zasłony przed kilkoma NPC bot ocenia możliwe przejęcie ich wszystkich. `/kozojeb celowanezaslony on|off` steruje celowanymi komendami w całej walce.
 
 Po podziale plan ocenia różnicę między bieżącym procentem HP obrońcy a procentem HP atakowanego członka drużyny. `/kozojeb roznicahp 10` ustawia minimalną różnicę od 5 do 30 punktów procentowych, domyślnie 10. Od 2.9.26 ta rotacja działa również przy ostatnim napastniku. Obrońca ze 100% HP może przejąć NPC od postaci z 90% HP, jeśli ma odpowiednią rezerwę w punktach. Potrzebuje przewagi o co najmniej 5% przy pierwszym i 15% przy drugim napastniku. Zasłony otwarcia, wyrównywanie liczby NPC i rotacja mogą zadziałać powyżej zwykłych progów ratunkowych. Zapisana wartość `roznicahp` obowiązuje niezależnie od trybu golemów. Wartość 0 dla progu osłony danej osoby wyłącza jej przydział na tym profilu.
 

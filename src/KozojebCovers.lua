@@ -5,7 +5,8 @@ local C = {holds={}, confirmations={}, failures={}, rejected={}, forms={}, unava
 K.C = C
 local nouns={golem={"golemem","golema"},ork={"orkiem","orka"},goblin={"goblinem","goblina"},
   snotling={"snotlingiem","snotlinga"},troll={"trollem","trolla"},
-  ozywieniec={"ozywiencem","ozywienca"},zombi={"zombim","zombiego"}}
+  ozywieniec={"ozywiencem","ozywienca"},zombi={"zombim","zombiego"},
+  bestia={"bestia","bestii", feminine=true}}
 local ordinal={"pierwszym","drugim","trzecim","czwartym","piatym"}
 local function fresh()
   return K.enabled and not K.sessionBlocked and K.entitiesReady and not K.roomChangePending
@@ -23,7 +24,11 @@ local function forms(name)
   for i=1,#words-1 do
     local word=words[i]
     if not word:match("^[a-z%-]+$") then C.forms[name]=false;return end
-    if word:match("y$") then
+    if noun.feminine then
+      if not word:match("a$") then C.forms[name]=false;return end
+      instrument[i]=word
+      genitive[i]=word:gsub("a$",word:match("[gk]a$") and "iej" or "ej")
+    elseif word:match("y$") then
       instrument[i]=word:gsub("y$","ym");genitive[i]=word:gsub("y$","ego")
     elseif word:match("i$") then
       instrument[i]=word:gsub("i$","im");genitive[i]=word:gsub("i$","iego")
@@ -150,6 +155,13 @@ local function byName(a,b)
   if first~=second then return first<second end
   return tostring(a.id)<tostring(b.id)
 end
+function C.recordGuard(guard)
+  local name = guard and A.normal(guard.name)
+  if name and name ~= C.lastGuard then
+    C.lastGuard = name
+    C.planCache = nil
+  end
+end
 local function urgent(target)
   local hp=health(target)
   return hp and hp<=math.max(K.config.escapeHp,K.config.teamEscapeHp)+15
@@ -220,7 +232,7 @@ local function selectedProjection(own, target, npc, rotation, opening)
     if not first or first.patient ~= tostring(target.id) or first.npcId ~= tostring(npc.id)
         or not incoming or incoming.count ~= 1 or ownIncoming then return blocked("opening_changed") end
   end
-  local generic=opening or not C.selector(npc.id,target)
+  local generic=not C.selector(npc.id,target)
   -- Ogolna komenda jest rownowazna wskazaniu ID tylko przy jednym
   -- napastniku. Przy kilku nadal nie zgadujemy podzbioru przejecia.
   if generic and (not incoming or incoming.count~=1) then return blocked("ambiguous_selector") end
@@ -279,6 +291,7 @@ function C.validate(own,target,percent,plan)
 end
 function C.project(own,target,percent)
   if not own or not target then return end
+  if A.isSelf(own) and K.shieldFatigueUntil>A.now() then return nil,nil,"Zmeczenie po odmowie zaslony" end
   local ownHp = health(own)
   if not ownHp or ownHp < K.config.shieldSelfHp then
     return nil,nil,"Za malo wlasnych HP"
@@ -335,7 +348,7 @@ function C.observe(allowOpening)
   end
   local single = attacked == 1 and npcId and soleOwner(snapshot,npcId) == patient
   if not C.engaged and allowOpening and single then
-    C.opening = {patient=patient,npcId=npcId}
+    C.opening = {patient=patient,npcId=npcId,at=A.now()}
     C.planCache = nil
   elseif C.opening and (not single or C.opening.patient ~= patient or C.opening.npcId ~= npcId) then
     C.opening = nil
@@ -402,14 +415,23 @@ local function plans()
     end
     local opening = incoming.count == 1 and C.opening ~= nil
     if opening and #free > 0 and available[1] then
-      local best, risk
-      for _, guard in ipairs(free) do
-        local plan, decision = candidate(guard,patient,available[1],false,true)
-        if plan and (not best or decision.riskAfter <= risk) then
-          best, risk = plan, decision.riskAfter
+      -- Ostatnia potwierdzona zaslona jest wspolna wskazowka takze po
+      -- zmianie pokoju. Biezace HP decyduje, czy kolejny obronca jest bezpieczny.
+      local last = C.lastGuard
+      table.sort(free,function(a,b)
+        local nextA = last and A.normal(a.name)<last
+        local nextB = last and A.normal(b.name)<last
+        if nextA~=nextB then return nextA end
+        return byName(b,a)
+      end)
+      for index, guard in ipairs(free) do
+        local plan = candidate(guard,patient,available[1],false,true)
+        if plan then
+          plan.openingRank = index - 1
+          assignments[tostring(guard.id)] = plan
+          break
         end
       end
-      if best then assignments[tostring(best.own.id)] = best end
       C.planCache = {key=key,value=assignments,opening=true}
       return assignments,true
     elseif #free>0 then
@@ -508,7 +530,7 @@ local function plans()
 end
 function C.canRescue(target)
   if not fresh() or K.config.role == "wsparcie" or not A.form(target.name)
-      or K.shieldPendingTarget or K.shieldTimer
+      or K.shieldPendingTarget or K.shieldTimer or K.shieldFatigueUntil>A.now()
       or K.shieldAwaitCombatRevision == K.combatRevision then return false end
   local own = A.group().self
   if not own then return false end
@@ -528,20 +550,38 @@ function C.setGap(value)
   C.planCache = nil
   A.note("Zaslony: prog rotacji " .. gap .. " punktow procentowych HP.", "cyan")
 end
+local function waitForShield(at, opening, slot)
+  cancel("shieldTimer")
+  local wait, generation = {room=A.room(),at=at,opening=opening,slot=slot}, K.generation
+  C.wait = wait
+  C.shieldTimer = tempTimer(math.max(0,at-A.now()), function()
+    C.shieldTimer=nil
+    if C.wait == wait and K.enabled and K.generation == generation then A.queue() end
+  end)
+end
 function C.shield()
-  if not C.observe(false) then cancel("shieldTimer"); C.wait=nil; return false end
+  if not C.observe(false) or K.shieldFatigueUntil>A.now() then
+    cancel("shieldTimer"); C.wait=nil; return false
+  end
   local own = A.group().self
   local assignments,opening = plans()
   local plan = own and assignments[tostring(own.id)]
   if plan then
+    local first = C.opening
+    if plan.opening and first then
+      local at = first.at + 0.18 * math.min(plan.openingRank, 4)
+      if at>A.now() then
+        if not C.wait or not C.wait.slot or C.wait.opening~=first or C.wait.at~=at then waitForShield(at,first,true) end
+        return true
+      end
+    end
     cancel("shieldTimer"); C.wait=nil
     local sent, waiting = A.shield(plan.target, health(plan.target), 100, plan)
     return sent or waiting or false
   elseif (next(assignments) or opening) and own then
     -- Brak raportow o wlaczeniu innych profili: po krotkim czasie mozliwy
     -- jest lokalny plan awaryjny, ponownie oceniony na aktualnym GMCP.
-    if not C.wait or C.wait.room~=A.room() then
-      cancel("shieldTimer")
+    if not C.wait or C.wait.room~=A.room() or C.wait.slot or C.wait.opening~=C.opening then
       local members={}
       for _,member in ipairs(A.group().members) do
         if A.canShield(member) then members[#members+1]=member end
@@ -561,13 +601,8 @@ function C.shield()
       -- Damage and target packets can change the signature every fraction
       -- of a second. They must not restart the deadline for an absent/DPS
       -- defender. The eventual fallback is validated on the latest state.
-      C.wait = {room=A.room(), at=A.now() + delay}
+      waitForShield(A.now() + delay,C.opening)
       if K.combatLog then K.combatLog.reason(nil,nil,"formation_fallback_wait",false,C.wait.at) end
-      local wait, generation = C.wait, K.generation
-      C.shieldTimer = tempTimer(delay, function()
-        C.shieldTimer=nil
-        if C.wait == wait and K.enabled and K.generation == generation then A.queue() end
-      end)
     elseif A.now() >= C.wait.at then
       local list = attackers(A.snapshot())
       local targets={}
@@ -637,6 +672,7 @@ function C.onTeamCover(actor,form,description)
   if not fresh() or K.config.role=="wsparcie" then return end
   local source,patient=coverMembers(actor,form)
   if not source or not patient or source==patient then return end
+  C.recordGuard(source)
   C.unavailable[tostring(source.id)]=nil
   local found=false
   if A.normal(description)=="wrogow" then found=confirmSingle(patient,nil,source) end

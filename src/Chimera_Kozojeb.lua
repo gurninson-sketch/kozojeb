@@ -58,7 +58,7 @@ end
 K.legacyImportTried = true
 K.initialized = false
 
-K.version = "2.9.26"
+K.version = "2.9.27"
 K.config = K.config or {
   chaseDelay = 0.20,
   patrolDelay = 0.70,
@@ -629,6 +629,7 @@ K.shieldRejectedForms = {}
 K.shieldPendingTarget = nil
 K.shieldRescue, K.shieldTurn, K.teamShieldNotices = nil, nil, {}
 K.shieldPositionUntil = {}
+K.shieldFatigueUntil = 0
 if K.shieldPositionTimer then pcall(killTimer, K.shieldPositionTimer) end
 K.shieldPositionTimer, K.shieldPositionToken = nil, nil
 K.sendingShield = nil
@@ -2135,9 +2136,10 @@ end
 
 local function armShieldPosition()
   cancelTimer("shieldPositionTimer")
-  local deadline
+  local time = now()
+  local deadline = K.shieldFatigueUntil > time and K.shieldFatigueUntil or nil
   for form, untilTime in pairs(K.shieldPositionUntil) do
-    if untilTime <= now() then K.shieldPositionUntil[form] = nil
+    if untilTime <= time then K.shieldPositionUntil[form] = nil
     else deadline = math.min(deadline or untilTime, untilTime) end
   end
   local token = {}
@@ -2152,6 +2154,18 @@ local function armShieldPosition()
   end
 end
 
+local function finishShieldRefusal(pending)
+  K.shieldPendingTarget, K.shieldRescue, K.shieldReplyToken = nil, nil, nil
+  cancelTimer("shieldReplyTimer")
+  if not pending.conflicted then
+    K.shieldFormationReady, K.formationToken = true, nil
+    cancelTimer("formationTimer")
+  end
+  clearShieldTurn()
+  armShieldPosition()
+  if K.enabled then queueInspection(inspectRoom) end
+end
+
 function K.onShieldPositionBlocked(form)
   if K.combatLog then K.combatLog.mark("shield_position_blocked",{form=form}) end
   form = normal(form)
@@ -2162,15 +2176,16 @@ function K.onShieldPositionBlocked(form)
   if not K.shieldPositionUntil[form] or K.shieldPositionUntil[form] <= now() then
     K.shieldPositionUntil[form] = now() + 10
   end
-  K.shieldPendingTarget, K.shieldRescue, K.shieldReplyToken = nil, nil, nil
-  cancelTimer("shieldReplyTimer")
-  if not pending.conflicted then
-    K.shieldFormationReady, K.formationToken = true, nil
-    cancelTimer("formationTimer")
-  end
-  clearShieldTurn()
-  armShieldPosition()
-  if K.enabled then queueInspection(inspectRoom) end
+  finishShieldRefusal(pending)
+end
+
+function K.onShieldFatigue()
+  local pending = K.shieldPendingTarget
+  if not pending or pending.room ~= currentRoom() then return end
+  -- Odpowiedz nie podaje wymaganej kondycji ani czasu regeneracji.
+  K.shieldFatigueUntil = now() + 15
+  if K.combatLog then K.combatLog.mark("shield_fatigue",{target=pending.id,until_time=K.shieldFatigueUntil}) end
+  finishShieldRefusal(pending)
 end
 
 local function reserveShieldRequest(entity, form, external)
@@ -2324,6 +2339,7 @@ local function tryShield(entity, hp, threshold, plan)
     if K.combatLog then K.combatLog.reason(entity,plan and plan.npcId,code,plan and plan.rotation,detail) end
     clearShieldTurn()
   end
+  if K.shieldFatigueUntil > now() then blocked("shield_fatigue",K.shieldFatigueUntil);return end
   if not K.enabled or threshold <= 0 or K.shieldTimer or K.shieldPendingTarget
       or not K.shieldFormationReady then
     local code=not K.enabled and "disabled" or threshold<=0 and "threshold_off" or K.shieldPendingTarget and "reply_pending"
@@ -2497,6 +2513,7 @@ function K.onShieldResult(form, succeeded, description)
   local requestedRevision
   if pending and normal(pending.form) == normal(form) then
     local matched = true
+    if K.C and succeeded and pending.room == currentRoom() then K.C.recordGuard(groupContext().self) end
     if K.C and pending.npcId then matched=K.C.onResult(pending,succeeded,description) end
     requestedRevision = pending.combatRevision
     K.shieldPendingTarget = nil
@@ -4629,6 +4646,7 @@ function K.onSessionEvent(eventName)
   if K.recoveryEmergency then K.recoveryEmergency.pending = nil end
   cancelTimer("shieldReplyTimer")
   K.shieldPositionUntil, K.shieldPositionToken = {}, nil
+  K.shieldFatigueUntil = 0
   cancelTimer("shieldPositionTimer")
   K.progressOwn, K.progressTeam = {}, {}
   K.healthHistory, K.shieldTransfers = {}, {}
@@ -5273,7 +5291,9 @@ function K.status()
     statusRow("Moje HP / wrogowie", string.format("%.0f/%.0f HP; %d napastnikow",
       K.selfVitals.hp, K.selfVitals.maxhp, incoming and incoming.count or 0))
   end
-  if K.shieldBlockedReason then statusRow("Zaslona wstrzymana", K.shieldBlockedReason) end
+  if K.shieldFatigueUntil > now() then
+    statusRow("Zaslona wstrzymana", string.format("Zmeczenie; ponowna ocena za %.0f s", K.shieldFatigueUntil - now()))
+  elseif K.shieldBlockedReason then statusRow("Zaslona wstrzymana", K.shieldBlockedReason) end
   if not isFollower() and K.emptyPatrolDelay > 0 then
     statusRow("Pusty patrol", string.format("%d pustych obiegow; ruch co %.1f s", K.emptyRounds, K.emptyPatrolDelay))
   end
@@ -6181,6 +6201,8 @@ K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
   "^Probujesz zaslonic (.+) przed ciosami ([^.,]+)", [[kozojeb.onShieldResult(matches[2], false, matches[3])]])
 K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
   "^Musisz chwile odpoczac po ostatniej zmianie w szyku\\.$", [[kozojeb.onShieldCooldown()]])
+K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
+  "^Jestes zbyt zmeczony, zeby zaslaniac kogokolwiek\\.$", [[kozojeb.onShieldFatigue()]])
 K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
   "^Dopiero co zepchnieto cie sprzed ([^;]+);", [[kozojeb.onShieldPositionBlocked(matches[2])]])
 K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(

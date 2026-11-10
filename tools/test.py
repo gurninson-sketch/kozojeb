@@ -23,6 +23,12 @@ for line in ("Jestes tak zmeczony, ze nie mozesz isc.",
              "Jestes tak zmeczony, ze nie mozesz isc w tym kierunku."):
     assert re.fullmatch(pattern, line), "Logged movement refusal did not match: " + line
 assert not re.fullmatch(pattern, "Nie widzisz zadnego wyjscia prowadzacego na zachod.")
+fatigue = re.search(
+    r'tempRegexTrigger\(\s*("(?:\\.|[^"\\])*"),\s*\[\[kozojeb\.onShieldFatigue\(\)\]\]', source
+)
+assert fatigue and re.fullmatch(
+    json.loads(fatigue.group(1)), "Jestes zbyt zmeczony, zeby zaslaniac kogokolwiek."
+)
 
 for handler, examples in (
     ("onTeamShield", [

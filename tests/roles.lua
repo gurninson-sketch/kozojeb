@@ -2693,12 +2693,12 @@ local function rescueLeader()
   kozojeb.onGmcp("gmcp.Chimera.Combat.State")
   gmcp.Chimera.Room.Entities.entities[3].hp=64
   event()
-  assert(count("zaslon morrida")==1 and kozojeb.shieldPendingTarget and kozojeb.mode=="combat")
+  assert(countCover("morrida")==1 and kozojeb.shieldPendingTarget and kozojeb.mode=="combat")
 end
 
 test("a pending rescue does not trigger a contradictory retreat before its reply", function()
   rescueLeader(); event("gmcp.Chimera.Combat.State")
-  assert(kozojeb.mode=="combat" and #aliases==0 and count("zaslon morrida")==1)
+  assert(kozojeb.mode=="combat" and #aliases==0 and countCover("morrida")==1)
 end)
 
 test("a successful rescue waits for delayed incoming relations without retreating", function()
@@ -3043,7 +3043,7 @@ test("missing escape exits retain safe shielding and bound map rereads", functio
   local exits=getRoomExits
   healingLeader();getRoomExits=function() return {} end
   ambushAtRest()
-  assert(count("zaslon morrida")==1 and count("e")==0 and #aliases==0)
+  assert(countCover("morrida")==1 and count("e")==0 and #aliases==0)
   advance(10)
   assert(kozojeb.recoveryEmergency.blocked and kozojeb.recoveryEmergency.searches==3)
   assert(not kozojeb.escapeWatchTimer and kozojeb.enabled)
@@ -4009,7 +4009,7 @@ test("safe shielding remains available while the leader prepares the crowded roo
   crowdedPatrol(7,"team",false)
   gmcp.Chimera.Room.Entities.entities[3].hp=69
   kozojeb.start();advance(.21)
-  assert(count("zaslon morrida")==1 and count("e")==1 and #aliases==0)
+  assert(countCover("morrida")==1 and count("e")==1 and #aliases==0)
 end)
 
 test("reaching exactly the target limit still permits normal combat", function()
@@ -4475,9 +4475,9 @@ test("fresh room entities alone cannot replay a shield from stale incoming relat
   reset("zaslony");kozojeb.start()
   room=1323;kozojeb.onRoomChanged("gmcp.Room.Info")
   gmcp.Chimera.Room.Entities.entities[2].hp=60;event()
-  assert(count("zaslon yarrima")==0)
+  assert(countCover("yarrima")==0)
   event("gmcp.Chimera.Combat.State")
-  assert(count("zaslon yarrima")==1);noMovement()
+  assert(countCover("yarrima")==1);noMovement()
 end)
 
 test("combat arriving before the fresh entity list is used only after both are ready", function()
@@ -5731,7 +5731,7 @@ test("a transient missing shield patient is eligible immediately after returning
   local patient=table.remove(e,2);kozojeb.onShieldRejected()
   assert(count("zaslon yarrima")==1)
   event();table.insert(e,2,patient);advance(2.1);event()
-  assert(count("zaslon yarrima")==2,"count="..count("zaslon yarrima").." mode="..kozojeb.mode
+  assert(countCover("yarrima")==2,"count="..countCover("yarrima").." mode="..kozojeb.mode
     .." ready="..tostring(kozojeb.shieldFormationReady).." reason="..tostring(kozojeb.shieldBlockedReason))
 end)
 test("a new incoming enemy clears a generic shield rejection without editing a correct name", function()
@@ -5989,8 +5989,8 @@ test("manual movement waits for new room combat evidence before shielding again"
   manualCoverSetup();gmcp.Chimera.Combat.State={primary="",relations={}};kozojeb.start()
   gmcp.Chimera.Combat.State={primary="N",relations={{attacker="N",defender="L"}}}
   room=1323;kozojeb.onRoomChanged("gmcp.Room.Info");event()
-  assert(count("zaslon yarrima")==0)
-  event("gmcp.Chimera.Combat.State");assert(count("zaslon yarrima")==1);noMovement()
+  assert(countCover("yarrima")==0)
+  event("gmcp.Chimera.Combat.State");assert(countCover("yarrima")==1);noMovement()
 end)
 test("manual leader shield mode resumes automatically after a real login", function()
   manualCoverSetup();kozojeb.start();kozojeb.onSessionEvent("sysDisconnectionEvent")
@@ -6018,7 +6018,7 @@ test("a manual in game leader uses the shared opening cover but no armor workflo
   local fight={primary="N1",relations={{attacker="L",defender="N1"},{attacker="N1",defender="M"}}}
   gmcp.Chimera.Combat.State={primary="",relations={}}
   kozojeb.start();gmcp.Chimera.Combat.State=fight;event("gmcp.Chimera.Combat.State")
-  assert(kozojeb.mode=="manual_shields" and count("zaslon morrida")==1)
+  assert(kozojeb.mode=="manual_shields" and countCover("morrida")==1)
   assert(not kozojeb.G.job)
   e[5].hp=0;kozojeb.onKill(e[5].name,false);advance(12)
   assert(count("wez pancerz")==0 and count("przeszukaj pancerz")==0 and count("odloz pancerz")==0)
@@ -6662,7 +6662,68 @@ test("a first confirmed attacker on a healthy nonleader is covered once with gol
   gmcp.Chimera.Combat.State.relations={};event("gmcp.Chimera.Combat.State")
   gmcp.Chimera.Combat.State.relations={{attacker="N",defender="L"}}
   event("gmcp.Chimera.Combat.State")
+  assert(count("zaslon yarrima")==0 and kozojeb.C.planCache.value.M)
+  advance(2)
   assert(count("zaslon yarrima")==1 and #shieldCommands()==2);noMovement()
+end)
+test("a confirmed opener rotates to the next safe defender across rooms",function()
+  golemSetup("M",nil,1)
+  local entities=gmcp.Chimera.Room.Entities.entities
+  for index,hp in ipairs({2080,2160,2040,2180}) do entities[index].hp,entities[index].maxhp=hp,hp end
+  gmcp.Char.Vitals.hp,gmcp.Char.Vitals.maxhp=2040,2040
+  entities[5].name="Wychudzony czarny goblin"
+  gmcp.Chimera.Combat.State.relations={}
+  kozojeb.start()
+  gmcp.Chimera.Combat.State.relations={{attacker="N1",defender="L"}}
+  event("gmcp.Chimera.Combat.State")
+  assert(#shieldCommands()==0 and kozojeb.C.planCache.value.S)
+  kozojeb.C.onTeamCover("Yergo","Yarrima","wychudzonego czarnego goblina")
+  room=1323;kozojeb.onRoomChanged("gmcp.Room.Info")
+  entities[5].id="N2"
+  gmcp.Chimera.Combat.State.relations={}
+  event("gmcp.Chimera.Room.Entities");event("gmcp.Chimera.Combat.State")
+  gmcp.Chimera.Combat.State.relations={{attacker="N2",defender="L"}}
+  event("gmcp.Chimera.Combat.State")
+  assert(count("zaslon yarrima przed wychudzonym czarnym goblinem")==1 and kozojeb.shieldPendingTarget.npcId=="N2")
+  noMovement()
+end)
+test("a later opening slot waits for a peer with a different view of HP",function()
+  golemSetup("M",nil,1)
+  local entities=gmcp.Chimera.Room.Entities.entities
+  entities[4].hp=850
+  entities[5].name="Wychudzony czarny goblin"
+  gmcp.Chimera.Combat.State.relations={}
+  kozojeb.start()
+  gmcp.Chimera.Combat.State.relations={{attacker="N1",defender="L"}}
+  event("gmcp.Chimera.Combat.State")
+  assert(#shieldCommands()==0 and kozojeb.C.planCache.value.M.openingRank==1)
+  kozojeb.C.onTeamCover("Yergo","Yarrima","wychudzonego czarnego goblina")
+  gmcp.Chimera.Combat.State.relations={{attacker="N1",defender="S"}}
+  event("gmcp.Chimera.Combat.State");advance(1)
+  assert(#shieldCommands()==0);noMovement()
+end)
+test("a fatigue refusal clears an in flight rescue and spaces automatic attempts",function()
+  reset("zaslony",60);kozojeb.start()
+  assert(countCover("yarrima")==1 and kozojeb.shieldRescue)
+  kozojeb.onShieldFatigue()
+  local deadline=kozojeb.shieldFatigueUntil
+  assert(kozojeb.shieldFormationReady and not kozojeb.shieldPendingTarget and not kozojeb.shieldRescue)
+  assert(not next(kozojeb.shieldRejectedForms))
+  advance(10.1);event()
+  kozojeb.onShieldFatigue()
+  assert(countCover("yarrima")==1 and kozojeb.shieldFatigueUntil==deadline)
+  advance(5)
+  assert(countCover("yarrima")==2);noMovement()
+end)
+test("the beasts logged in Chimera support specific covers and real confirmations",function()
+  golemSetup("S",nil,2);golemRelations({"L","L"})
+  local entities=gmcp.Chimera.Room.Entities.entities
+  entities[5].name,entities[6].name="Prymitywna cuchnaca bestia","Prymitywna silna bestia"
+  kozojeb.start()
+  assert(count("zaslon yarrima przed prymitywna cuchnaca bestia")==1)
+  kozojeb.onShieldResult("yarrima",true,"prymitywnej cuchnacej bestii")
+  assert(kozojeb.C.holds.N1 and not kozojeb.C.holds.N2)
+  assert((kozojeb.metrics.shieldTargetMismatches or 0)==0);noMovement()
 end)
 test("a multiowner attack does not authorize a guessed opening transfer",function()
   reset("zaslony")

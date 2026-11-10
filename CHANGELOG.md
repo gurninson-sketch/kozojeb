@@ -1,5 +1,11 @@
 # Zmiany
 
+## 2.9.27
+
+- Kolejka zasłon otwarcia zaczyna się od następnego bezpiecznego obrońcy po ostatniej potwierdzonej zasłonie. Krótkie odstępy pozwalają uwzględnić potwierdzenie kolegi. Przy rozpoznanym opisie komenda wskazuje pierwszego napastnika.
+- Odmowa zasłony z powodu zmęczenia kończy oczekiwanie na wynik i odkłada kolejną próbę tego profilu o 15 s.
+- Dodano celowane zasłony przed bestiami i rozpoznawanie potwierdzeń w dopełniaczu.
+
 ## 2.9.26
 
 - Przywrócono rotację według różnicy HP przy ostatnim napastniku. Świeże HP drużyny uruchamiają ocenę również powyżej progów ratunkowych, niezależnie od trybu golemów.
