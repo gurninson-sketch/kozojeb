@@ -4893,6 +4893,13 @@ test("golem recovery waits for actual 100 percent of every party member", functi
   e[1].hp=1000;event();advance(4)
   assert(kozojeb.mode~="heal_rest" and not kozojeb.G.job)
 end)
+test("a peaceful patrol start uses configured recovery HP with golems enabled but no golem fight", function()
+  peacefulStart(100,100,100);kozojeb.stop()
+  kozojeb.command("golemy on")
+  gmcp.Chimera.Room.Entities.entities[3].hp=96
+  kozojeb.start()
+  assert(kozojeb.mode=="patrol" and not kozojeb.G.fullHp() and not kozojeb.healTimer)
+end)
 test("full HP does not start patrol while carried armor is still being processed", function()
   cargoAtBase();advance(4)
   assert(kozojeb.mode=="heal_rest" and count("odloz pancerz")==0 and kozojeb.G.busy())
@@ -5523,6 +5530,13 @@ end)
 test("manual full description shields reserve formation just as ordinary shields do", function()
   golemSetup("S");send("zaslon yarrima przed zgrzytajacym kanciastym golemem")
   kozojeb.start();assert(#shieldCommands()==1 and not kozojeb.shieldFormationReady)
+end)
+test("manual targeted shields outside the golem area reserve formation", function()
+  reset("zaslony",60)
+  send("zaslon yarrima przed chudym kozionogim ungorem")
+  assert(kozojeb.shieldPendingTarget and kozojeb.shieldPendingTarget.external)
+  kozojeb.start()
+  assert(#shieldCommands()==1 and not kozojeb.shieldFormationReady)
 end)
 test("an urgent rescue obtains a specific golem plan before composing its command", function()
   golemSetup("G");local e=distinctGolems()
@@ -6724,6 +6738,31 @@ test("the beasts logged in Chimera support specific covers and real confirmation
   kozojeb.onShieldResult("yarrima",true,"prymitywnej cuchnacej bestii")
   assert(kozojeb.C.holds.N1 and not kozojeb.C.holds.N2)
   assert((kozojeb.metrics.shieldTargetMismatches or 0)==0);noMovement()
+end)
+test("logged beastmen, dogs and named skeleton descriptions use a single targeted cover", function()
+  for _, npc in ipairs({
+    {"Chudy kozionogi ungor", "chudym kozionogim ungorem", "chudego kozionogiego ungora"},
+    {"Wychudly luskowaty pies", "wychudlym luskowatym psem", "wychudlego luskowatego psa"},
+    {"Potezny wladczy szkielet kapitana", "poteznym wladczym szkieletem kapitana", "poteznego wladczego szkieletu kapitana"},
+  }) do
+    golemSetup("S",nil,2);golemRelations({"L","L"})
+    local entities=gmcp.Chimera.Room.Entities.entities
+    entities[5].name,entities[6].name=npc[1],"Zelazny golem"
+    kozojeb.start()
+    assert(count("zaslon yarrima przed "..npc[2])==1)
+    kozojeb.onShieldResult("yarrima",true,npc[3])
+    assert(kozojeb.C.holds.N1 and not kozojeb.C.holds.N2)
+    assert((kozojeb.metrics.shieldTargetMismatches or 0)==0);noMovement()
+  end
+end)
+test("known malformed goblin descriptions do not produce targeted commands", function()
+  for _, name in ipairs({"Oszalaly toczacy piani goblin","Zgarbiony obwieszony grzybami goblin"}) do
+    golemSetup("S",nil,2);golemRelations({"L","L"})
+    local entities=gmcp.Chimera.Room.Entities.entities
+    entities[5].name,entities[6].name=name,name
+    kozojeb.start()
+    assert(not kozojeb.C.selector("N1",entities[2]) and #shieldCommands()==0)
+  end
 end)
 test("a multiowner attack does not authorize a guessed opening transfer",function()
   reset("zaslony")

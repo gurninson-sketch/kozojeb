@@ -58,7 +58,7 @@ end
 K.legacyImportTried = true
 K.initialized = false
 
-K.version = "2.9.27"
+K.version = "2.9.28"
 K.config = K.config or {
   chaseDelay = 0.20,
   patrolDelay = 0.70,
@@ -286,6 +286,7 @@ local defaultShieldNameForms = {
   brix = "brixa",
   gunz = "gunza",
   rodrick = "rodricka",
+  elef = "elefa",
 }
 K.config.shieldNameForms = K.config.shieldNameForms or {}
 for name, form in pairs(defaultShieldNameForms) do
@@ -2214,10 +2215,10 @@ function K.onShieldCommand(_, command)
   -- Obserwator szyku nie nadpisuje send ani nie blokuje recznych zaslon.
   if K.G then K.G.onLootCommand(command) end
   if K.sendingShield or type(command) ~= "string" or #command < 8 or #command > 128 then return end
-  local form = command:match("^%s*[Zz][Aa][Ss][Ll][Oo][Nn]%s+([%a%-]+)%s*$")
-    or command:match("^%s*[Zz][Aa][Ss][Ll][Oo][Nn]%s+([%a%-]+)%s+przed%s+[%a%s%-]+%s+golemem%s*$")
+  local text = normal(command)
+  local form = text:match("^zaslon%s+([%a%-]+)$")
+    or text:match("^zaslon%s+([%a%-]+)%s+przed%s+[%a%-][%a%s%-]*$")
   if not form or K.sessionBlocked then return end
-  form = normal(form)
   clearShieldTurn()
   if K.shieldPendingTarget then
     -- Nie blokujemy recznych komend. Nakladajace sie zadania nie moga jednak
@@ -5725,8 +5726,8 @@ function K.performance()
     m.dataWaits or 0, m.lootFiltered or 0, m.supportFiltered or 0))
   note(string.format("Odpoczynki po odmowie ruchu lub rozdzieleniu druzyny %d; powroty po druzyne %d.",
     m.movementRests, m.regroups))
-  note("Plany zaslon: " .. (m.shieldPlans or 0) .. "; inne NPC w odpowiedzi: "
-    .. (m.shieldTargetMismatches or 0) .. ".")
+  note(string.format("Plany zaslon %d. Odpowiedzi bez potwierdzenia planowanego NPC %d.",
+    m.shieldPlans or 0, m.shieldTargetMismatches or 0))
   if K.config.golemsEnabled then note("Przejete komendy pancerzy: " .. (m.golemObservedLoot or 0) .. ".") end
   note("Wznowienia chodzika po ataku podczas odwrotu: " .. (m.walkerResumes or 0)
     .. "; uzgodnienia opoznionej pozycji mapy: " .. (m.roomSyncs or 0) .. ".")
@@ -6202,7 +6203,7 @@ K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
 K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
   "^Musisz chwile odpoczac po ostatniej zmianie w szyku\\.$", [[kozojeb.onShieldCooldown()]])
 K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
-  "^Jestes zbyt zmeczony, zeby zaslaniac kogokolwiek\\.$", [[kozojeb.onShieldFatigue()]])
+  "^Jestes zbyt zmeczony, zeby zaslaniac kogokolwiek\\.\\s*$", [[kozojeb.onShieldFatigue()]])
 K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
   "^Dopiero co zepchnieto cie sprzed ([^;]+);", [[kozojeb.onShieldPositionBlocked(matches[2])]])
 K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
@@ -6216,7 +6217,8 @@ K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
 K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
   "\\[\\d+\\] ([^\\.]+) podaza na (polnoc|poludnie|wschod|zachod|polnocny-wschod|polnocny-zachod|poludniowy-wschod|poludniowy-zachod|gore|dol)\\.",
   [[kozojeb.onFlee(matches[2], matches[3])]])
-K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger("^(.+) polegl[ao]?\\.$", [[kozojeb.onKill(matches[2], false)]])
+K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
+  "^(.+?)(?: \\([A-Z][A-Za-z -]*\\))? polegl[ao]?\\.$", [[kozojeb.onKill(matches[2], false)]])
 K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger("^Zabiles (.+)\\. \\[", [[kozojeb.onKill(matches[2], true)]])
 K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
   "^.+ zabil[ao]? (.+)\\. \\[",
@@ -6234,7 +6236,7 @@ K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger("^Jestes rann[y
 K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger("Wpadasz w panike!", [[kozojeb.onPanic()]])
 K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger("Uciekles [^\\.]+\\.", [[kozojeb.onPanicLanded()]])
 K.handlers.triggers[#K.handlers.triggers + 1] = tempRegexTrigger(
-  "(?:Jestes zbyt zmeczony|Ogarnia cie niemoc|Czujesz ogarniajaca cie niemoc|Nie masz dosc sil|Nie masz na to sily)",
+  "(?:Jestes zbyt zmeczony(?!, zeby zaslaniac kogokolwiek\\.\\s*$)|Ogarnia cie niemoc|Czujesz ogarniajaca cie niemoc|Nie masz dosc sil|Nie masz na to sily)",
   [[if kozojeb.enabled then kozojeb.escape("Serwer zglosil niemoc lub wyczerpanie.") end]])
 
 for _, eventName in ipairs({

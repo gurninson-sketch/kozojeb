@@ -44,7 +44,9 @@ local function later(seconds, callback)
     if K.enabled then A.queue() end
   end)
 end
-function G.fullHp() return enabled() end
+function G.fullHp()
+  return enabled() and G.job ~= nil and G.job.hadCombat == true
+end
 function G.busy()
   return enabled() and G.job ~= nil and G.job.phase ~= "done"
     and A.room() == tonumber(K.config.startRoom)

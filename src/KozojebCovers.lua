@@ -6,6 +6,12 @@ K.C = C
 local nouns={golem={"golemem","golema"},ork={"orkiem","orka"},goblin={"goblinem","goblina"},
   snotling={"snotlingiem","snotlinga"},troll={"trollem","trolla"},
   ozywieniec={"ozywiencem","ozywienca"},zombi={"zombim","zombiego"},
+  gor={"gorem","gora"},ungor={"ungorem","ungora"},bestigor={"bestigorem","bestigora"},
+  pies={"psem","psa"},wilk={"wilkiem","wilka"},niedzwiedz={"niedzwiedziem","niedzwiedzia"},
+  mezczyzna={"mezczyzna","mezczyzny"},elf={"elfem","elfa"},
+  ["szkielet wojownika"]={"szkieletem wojownika","szkieletu wojownika"},
+  ["szkielet kapitana"]={"szkieletem kapitana","szkieletu kapitana"},
+  ["straznik wiezy"]={"straznikiem wiezy","straznika wiezy"},
   bestia={"bestia","bestii", feminine=true}}
 local ordinal={"pierwszym","drugim","trzecim","czwartym","piatym"}
 local function fresh()
@@ -18,12 +24,18 @@ local function forms(name)
   if C.formCount>=256 then return end
   C.formCount=C.formCount+1
   local words={};for word in name:gmatch("%S+") do words[#words+1]=word end
-  local noun=nouns[words[#words]]
-  if not noun or #words<2 or #words>6 then C.forms[name]=false;return end
+  if #words<2 or #words>6 then C.forms[name]=false;return end
+  local nounIndex=#words
+  local noun=nouns[words[nounIndex-1].." "..words[nounIndex]]
+  if noun then nounIndex=nounIndex-1 else noun=nouns[words[nounIndex]] end
+  if not noun then C.forms[name]=false;return end
   local instrument,genitive={},{}
-  for i=1,#words-1 do
+  for i=1,nounIndex-1 do
     local word=words[i]
-    if not word:match("^[a-z%-]+$") then C.forms[name]=false;return end
+    -- To dopelnienia opisu, np. "toczacy piani" lub "obwieszony grzybami".
+    if not word:match("^[a-z%-]+$") or word:match("ami$") or word=="piani" then
+      C.forms[name]=false;return
+    end
     if noun.feminine then
       if not word:match("a$") then C.forms[name]=false;return end
       instrument[i]=word
@@ -34,7 +46,7 @@ local function forms(name)
       instrument[i]=word:gsub("i$","im");genitive[i]=word:gsub("i$","iego")
     else C.forms[name]=false;return end
   end
-  instrument[#words],genitive[#words]=noun[1],noun[2]
+  instrument[nounIndex],genitive[nounIndex]=noun[1],noun[2]
   local result={instrument=table.concat(instrument," "),genitive=table.concat(genitive," ")}
   C.forms[name]=result;return result
 end
@@ -731,8 +743,8 @@ function C.onResult(pending,succeeded,description)
     K.metrics.shieldTargetMismatches=(K.metrics.shieldTargetMismatches or 0)+1
     if not C.mappingWarning then
       C.mappingWarning=true
-      A.note("Zaslony: odpowiedz gry wskazuje innego NPC (" .. tostring(description)
-        .. "). Nie zapisuje zaslony dla planowanego ID.","yellow")
+      A.note("Zaslony: odpowiedz gry nie potwierdza planowanego NPC (" .. tostring(description)
+        .. "). Sprawdzam tylko rozpoznane ID.","yellow")
     end
   end
   C.combatEpoch=C.combatEpoch+1; C.planCache=nil

@@ -26,9 +26,30 @@ assert not re.fullmatch(pattern, "Nie widzisz zadnego wyjscia prowadzacego na za
 fatigue = re.search(
     r'tempRegexTrigger\(\s*("(?:\\.|[^"\\])*"),\s*\[\[kozojeb\.onShieldFatigue\(\)\]\]', source
 )
-assert fatigue and re.fullmatch(
-    json.loads(fatigue.group(1)), "Jestes zbyt zmeczony, zeby zaslaniac kogokolwiek."
+fatigue_line = "Jestes zbyt zmeczony, zeby zaslaniac kogokolwiek."
+assert fatigue and re.fullmatch(json.loads(fatigue.group(1)), fatigue_line)
+exhaustion = re.search(
+    r'tempRegexTrigger\(\s*("(?:\\.|[^"\\])*"),\s*\[\[if kozojeb\.enabled then kozojeb\.escape\("Serwer zglosil niemoc',
+    source,
 )
+assert exhaustion, "Missing leader exhaustion trigger"
+pattern = json.loads(exhaustion.group(1))
+assert not re.search(pattern, fatigue_line + " ")
+assert re.search(pattern, "Ogarnia cie niemoc.")
+
+death_notice = re.search(
+    r'tempRegexTrigger\(\s*("(?:\\.|[^"\\])*"),\s*\[\[kozojeb\.onKill\(matches\[2\], false\)\]\]',
+    source,
+)
+assert death_notice, "Missing death trigger independent of XP"
+pattern = json.loads(death_notice.group(1))
+for line, target in (
+    ("Wyniosly potezny mezczyzna (Sergio) polegl.", "Wyniosly potezny mezczyzna"),
+    ("Postawny okrutny elf polegl.", "Postawny okrutny elf"),
+    ("Makabryczny upiorny troll polegl.", "Makabryczny upiorny troll"),
+):
+    match = re.fullmatch(pattern, line)
+    assert match and match.groups() == (target,)
 
 for handler, examples in (
     ("onTeamShield", [

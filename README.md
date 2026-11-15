@@ -1,4 +1,4 @@
-# Chimera Kozojeb 2.9.27
+# Chimera Kozojeb 2.9.28
 
 [Pobierz najnowszą paczkę](https://github.com/gurninson-sketch/kozojeb/releases/latest/download/Chimera_Kozojeb.mpackage) · [Wydania](https://github.com/gurninson-sketch/kozojeb/releases)
 
@@ -190,7 +190,7 @@ Od 2.9.27 zasłona otwarcia zaczyna się od kolejnego bezpiecznego obrońcy po o
 
 Przy kilku napastnikach plan przydziela różne cele kolejnym obrońcom. Dąży do wyrównania liczby NPC, z pierwszeństwem wolnych obrońców. Używa świeżych relacji NPC–gracz i wspólnej kolejności nazw, bez wiadomości między profilami. Gdy jeden obrońca jest niedostępny, pozostali oceniają zastępstwo po ograniczonym czasie. Widoczna nieudana zasłona wyklucza obrońcę z planu na 10 s i skraca to oczekiwanie. Zmiana pokoju lub sesji czyści te informacje.
 
-Zasłona celowana używa pełnego opisu, np. `zaslon yarrima przed bladym zwinnym ozywiencem`. Plan rozpoznaje opisy golemów, orków, goblinów, snotlingów, trolli, ożywieńców, zombi i bestii. Numer przy identycznych opisach jest dopuszczalny, gdy wszystkie pasujące egzemplarze atakują tę samą osobę. Przy jednym potwierdzonym napastniku dostępna jest też zwykła komenda. Dla ogólnej zasłony przed kilkoma NPC bot ocenia możliwe przejęcie ich wszystkich. `/kozojeb celowanezaslony on|off` steruje celowanymi komendami w całej walce.
+Zasłona celowana używa pełnego opisu, np. `zaslon yarrima przed chudym kozionogim ungorem`. Plan rozpoznaje m.in. golemy, orki, gobliny, snotlingi, trolle, bestie, gory, ungory, bestigory, psy, wilki i niedźwiedzie. Numer przy identycznych opisach jest dopuszczalny, gdy wszystkie pasujące egzemplarze atakują tę samą osobę. Przy jednym potwierdzonym napastniku dostępna jest też zwykła komenda. Dla ogólnej zasłony przed kilkoma NPC bot ocenia możliwe przejęcie ich wszystkich. `/kozojeb celowanezaslony on|off` steruje celowanymi komendami w całej walce.
 
 Po podziale plan ocenia różnicę między bieżącym procentem HP obrońcy a procentem HP atakowanego członka drużyny. `/kozojeb roznicahp 10` ustawia minimalną różnicę od 5 do 30 punktów procentowych, domyślnie 10. Od 2.9.26 ta rotacja działa również przy ostatnim napastniku. Obrońca ze 100% HP może przejąć NPC od postaci z 90% HP, jeśli ma odpowiednią rezerwę w punktach. Potrzebuje przewagi o co najmniej 5% przy pierwszym i 15% przy drugim napastniku. Zasłony otwarcia, wyrównywanie liczby NPC i rotacja mogą zadziałać powyżej zwykłych progów ratunkowych. Zapisana wartość `roznicahp` obowiązuje niezależnie od trybu golemów. Wartość 0 dla progu osłony danej osoby wyłącza jej przydział na tym profilu.
 
@@ -200,7 +200,7 @@ Od 2.9.9 prowadzący i profile `zaslony` używają wspólnej kolejności: obroń
 
 Prowadzący również uwzględnia widoczną udaną zasłonę kolegi: przez najwyżej 0,5 s czeka na nowe relacje, zamiast uznawać własny brak gotowości za konieczność dodatkowego odwrotu. Dalsza utrata HP zagrażająca kolejnym takim ciosem, krytyczny stan własny, celu lub innej osoby oraz zmiana napastników kończą to oczekiwanie. Powtórzony komunikat nie przedłuża pierwszego okna. Wszystkie krótkie potwierdzenia współdzielą jeden timer, który znika po ich wygaśnięciu i jest anulowany przy zatrzymaniu lub zmianie pokoju.
 
-Odmiany imion są zapisane dla Yarrima, Morrida, Yerga i Grora. Dla kolejnej postaci ustaw biernik, np.:
+Lista odmian obejmuje m.in. Yarrima, Morrida, Yerga, Grora i Elefa. Dla nowej postaci ustaw biernik.
 
 ```text
 /kozojeb imie Pandjed pandjeda
@@ -212,6 +212,8 @@ Niepoprawna forma odrzucona przez grę jest blokowana do poprawienia.
 ## Opcjonalny tryb golemów — od 2.9.11
 
 Na **prowadzącym** włącz `/kozojeb golemy on`. Tryb obsługuje łup z golemów oraz odpoczynek i powrót do patrolu po cyklu. Domyślnie jest wyłączony. Dodaje cel `golem` z odmianą `golema`, zachowując pozostałe cele, obszar, progi, tempo i pauzę po zabiciu. Wyłączenie: `/kozojeb golemy off`. Zmiana trybu podczas pracy zatrzymuje profil; po konfiguracji uruchom `/kozojeb start`.
+
+Od 2.9.28 cała drużyna regeneruje się do 100% HP po walce obsługiwanej przez cykl golemów. Przy zwykłym starcie i odpoczynku obowiązuje `/kozojeb powrothp` oraz pełna regeneracja postaci w stanie krytycznym.
 
 Przykład konfiguracji drużyny:
 
@@ -275,7 +277,7 @@ Potwierdzona przez grę odmowa podniesienia zbyt ciężkiego pancerza kończy pr
 
 ## Aktualizacje z GitHuba
 
-Jeśli masz już Kozojeba 2.8.1–2.9.24, wykonaj na **każdym profilu**:
+Jeśli masz już Kozojeba 2.8.1 lub nowszego, wykonaj na **każdym profilu**:
 
 ```text
 /kozojeb stop
@@ -284,7 +286,7 @@ Jeśli masz już Kozojeba 2.8.1–2.9.24, wykonaj na **każdym profilu**:
 /kozojeb aktualizuj
 ```
 
-Poczekaj na zakończenie walki i ruchu oraz komunikat `Zainstalowano 2.9.25`. Sprawdź `/kozojeb status`; powinien pokazać wersję **2.9.25**. Wyłącz stary dodatkowy trigger pancerzy — podniesienia po każdym zabiciu są już wbudowane. Skontroluj `/kozojeb druzyna role` na każdym profilu; domyślnie nie ma przypisań zależnych od imion. Własne role profili i inne własne modele pozostają zapisane. Opcjonalnie włącz `/kozojeb swiatlo on` na postaciach z lampą i paliwem; opcja działa tylko przy wykrytej utracie widoczności. Następnie uruchom `/kozojeb start` — najpierw na wspierających, potem na prowadzącym stojącym w bazie. To jednorazowy start po aktualizacji; późniejsze rozłączenia nie wymagają ręcznego wznowienia. Nie trzeba usuwać ani ręcznie instalować paczki; można przejść bezpośrednio z 2.9.2 do 2.9.25. Zwykły próg regeneracji wynosi domyślnie 95%; można go zmienić przez `/kozojeb powrothp 95`. Tryb golemów wymaga osobnego włączenia i w swoim cyklu czeka na 100% całej drużyny.
+Poczekaj na zakończenie walki i ruchu oraz komunikat `Zainstalowano <wersja>`. Wpisz `/kozojeb status` i porównaj numer z najnowszym wydaniem na GitHubie. Jeśli masz stary dodatkowy trigger podnoszenia pancerzy, wyłącz go, aby podnoszenie obsługiwał Kozojeb. Zapisane role i ustawienia sprawdzisz przez `/kozojeb druzyna role` i `/kozojeb status`. Na postaci z lampą i paliwem możesz włączyć `/kozojeb swiatlo on`, aby bot reagował na utratę widoczności. Po aktualizacji wpisz `/kozojeb start` najpierw na wspierających, potem na prowadzącym w bazie. Przy kolejnym rozłączeniu wznowienie uruchomi się automatycznie po zalogowaniu.
 
 Przy paczce zbudowanej w tym repozytorium adres wydań jest wbudowany. W paczce przygotowanej bez adresu skonfiguruj na każdym profilu:
 

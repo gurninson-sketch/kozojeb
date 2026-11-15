@@ -1,5 +1,12 @@
 # Zmiany
 
+## 2.9.28
+
+- Dodano odmiany NPC z logów, w tym gorów, ungorów, bestigorów, psów, ludzi i szkieletów z przydomkiem. Selektory pomijają błędne formy z opisów „toczacy piani” i „obwieszony grzybami”. Ręczne zasłony celowane rezerwują szyk dla każdego obsługiwanego NPC.
+- Dodano biernik „Elefa” do listy odmian.
+- Rozpoznawanie śmierci odczytuje podstawowy opis NPC z komunikatów takich jak „Wyniosly potezny mezczyzna (Sergio) polegl.” bez potrzeby odczytu XP.
+- Tryb golemów wymaga 100% HP całej drużyny po walce obsługiwanej przez cykl. Zwykły start i odpoczynek korzystają z ustawienia `powrothp`. Odmowa zasłony ze zmęczenia uruchamia przerwę w zasłonach danego profilu.
+
 ## 2.9.27
 
 - Kolejka zasłon otwarcia zaczyna się od następnego bezpiecznego obrońcy po ostatniej potwierdzonej zasłonie. Krótkie odstępy pozwalają uwzględnić potwierdzenie kolegi. Przy rozpoznanym opisie komenda wskazuje pierwszego napastnika.
